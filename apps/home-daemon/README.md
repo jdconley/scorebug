@@ -136,15 +136,17 @@ WSL follows the Linux path. None of this constitutes Windows host qualification.
 negotiated `source-processing-v1` API reports. `snapshotProcessingWindow()` remains
 available to direct callers. Pending work can update while its decoder window is
 current; completed results freeze and invalid/ended/superseded evidence clears.
-The native app attaches validated reports to matching source intervals. Current-load
-classification and automatic quality control remain the next steps; completion is
-not a capacity estimate. See [worker status](../../docs/worker-status.md).
+The native app attaches validated reports to matching source intervals. The native quality controller uses matching processing reports alongside its other
+admission and health checks; completion alone is not a capacity estimate. See [worker status](../../docs/worker-status.md).
 
 ## Linux CPU/GPU deployment
 
 Use Docker Engine with Compose v2 on Linux and a pinned repository revision.
-The worker image is Node 22/Debian with FFmpeg, DejaVu fonts and `tini`; software
-encoding needs no CUDA runtime. From the repository root:
+The worker image is Node 22/Debian Trixie with FFmpeg, DejaVu fonts and `tini`;
+software encoding needs no CUDA runtime. Trixie supplies the encoder-statistics
+options used by measured adaptation; the older Bookworm image could publish but
+lacked this timing capability. The image check now exercises actual encoder
+timing as well as overlay/audio/video encoding and decoding. From the repository root:
 
 ```sh
 WORKER_RELEASE=$(git rev-parse --short=12 HEAD)
@@ -280,7 +282,7 @@ completed exports under an explicit retention policy.
 | Backend/runtime                               | Evidence currently recorded                                                                 | Still required                                                    |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | Native macOS software/VideoToolbox            | Local real worker/media tests and documented soaks                                          | New host/profile and sustained device acceptance                  |
-| Linux arm64 CPU image on this Mac's Docker VM | Compiled worker, short overlay/AAC/H.264 encode/decode and graceful stop without networking | Deployment-network and sustained Linux-host qualification         |
+| Linux arm64 CPU image on this Mac's Docker VM | Compiled worker, valid encoder timing, paced overlay FLV/MP4 encode/decode and graceful stop without networking | Deployment-network and sustained Linux-host qualification         |
 | Linux amd64 CPU                               | CI has container/relay/software-worker jobs                                                 | Inspect a passing target-runtime result; no new pass claimed here |
 | NVIDIA Linux container/native                 | Config and file-processing harness accept NVENC                                             | Actual driver/toolkit/image/media qualification; unqualified here |
 | Windows/WSL2, remote/cloud hosts              | No transferable qualification from the Mac                                                  | Actual host/runtime/network qualification                         |

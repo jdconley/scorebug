@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { command } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
@@ -8,10 +11,21 @@ const image = process.argv[2];
 assert.ok(image && !image.startsWith('-'), 'Supply a built worker image name');
 const name = `scorebug-worker-image-${randomUUID()}`;
 const checkCancellation = cancellation();
+const artifactRoot = fileURLToPath(new URL('../artifacts/qa/', import.meta.url));
 async function docker(args, label, timeout = 30_000) {
   checkCancellation();
   const result = await command('docker', args, timeout);
-  assert.ok(result.ok, `${label} failed`);
+  if (!result.ok) {
+    await mkdir(artifactRoot, { recursive: true });
+    const artifact = await mkdtemp(join(artifactRoot, 'worker-container-failure-'));
+    await chmod(artifact, 0o700);
+    await writeFile(
+      join(artifact, 'diagnostic.json'),
+      JSON.stringify({ label, ...result }, null, 2),
+      { mode: 0o600 },
+    );
+    assert.fail(`${label} failed; private diagnostic: ${artifact}`);
+  }
   return result.stdout;
 }
 try {
@@ -62,25 +76,38 @@ try {
     import { writeFile } from 'node:fs/promises';
     import { startPipeline } from './apps/home-daemon/dist/pipeline.js';
     import { createLogger } from './apps/home-daemon/dist/logger.js';
+    import { probeEncoderStatistics } from './apps/home-daemon/dist/encoder-statistics-capability.js';
     const exec = promisify(execFile);
+    assert.deepEqual(await probeEncoderStatistics('ffmpeg'), { available: true, reason: 'supported' },
+      'The portable image must provide timing required for adaptive streaming');
     const protocols = await exec('ffmpeg', ['-hide_banner', '-protocols']);
     assert.match(protocols.stdout, /^\\s+srt\\s*$/m);
     await exec('ffmpeg', ['-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=30',
       '-f','lavfi','-i','sine=sample_rate=48000','-t','2','-c:v','libx264','-preset','ultrafast',
       '-c:a','aac','/tmp/source.mp4']);
     await writeFile('/tmp/score.txt', 'HOME 0-0 AWAY');
+    // Pace the finite input like a live publisher. With copyts, a clip finishing
+    // before the first periodic progress report may only report out_time_us=0.
+    await writeFile('/tmp/ffmpeg-paced', '#!/bin/sh\\nexec ffmpeg -re "$@"\\n', { mode: 0o700 });
     let progressed = false;
     const pipeline = startPipeline({ gameId:'image-fixture', pullUrl:'/tmp/source.mp4',
-      publishUrl:'/tmp/output.flv', scoreFile:'/tmp/score.txt', nvenc:false, encoder:'software',
-      profile:{width:1280,height:720,fps:30,bitrateKbps:3000} }, createLogger('error'), {
+      publishUrl:'/tmp/output.flv', recordingPath:'/tmp/overlay.mp4', scoreFile:'/tmp/score.txt', nvenc:false, encoder:'software',
+      profile:{width:1280,height:720,fps:30,bitrateKbps:3000}, ffmpegPath:'/tmp/ffmpeg-paced' }, createLogger('error'), {
+        encoderTiming: true,
         onProgress: p => { if (p.frame > 0 && p.outTimeUs > 0) progressed = true; }
       });
     const exited = await pipeline.waitExit();
     assert.equal(exited.code, 0); assert.ok(progressed);
-    const probe = JSON.parse((await exec('ffprobe', ['-v','error','-show_streams','-of','json','/tmp/output.flv'])).stdout);
+    const timing = pipeline.snapshotEncoderTiming();
+    assert.ok(timing && timing.ended && timing.completedFrames > 0);
+    assert.equal(timing.pendingFrames, 0);
+    assert.equal(timing.invalidReason, null);
+    for (const path of ['/tmp/output.flv', '/tmp/overlay.mp4']) {
+    const probe = JSON.parse((await exec('ffprobe', ['-v','error','-show_streams','-of','json',path])).stdout);
     assert.ok(probe.streams.some(s => s.codec_type === 'video' && s.width === 1280 && s.height === 720));
     assert.ok(probe.streams.some(s => s.codec_type === 'audio'));
-    await exec('ffmpeg', ['-v','error','-xerror','-i','/tmp/output.flv','-map','0:v:0','-map','0:a:0','-f','null','-']);
+    await exec('ffmpeg', ['-v','error','-xerror','-i',path,'-map','0:v:0','-map','0:a:0','-f','null','-']);
+    }
     console.log('compiled_pipeline_decoded');
   `;
   const result = await docker(
@@ -105,5 +132,5 @@ try {
 }
 if (!process.exitCode)
   console.log(
-    'PASS: final worker image starts, compiled software pipeline encodes/decodes audio/video with overlay, and container stops cleanly; owned container removed.',
+    'PASS: final worker image starts, compiled software pipeline encodes/decodes audio/video with overlay and valid encoder timing, and container stops cleanly; owned container removed.',
   );

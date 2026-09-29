@@ -4,7 +4,9 @@
 # Built from the repo root so the workspace layout is visible:
 #   docker build -f apps/home-daemon/Dockerfile -t scorebug/home-daemon .
 
-FROM node:22-bookworm-slim AS base
+# Trixie FFmpeg supplies stats_enc_pre/post required by adaptive processing reports.
+# Bookworm can publish but silently lacks those timing options.
+FROM node:22-trixie-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \

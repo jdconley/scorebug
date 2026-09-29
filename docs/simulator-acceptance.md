@@ -13,6 +13,7 @@ production behavior changes, not when unrelated documentation or fixtures change
 
 | Capability | Evidence | Result and scope |
 | --- | --- | --- |
+| Linux worker image timing and both output formats | `linux-worker-20260928/acceptance.json` | Trixie/FFmpeg7.1.5: compiled worker, actual encoder timing, paced2s720p overlay FLV+MP4, full A/V decode and clean shutdown pass on local Linuxarm64 Docker VM. Bookworm/FFmpeg5.1.9 lacked timing options. No real RTMP/SRT network, sustained or remote-host claim. |
 | Two native phones, independent clean archive, changing overlay, both outputs | `native-created-simulators-opRrou/vertical-acceptance.json` | Passed. Native create/discovery/takeover/undo; continuous 30 fps archive and live media; waveform A/V and changing visible score verified. |
 | Separate Watch scoring while phone films | `native-created-simulators-yjIyo3/native-media-verification/separate-watch-acceptance.json` | Native takeover/undo/relaunch/end passed on 41 mm Watch UI. Real HTTP; simulator setup fixture. Not WatchConnectivity qualification. Original cleanup false alarm and independent cleanup evidence retained. |
 | Pending point, takeover and offline native recovery | `native-scoring-recovery-Ff9bG1` | Passed. Exactly seven durable outcomes, one applied point, two takeovers, two stale rejections, undo/end; app data preserved. Peer takeover uses a real API actor. |

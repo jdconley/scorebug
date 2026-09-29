@@ -12,6 +12,16 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
+Linux image timing gap fixed: worker Dockerfile now Node22/Trixie, FFmpeg7.1.5.
+Bookworm5.1.9 probe returned unsupported. Strengthened existing container check
+requires actual completed encoder timing and fully decodes paced720p FLV+MP4.
+Pass `linux-worker-20260928/acceptance.json`; image `scorebug/home-daemon:qa-timing-trixie`
+retained locally. Scope Linuxarm64 Docker VM, no actual RTMP/SRT network or sustained
+qualification. Build7457 and final check50899 joined0; all owned containers removed.
+[Session](2026-09-28-linux-worker-timing.md). Next portable check can reuse this image
+for real local relay/API/RTMP integration; do not rerun unchanged startup checks.
+
+
 Hands-on launch now available: `node scripts/simulator-lab.mjs --host <LAN>
 --duration 1800 [--source /absolute/prepared.mov]`. No UI automation. Synthetic
 source by default; source option reuses existing staged-file capture. Watch must
