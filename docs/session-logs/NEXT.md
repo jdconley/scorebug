@@ -12,33 +12,30 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
-**ACTIVE capture80073: headless-native-yFO9Hu. Rejoin; do not restart.**
-Started17728d0 plus two opt-in duration guards (JS/Swift): no-finite-audit headless
-runs allow1200s; audit-enabled stays600s. No production changes. Actual1050s
-normalUHD/software-proxy run has confirmed360at76s and720at161s. No acceptance yet.
-[Session](2026-09-28-sustained-native.md). No other session jobs active.
+Sustained native UHD PASSES: `headless-native-yFO9Hu/sustained-acceptance.json`.
+1050s capture/1056throughfinalization, normal ladder,4Kconfirmed316s. Receiver22635
+actualUHDframes/754.5s with exact30fps; no SDK/appdrops/submiterrors, hardwareselected.
+Archive31,534/live31,452consecutive frames, gap-free audibleaudio, all3files fully
+decode and A/V ends≤35ms.527segment hashes. Archive continues20frames past live.
+Capture80073 and export/media88436 joined0,cleanup[]. **No active jobs.**
+[Session](2026-09-28-sustained-native.md). Duration guards committed83d2d7e;
+producing source and fixture hashes bound in the artifact. Do not repeat this soak.
 
 Prepared source `artifacts/qa/sustained-native-20260928/input.mov` is1200s,
-stream-copiedH264 with exact30fps packet timestamps; exact600s PCM repeated once.
-SourceIDs repeat18000; decodedjoin17994…17999,0…5. Allvideo/audio packet timestamps
-verified; source-qualification.json binds hashes. Prep47289/qualification60768 joined0.
-Downloads/originalfixture untouched. Initialdisk104GiB; preserve all evidence.
+stream-copiedH264, exact30fpsPTS, first600sPCM repeatedonce. SourceIDs repeat18000;
+all sourcepacket timestamps and decodedjoin verified. Final verifier checks exact
+modulo18000 identity and continuousPTS; no ignored loop interval. Originalfootage
+preserved. Last observed disk81GiBfree; do not delete recordings/evidence automatically.
+Offline scripts in sustained-native-20260928 have now both passed; don't rerun on
+completed artifact directories. `sustained-media` contains PCM, packets, IDs, reports.
 
-After capture terminal success, export once with currentbundle:
-`python3 artifacts/qa/publisher-blackhole-20260928/export-current.py
-artifacts/qa/headless-native-yFO9Hu`.
-Then `python3 artifacts/qa/sustained-native-20260928/verify-media.py <absolute-run>`
-and `python3 artifacts/qa/sustained-native-20260928/analyze.py <absolute-run>`.
-These new offline scripts syntax-check but have not run. Require>=600sconfirmedUHD,
->=18000actualUHDreceiverframes, normal ladder, noSDK/appdrop/submiterror, all3files
-fullydecode with exactcontinuousPTS, IDsmod18000, gap-freeaudio andends<50ms.
-Do not claim long-run pass merely from1050elapsed or selected4K. Completehashbinding.
-Do not start another native build/media workload during this capture.
-
-Previous workercrashMAuIfq passesrecovery, notgeneral tailbound: archive2124frames,
-interruptedaudio107ms, recoveredends≤36ms, livegap17.3s; alljobsjoined.
-Retain periodiclossMUpcfR, congestion44b0fy, API/SRToutageKJYNvL, shortUHDnZ4tzv.
-Simulator/backendlimits andphysical/full-match qualification remainexplicit.
+Remaining: interrupted-tail bounds, other backend/platform and full-match limits,
+physical readiness and Watchroutes/camera qualification, authorizedexternal/CI.
+No production changes justified by prior file-input decoder comparison; current
+nativeworkercrash tail107ms, older simulator/VT508–548ms. Reuse all completed local
+UI/scoring/fault results. Primary `/Users/jd/src/scorebug` is dirty (pre-existing docs/
+README files), so don't merge/overwrite it without accounting for those changes.
+Authoritative work stays in this worktree. Hardware has been deferred per user.
 
 ## Backend limits and useful short diagnostics
 

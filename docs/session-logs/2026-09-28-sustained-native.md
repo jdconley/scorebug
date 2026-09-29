@@ -50,3 +50,43 @@ It must not infer a pass from final selectedquality. Save final hashes/results.
 
 No other process from this session is active. Do not rebuild native code or run
 another media workload concurrently with the capture.
+
+## Capture complete; verification active
+
+Capture80073 joined0, cleanup[].1056s through finalization. Confirmed4Kat316s,
+receiver22635UHDframes/754.5s; allgeometrysteps3000ticks, no SDK/appdrops or native
+submiterrors, hardware selection, maxsubmission32.60ms. Nativeexport succeeded.
+Handle88436 now runs all-three-file media verification and finalanalysis; still
+pending. Do not repeat capture/export/decodes while this handle is active.
+
+## Final sustained result
+
+Verification88436 joined0; no active jobs. Native export and all-three-file media
+analysis succeed without a repeated capture or decode.527archive segment metadata
+and payload hashes verified. Archive31,534 consecutive frames (IDs modulo18000 as
+qualified); both outputs31,452 identical consecutive frame identities. All files
+H264/AAC at3840×2160, full A/V decode succeeds. No video/audio timestamp gaps,
+no source-frame identity errors, audible audio. Archive ends22.7ms after video;
+proxy32.9ms and mockRTMP34.2ms. Archive continues20frames beyond live.
+
+Actual ingress geometry:240p1614frames,360p2550,720p2400,1080p2253,4K22635.
+Every geometry run has exact3000/90000PTSsteps.4K receiver duration754.5s; final
+normal4K confirmation holds over600s with24Mbps selected. Native hardware selected,
+zeroSDK/appdrops and native submiterrors throughout observed samples. Max native
+submission32.60ms. Normal production control, no direct/fixed/warm/frozen shortcuts.
+
+`sustained-acceptance.json` binds final media reports, source/harness/fixture hashes,
+receiver log and cleanup. `sustained-media/result.json` retains each file's SHA and
+all media metrics. RTMP uses its established1ms timestamp precision; archive/proxy
+keep20µs. Qualified looping source IDs remain strict modulo18000, not ignored loss.
+Final checker validates>=31500archiveframes and>=18000actualUHDreceiverframes.
+
+This qualifies sustained nativeMac/software-proxy operation only. It does not erase
+simulator congestion/UHD limitations, colocatedVideoToolbox contention,107ms crash
+audio tail, or physical/otherhost/full-match requirements. UI/Watch/changing-score
+results remain their separate retained passes. Main checkout has pre-existing dirty
+files and was not merged or altered. Work remains in the authoritative worktree.
+
+Next: remaining backend/platform limits and physical readiness after simulator
+functional gates, without repeating completed local media runs. All process handles
+joined; no artifacts or recordings deleted.

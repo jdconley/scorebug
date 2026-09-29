@@ -58,8 +58,9 @@ congestion now passes in headless-native-44b0fy: normal confirmed720→minimum�
 25 seconds at750kbps, archive9,926/live9,844 consecutive frames, gap-free audio and
 30 fresh fps in every five-second window. This does not erase older simulator
 congestion failures or establish which configuration difference caused them. Normal adaptive UHD and complete saved media now
-pass with the software proxy; sustained/backend and physical thermal/radio limits
-remain open in the delivery plan.
+pass with the software proxy. The1050s native soak additionally passes754.5s of
+actual4K, complete archive/outputs, no video/audio gaps and A/V ends≤35ms. Remaining
+backend and physical/full-match limits stay open in the delivery plan.
 
 Complete retained delivery audits are laboratory evidence requirements. Runtime
 control continuing beyond their caps is already covered; do not confuse the two or

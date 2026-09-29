@@ -33,9 +33,9 @@ MP4 of the final overlaid stream.
 | --- | --- | --- |
 | Native phone scoring | Create/discover/join, durable scoring/undo, takeover, end and restoration; separate scorer while filming | Sustained/physical qualification |
 | Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI | Actual companion/radio routes; simulator setup fixture is not WatchConnectivity qualification |
-| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage, queue and source fault recovery | Sustained/physical capture profiles |
-| Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery | Severe-congestion loss, abrupt output tails and sustained profiles |
-| Adaptive upload | Normal240→2160 ladder and saved4Kmedia verified locally with software proxy; minimum fallback/recovery retained | Sustained/backend qualification and remaining fault matrix |
+| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults;1050s native4K archive | Physical camera and full-match profiles |
+| Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; native congestion/loss and sustained4K pass | Simulator/backend limits, abrupt output tails and full-match profiles |
+| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K and complete saved media with software proxy | Other backends, physical and full-match qualification |
 | Deployment | Local Mac service; persistent Linux container stack and CPU/GPU runbooks | External networking/TLS and runtime/backend qualification |
 
 The [acceptance matrix](../../simulator-acceptance.md) owns retained results and
@@ -106,9 +106,12 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   pass; current native/software-proxy crash retains107ms extra audio, while older
   simulator/VideoToolbox output retains508–548ms. File-input decoder-mode comparison
   does not reproduce the live tail; do not change decoder defaults on that evidence.
-- [ ] Qualify sustained local profiles/backends beyond the short UHD run. Resolve or
-  document the colocated VideoToolbox/probe limit, simulator congestion loss and UHD ceiling;
-  preserve the working software proxy path. Full-match qualification remains open.
+- [x] Qualify sustained native Mac/software-proxy UHD: normal adaptive ramp,1050s
+  capture,754.5s actual4K receiver video, zero input/media loss, clean archive and
+  both MP4 outputs fully decoded with gap-free audio and A/V ends≤35ms.
+- [ ] Qualify remaining profiles/backends and full-match operation. Preserve the
+  working software-proxy path; colocated VideoToolbox/probe, simulator congestion
+  and simulator UHD encoder limits remain explicit.
 - [ ] Confirm hosted native CI when a push is authorized. Hosted builds do not replace
   local simulator/media acceptance.
 

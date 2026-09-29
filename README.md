@@ -6,9 +6,10 @@ or the native Scorebug app on another iPhone, including a watch paired to that i
 to YouTube.
 
 > Status: native iPhone/Watch scoring and clean recording/export have passing local
-> and simulator checks. Adaptive streaming has laboratory recovery passes. Actual
-> paired-Watch delivery, physical camera reliability, sustained 4K and other proxy
-> hosts remain unqualified. Not ready for a real game; see the current plan below.
+> and simulator checks. Native Mac/software-proxy streaming passes recovery and
+> over ten minutes of actual adaptive 4K delivery with complete saved A/V. Physical
+> phone/Watch reliability, full-match operation and other proxy hosts remain
+> unqualified. Not ready for a real game; see the current plan below.
 
 ## Current plan
 

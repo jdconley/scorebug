@@ -32,8 +32,11 @@ The source must outlast capture and finalization. An actual ten-minute UHD hold
 requires the normal ramp to complete early enough; elapsed run time alone is not
 qualification. Inspect receiver geometry, profile confirmations, input losses,
 clean archive and both saved outputMP4s. Keep UI/Watch, physical thermal/camera,
-other backends and full-match qualification separate. The September28 run is
-pending in [its session log](session-logs/2026-09-28-sustained-native.md).
+other backends and full-match qualification separate. The September28 native run passes:1050s capture,754.5s actual4K receiver video,
+archive31,534/live31,452consecutive frames, gap-free audio and A/V ends≤35ms.
+See [its session log](session-logs/2026-09-28-sustained-native.md) and retained
+`headless-native-yFO9Hu/sustained-acceptance.json`. This qualifies the Mac/software
+proxy configuration; other backends and physical/full-match runs remain open.
 
 ## What is measured
 
