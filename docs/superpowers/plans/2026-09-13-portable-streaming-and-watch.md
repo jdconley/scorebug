@@ -80,6 +80,9 @@ full-suite run. Local functional integration is complete on the documented paths
 - [x] Bounded packet-tail diagnostics survive worker death and locate incoming versus
   outgoing A/V track ends; one live crash boundary is measured.
 
+- [x] Interleave dual-track publisher PES by decode timestamps with finite retention
+  and lossless clean drain; SDK checks and one short native crash/media run pass.
+
 - [ ] Bound interrupted output tails across abrupt failure timing/load. Current
   native/software-proxy crash retains up to107 ms extra audio; older simulator/
   VideoToolbox outputs retain 508–548 ms. Graceful stops pass. Reuse saved output

@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 DTS interleaving](2026-09-28-dts-interleaving.md) — bounded timestamp-ordered publisher; short crash and complete saved-media checks pass.
+
 - [September 28 crash packet tails](2026-09-28-crash-packet-tails.md) — bounded terminal packet evidence survives worker death; live input/output tail boundary isolated.
 
 - [September 28 simulator-first reset](2026-09-28-simulator-first-reset.md) — renewed hardware deferral and focused, batched verification policy.

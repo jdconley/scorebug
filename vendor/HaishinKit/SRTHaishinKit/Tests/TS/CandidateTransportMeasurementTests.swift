@@ -76,10 +76,15 @@ import VideoToolbox
     @Test func receiptsReachCombinedCountBoundAndStayFrozenAfterRejection() throws {
         let measurement = CandidateTransportMeasurement()
         #expect(measurement.appendVideo(try video(10)))
+        var nextVideo = 1
         for index in 0..<512 {
             try #require(measurement.appendAudio(audio(), when: time(10 + Double(index) / 128)))
-            if index > 0 && index <= 120 { try #require(measurement.appendVideo(try video(10 + Double(index) / 30))) }
+            if Double(nextVideo) / 30 <= Double(index) / 128 {
+                try #require(measurement.appendVideo(try video(10 + Double(nextVideo) / 30)))
+                nextVideo += 1
+            }
         }
+        try #require(measurement.appendVideo(try video(14)))
         #expect(!measurement.appendAudio(audio(), when: time(14)))
         let result = measurement.finish()
         #expect(result.inputs.count == 633)
@@ -203,17 +208,26 @@ import VideoToolbox
     @Test func independentVideoAudioAndAggregateInputLimits() throws {
         let v = CandidateTransportMeasurement()
         #expect(v.appendAudio(audio(), when: time(10)))
-        for i in 0..<121 { try #require(v.appendVideo(try video(10 + Double(i) / 30))) }
+        for i in 0..<121 {
+            if i > 0 { try #require(v.appendAudio(audio(), when: time(10 + Double(i) / 30))) }
+            try #require(v.appendVideo(try video(10 + Double(i) / 30)))
+        }
         #expect(!v.appendVideo(try video(10 + 121.0 / 30)))
         #expect(v.finish().failure == "videoCountLimit")
         let a = CandidateTransportMeasurement()
         #expect(a.appendVideo(try video(10)))
-        for i in 0..<512 { try #require(a.appendAudio(audio(), when: time(10 + Double(i) / 480))) }
+        for i in 0..<512 {
+            if i > 0 && i % 5 == 0 { try #require(a.appendVideo(try video(10 + Double(i) / 480))) }
+            try #require(a.appendAudio(audio(), when: time(10 + Double(i) / 480)))
+        }
         #expect(!a.appendAudio(audio(), when: time(10 + 512.0 / 480)))
         #expect(a.finish().failure == "audioCountLimit")
         let bytes = CandidateTransportMeasurement()
         #expect(bytes.appendAudio(audio(), when: time(10)))
-        for i in 0..<31 { try #require(bytes.appendVideo(try video(10 + Double(i) / 30, bytes: 1024 * 1024))) }
+        for i in 0..<31 {
+            if i > 0 { try #require(bytes.appendAudio(audio(), when: time(10 + Double(i) / 30))) }
+            try #require(bytes.appendVideo(try video(10 + Double(i) / 30, bytes: 1024 * 1024)))
+        }
         #expect(!bytes.appendVideo(try video(10 + 31.0 / 30, bytes: 1024 * 1024)))
         #expect(bytes.finish().failure == "compressedInputByteLimit")
     }

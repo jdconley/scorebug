@@ -16,12 +16,23 @@ or process RSS have a mathematical upper bound.
 | AudioCodec output               |             64 |                                      64 KiB |                    4 MiB |
 | TSWriter output                 |             32 |                              2 MiB + 64 KiB |                   66 MiB |
 | TSWriter startup PES collection |            256 | Also subject to the 2 MiB payload preflight |          8 MiB aggregate |
+| TSWriter A/V interleaving | 256 | Also subject to the 2 MiB payload preflight | 8 MiB aggregate |
 
-The sum of these retained logical payload ceilings is **94 MiB**. Startup also
+The sum of these retained logical payload ceilings is **102 MiB**. Startup also
 has the existing two-second media-span limit. A 2 MiB compressed video item leaves
 more than two seconds of nominal 6 Mbps data for an individual keyframe. The extra
 64 KiB at the transport boundaries allows MPEG-TS packet/header expansion. This is
 a conservative admission ceiling, not an estimate of normal occupancy.
+
+For dual-track publishing, the interleaver orders compressed PES by unwrapped
+90 kHz decode ticks, holding the leading track until the other reaches that time.
+It preserves each PTS/DTS and bounds the lead/queued span to two seconds; count,
+byte, time and backward-decode violations fail explicitly. A clean finish drains
+all accepted packets in timestamp order. Abort/clear discards pending data and
+resets the track clocks. Single-track streams emit immediately. This queue aligns
+encoded A/V availability; it grants no quality/throughput credit and does not
+replace receiver-side delivery or fresh-frame evidence. Candidate cost measurement
+uses the same writer and limits, so it must supply both tracks as they advance.
 
 Each consumer can additionally hold one dequeued item. The socket retains no
 second queue: its awaited send holds at most one 2 MiB + 64 KiB payload plus one

@@ -57,6 +57,7 @@ import libsrt
                 writer.append(frame)
             }
             #expect(writer.error == nil)
+            writer.finishOutput()
             #expect(payloadCounters(writes, pid: TSWriter.defaultAudioPID) == [0, 1, 2])
             #expect(payloadCounters(writes, pid: TSWriter.defaultVideoPID) == [0, 1, 2])
             writer.clear()
@@ -115,6 +116,7 @@ import libsrt
         let v = try video(10.5, dts: CMTime(value: 41, timescale: 4))
         writer.videoFormat = v.formatDescription
         writer.append(v)
+        writer.finishOutput()
         #expect(writer.error == nil)
         #expect(observed.map { $0.media.rawValue } == ["audio", "audio", "video"])
         let first = try #require(observed.first), last = try #require(observed.last)
@@ -684,6 +686,81 @@ import libsrt
         await stream.close(); await connection.close()
     }
 
+    @Test func interleavingHoldsLeadingAudioUntilVideoAndDrainsEveryPacket() throws {
+        let writer = TSWriter(outputSink: { _ in true })
+        writer.expectedMedias = [.audio, .video]
+        var rows: [TSWriter.MuxedPacketFrame] = []
+        writer.muxedPacketObserver = { rows.append($0) }
+        let a = audio(), v = try video(10)
+        writer.audioFormat = a.format; writer.videoFormat = v.formatDescription
+        writer.append(a, when: time(10)); writer.append(v)
+        writer.append(a, when: time(10.02)); writer.append(a, when: time(10.04))
+        #expect(rows.count == 2, "Encoded audio must not run ahead of available video")
+        writer.append(try video(10.033))
+        #expect(rows.map { $0.media.rawValue } == ["audio", "video", "audio", "video"])
+        writer.append(a, when: time(10.06))
+        writer.append(try video(10.067))
+        writer.finishOutput()
+        #expect(writer.error == nil)
+        #expect(rows.count == 7)
+        let times = rows.map { $0.transportDTS ?? $0.transportPTS }
+        #expect(zip(times, times.dropFirst()).allSatisfy { $0 <= $1 })
+    }
+
+    @Test func interleavingOrdersByDecodeTimeAndPreservesPresentationTime() throws {
+        let writer = TSWriter(outputSink: { _ in true })
+        writer.expectedMedias = [.audio, .video]
+        var rows: [TSWriter.MuxedPacketFrame] = []
+        writer.muxedPacketObserver = { rows.append($0) }
+        let a = audio(), v = try video(10.1, dts: CMTime(seconds: 10, preferredTimescale: 48000))
+        writer.audioFormat = a.format; writer.videoFormat = v.formatDescription
+        writer.append(a, when: time(10)); writer.append(v)
+        writer.append(try video(10.2, dts: CMTime(seconds: 10.033, preferredTimescale: 48000)))
+        #expect(rows.count == 2, "Leading video must also wait for audio")
+        writer.append(a, when: time(10.04))
+        #expect(rows.last?.sourcePTS == CMTime(seconds: 10.2, preferredTimescale: 48000))
+        writer.finishOutput()
+        #expect(rows.count == 4 && writer.error == nil)
+    }
+
+    @Test(arguments: ["packets", "bytes", "span"])
+    func interleavingRejectsStalledTrackAtFiniteBounds(_ bound: String) throws {
+        let limits = TSWriter.InterleaveLimits(packetCount: bound == "packets" ? 3 : 256,
+            byteCount: bound == "bytes" ? 256 : 8 * 1024 * 1024,
+            mediaSpan: bound == "span" ? 0.1 : 2)
+        let writer = TSWriter(interleaveLimits: limits, outputSink: { _ in true })
+        writer.expectedMedias = [.audio, .video]
+        let a = audio(), v = try video(10)
+        writer.audioFormat = a.format; writer.videoFormat = v.formatDescription
+        writer.append(a, when: time(10)); writer.append(v)
+        for i in 1...50 { writer.append(a, when: time(10 + Double(i) / 50)) }
+        let expected: SRTStream.MuxerError = bound == "packets" ? .interleavePacketLimitExceeded
+            : bound == "bytes" ? .interleaveByteLimitExceeded : .interleaveTimeLimitExceeded
+        #expect(writer.error == expected)
+        writer.finishOutput()
+        #expect(writer.error == expected)
+        writer.clear()
+        #expect(writer.error == nil)
+    }
+
+    @Test func interleavingRejectsReversedDecodeTimeAndClearDiscardsOldTail() throws {
+        let writer = TSWriter(outputSink: { _ in true })
+        writer.expectedMedias = [.audio, .video]
+        let a = audio(), v = try video(10)
+        writer.audioFormat = a.format; writer.videoFormat = v.formatDescription
+        writer.append(a, when: time(10)); writer.append(v)
+        writer.append(a, when: time(10.1)); writer.append(a, when: time(10.05))
+        #expect(writer.error == .invalidTimestamp)
+        writer.clear()
+        writer.expectedMedias = [.audio]
+        writer.audioFormat = a.format
+        var rows: [TSWriter.MuxedPacketFrame] = []
+        writer.muxedPacketObserver = { rows.append($0) }
+        writer.append(a, when: time(0)); writer.finishOutput()
+        #expect(writer.error == nil && rows.count == 1)
+        #expect(rows.first?.sourcePTS == time(0).makeTime())
+    }
+
     private func audio(_ marker: UInt8 = 42, sampleRate: Double = 48_000) -> AVAudioCompressedBuffer {
         var description = AudioStreamBasicDescription(mSampleRate: sampleRate, mFormatID: kAudioFormatMPEG4AAC,
             mFormatFlags: 2, mBytesPerPacket: 0, mFramesPerPacket: 1024, mBytesPerFrame: 0,
@@ -861,11 +938,12 @@ import libsrt
         let v = try video(10.125)
         writer.videoFormat = v.formatDescription
         writer.append(v)
+        writer.finishOutput()
         writer.clear()
         let result = await packets(output)
         let audioPackets = result.filter { $0.pid == TSWriter.defaultAudioPID && $0.payloadUnitStartIndicator }
         let videoPackets = result.filter { $0.pid == TSWriter.defaultVideoPID && $0.payloadUnitStartIndicator }
-        #expect(audioPackets.count == 5)
+        #expect(audioPackets.count == 5 && videoPackets.count == 1)
         #expect(audioPackets.map { $0.payload[21] } == [1, 2, 3, 4, 5])
         if let first = audioPackets.first, let video = videoPackets.first {
             #expect(abs(pts(first) - 9000) <= 1)
@@ -886,6 +964,7 @@ import libsrt
         #expect(CMBlockBufferReplaceDataBytes(with: &replacement, blockBuffer: v.dataBuffer!,
             offsetIntoDestination: 5, dataLength: 1) == noErr)
         writer.append(a, when: time(10))
+        writer.finishOutput()
         writer.clear()
         let result = await packets(output).filter { $0.payloadUnitStartIndicator }
         let ap = try #require(result.first { $0.pid == TSWriter.defaultAudioPID })
@@ -984,6 +1063,7 @@ import libsrt
         let v = try video(10.25, dts: CMTime(seconds: 10, preferredTimescale: 48_000))
         writer.videoFormat = v.formatDescription
         writer.append(v)
+        writer.finishOutput()
         writer.clear()
         let result = await packets(output)
         let ap = try #require(result.first { $0.pid == TSWriter.defaultAudioPID })

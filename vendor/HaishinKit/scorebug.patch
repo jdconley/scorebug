@@ -1454,7 +1454,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -7,7 +7,637 @@
+@@ -7,7 +7,641 @@
  /// An actor that provides the interface to control a one-way channel over a SRTConnection.
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
@@ -1489,6 +1489,9 @@
 +        case startupByteLimitExceeded
 +        case startupTimeLimitExceeded
 +        case incompleteStartup
++        case interleavePacketLimitExceeded
++        case interleaveByteLimitExceeded
++        case interleaveTimeLimitExceeded
 +    }
 +
 +    /// First terminal publishing failure; retained through close and reset by publish.
@@ -2009,7 +2012,8 @@
 +        }
 +    }
 +    private var videoSubmission: VideoSubmissionState?
-+    var rawVideoFramesDropped: UInt64 { outgoing.rawVideoFramesDropped }
++    /// Cumulative pre-encoder queue evictions for this publishing session; not transport loss.
++    public var rawVideoFramesDropped: UInt64 { outgoing.rawVideoFramesDropped }
 +    var isVideoMutationPending: Bool { videoMutation != nil }
 +    private var videoMutation: UUID?
 +    // Internal deterministic scheduling seam; absent from public construction.
@@ -2092,7 +2096,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +652,7 @@
+@@ -22,7 +656,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -2101,7 +2105,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +662,66 @@
+@@ -32,8 +666,66 @@
      }
 
      /// Creates a new stream object.
@@ -2169,7 +2173,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +733,9 @@
+@@ -45,7 +737,9 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -2180,7 +2184,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +747,46 @@
+@@ -57,8 +751,46 @@
              }
              return
          }
@@ -2228,7 +2232,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +796,55 @@
+@@ -68,26 +800,55 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -2304,7 +2308,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +873,100 @@
+@@ -116,16 +877,100 @@
          readyState = .playing
      }
 
@@ -2410,7 +2414,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +987,44 @@
+@@ -146,23 +991,44 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2458,7 +2462,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +1034,36 @@
+@@ -172,16 +1038,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -2659,7 +2663,7 @@
              writeProgramIfNeeded()
          }
      }
-@@ -68,77 +84,216 @@
+@@ -68,77 +84,287 @@
          }
          return false
      }
@@ -2681,6 +2685,22 @@
 +        var byteCount = 8 * 1024 * 1024
 +        var mediaSpan: Double = 2
 +    }
++
++    struct InterleaveLimits {
++        var packetCount = 256
++        var byteCount = 8 * 1024 * 1024
++        var mediaSpan: Double = 2
++    }
++    private struct InterleavedPacket {
++        let packet: PendingPacket
++        let ticks: UInt64
++        var bytes: Int { packet.pes.data.count + 6 + (packet.pes.optionalPESHeader?.data.count ?? 0) }
++    }
++    private let interleaveLimits: InterleaveLimits
++    private var interleavesMedia = false
++    private var interleaved: [InterleavedPacket] = []
++    private var interleavedBytes = 0
++    private var latestDecodeTicks: [AVMediaType: UInt64] = [:]
 +
 +    /// One PES accepted by the local output boundary, never network delivery.
 +    struct MuxedPacketFrame: Sendable {
@@ -2717,6 +2737,7 @@
      /// Creates a new instance with segument duration.
 -    init(segmentDuration: Double = 2.0) {
 +    init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init(),
++         interleaveLimits: InterleaveLimits = .init(),
 +         outputLimits: PublishingQueue<Data>.Limits = .init(count: 32, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
 +         maximumPayloadBytes: Int = 2 * 1024 * 1024,
 +         outputSink: ((Data) -> Bool)? = nil) {
@@ -2728,6 +2749,7 @@
 -
 -    /// Appends a buffer.
 +        self.startupLimits = startupLimits
++        self.interleaveLimits = interleaveLimits
 +    }
 +
 +    /// Appends audio, retaining startup payloads until each required track arrives.
@@ -2739,6 +2761,20 @@
 -            audioTimeStamp = when.makeTime()
 -            if pcrPID == TSWriter.defaultAudioPID {
 -                clockTimeStamp = audioTimeStamp
+-            }
+-        }
+-        if var pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: audioTimeStamp) {
+-            pes.streamID = 192
+-            writePacketizedElementaryStream(
+-                TSWriter.defaultAudioPID,
+-                PES: pes,
+-                timeStamp: when.makeTime(),
+-                randomAccessIndicator: true
+-            )
+-        }
+-    }
+-
+-    /// Appends a buffer.
 +        guard error == nil, let audioBuffer = audioBuffer as? AVAudioCompressedBuffer else { return }
 +        guard when.isHostTimeValid else { fail(.invalidTimestamp); return }
 +        let timestamp = when.makeTime()
@@ -2759,7 +2795,32 @@
 +    }
 +
 +    /// Appends a compressed video buffer.
-+    func append(_ sampleBuffer: CMSampleBuffer) {
+     func append(_ sampleBuffer: CMSampleBuffer) {
+-        guard canWriteFor else {
+-            return
+-        }
+-        switch sampleBuffer.formatDescription?.mediaType {
+-        case .video:
+-            if videoTimeStamp == .invalid {
+-                videoTimeStamp = sampleBuffer.presentationTimeStamp
+-                if pcrPID == Self.defaultVideoPID {
+-                    clockTimeStamp = videoTimeStamp
+-                }
+-            }
+-            if var pes = PacketizedElementaryStream(sampleBuffer, timeStamp: videoTimeStamp) {
+-                let timestamp = sampleBuffer.decodeTimeStamp == .invalid ?
+-                    sampleBuffer.presentationTimeStamp : sampleBuffer.decodeTimeStamp
+-                pes.streamID = 224
+-                writePacketizedElementaryStream(
+-                    Self.defaultVideoPID,
+-                    PES: pes,
+-                    timeStamp: timestamp,
+-                    randomAccessIndicator: !sampleBuffer.isNotSync
+-                )
+-            }
+-        default:
+-            break
+-        }
 +        guard error == nil, sampleBuffer.formatDescription?.mediaType == .video else { return }
 +        let pts = sampleBuffer.presentationTimeStamp
 +        let dts = sampleBuffer.decodeTimeStamp
@@ -2790,46 +2851,8 @@
 +            guard (high - low).seconds <= startupLimits.mediaSpan else {
 +                fail(.startupTimeLimitExceeded)
 +                return false
-             }
-         }
--        if var pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: audioTimeStamp) {
--            pes.streamID = 192
--            writePacketizedElementaryStream(
--                TSWriter.defaultAudioPID,
--                PES: pes,
--                timeStamp: when.makeTime(),
--                randomAccessIndicator: true
--            )
--        }
--    }
--
--    /// Appends a buffer.
--    func append(_ sampleBuffer: CMSampleBuffer) {
--        guard canWriteFor else {
--            return
--        }
--        switch sampleBuffer.formatDescription?.mediaType {
--        case .video:
--            if videoTimeStamp == .invalid {
--                videoTimeStamp = sampleBuffer.presentationTimeStamp
--                if pcrPID == Self.defaultVideoPID {
--                    clockTimeStamp = videoTimeStamp
--                }
--            }
--            if var pes = PacketizedElementaryStream(sampleBuffer, timeStamp: videoTimeStamp) {
--                let timestamp = sampleBuffer.decodeTimeStamp == .invalid ?
--                    sampleBuffer.presentationTimeStamp : sampleBuffer.decodeTimeStamp
--                pes.streamID = 224
--                writePacketizedElementaryStream(
--                    Self.defaultVideoPID,
--                    PES: pes,
--                    timeStamp: timestamp,
--                    randomAccessIndicator: !sampleBuffer.isNotSync
--                )
--            }
--        default:
--            break
--        }
++            }
++        }
 +        guard let clock = transportClock ?? TransportClock(origin: min(pts, time)),
 +              clock.presentationTimestamp(for: pts) != nil,
 +              clock.presentationTimestamp(for: time) != nil else {
@@ -2842,7 +2865,13 @@
 +    // Reject oversized input before allocating a compressed payload copy.
 +    private func preflightPayload(_ bytes: Int) -> Bool {
 +        guard bytes <= maximumPayloadBytes else { fail(.payloadByteLimitExceeded); return false }
-+        guard !origin.isValid else { return true }
++        guard !origin.isValid else {
++            if interleavesMedia {
++                guard interleaved.count < interleaveLimits.packetCount else { fail(.interleavePacketLimitExceeded); return false }
++                guard bytes <= interleaveLimits.byteCount - interleavedBytes else { fail(.interleaveByteLimitExceeded); return false }
++            }
++            return true
++        }
 +        guard pending.count < startupLimits.packetCount else { fail(.startupPacketLimitExceeded); return false }
 +        guard bytes <= startupLimits.byteCount - pendingBytes else { fail(.startupByteLimitExceeded); return false }
 +        return true
@@ -2850,7 +2879,7 @@
 +
 +    private func append(_ packet: PendingPacket) {
 +        if origin.isValid {
-+            emit(packet)
++            interleave(packet)
 +            return
 +        }
 +        let minimum = min(packet.presentationTime, packet.time)
@@ -2872,6 +2901,7 @@
 +            clock.presentationTimestamp(for: $0.time) != nil
 +        }) else { fail(.invalidTimestamp); return }
 +        transportClock = clock
++        interleavesMedia = expectedMedias.contains(.audio) && expectedMedias.contains(.video)
 +        lastPCRTicks = 0
 +        rotatedClockTicks = 0
 +        pcrPID = initialMedias.contains(.video) ? Self.defaultVideoPID : Self.defaultAudioPID
@@ -2879,7 +2909,49 @@
 +        let startup = pending
 +        pending.removeAll(keepingCapacity: false)
 +        pendingBytes = 0
-+        for packet in startup { emit(packet) }
++        for packet in startup { interleave(packet) }
++    }
++
++    /// Keep the leading compressed track behind the other track's observed DTS.
++    /// This changes packet order only, never source timestamps or codec settings.
++    private func interleave(_ packet: PendingPacket) {
++        guard error == nil else { return }
++        guard interleavesMedia else { emit(packet); return }
++        guard let ticks = transportClock?.clockReference(for: packet.time),
++              latestDecodeTicks[packet.media].map({ ticks >= $0 }) ?? true else {
++            fail(.invalidTimestamp); return
++        }
++        let entry = InterleavedPacket(packet: packet, ticks: ticks)
++        guard interleaved.count < interleaveLimits.packetCount else { fail(.interleavePacketLimitExceeded); return }
++        guard entry.bytes <= interleaveLimits.byteCount - interleavedBytes else { fail(.interleaveByteLimitExceeded); return }
++        let other: AVMediaType = packet.media == .audio ? .video : .audio
++        if let otherTicks = latestDecodeTicks[other], ticks > otherTicks,
++           Double(ticks - otherTicks) / 90_000 > interleaveLimits.mediaSpan {
++            fail(.interleaveTimeLimitExceeded); return
++        }
++        if let first = interleaved.first, ticks > first.ticks,
++           Double(ticks - first.ticks) / 90_000 > interleaveLimits.mediaSpan {
++            fail(.interleaveTimeLimitExceeded); return
++        }
++        latestDecodeTicks[packet.media] = ticks
++        let index = interleaved.firstIndex { $0.ticks > ticks } ?? interleaved.endIndex
++        interleaved.insert(entry, at: index)
++        interleavedBytes += entry.bytes
++        drainInterleaved(flush: false)
++    }
++
++    private func drainInterleaved(flush: Bool) {
++        let watermark: UInt64
++        if flush { watermark = .max }
++        else {
++            guard let audio = latestDecodeTicks[.audio], let video = latestDecodeTicks[.video] else { return }
++            watermark = min(audio, video)
++        }
++        while let first = interleaved.first, first.ticks <= watermark, error == nil {
++            interleaved.removeFirst()
++            interleavedBytes -= first.bytes
++            emit(first.packet)
++        }
 +    }
 +
 +    private func emit(_ packet: PendingPacket) {
@@ -2912,6 +2984,9 @@
 +    private func fail(_ failure: SRTStream.MuxerError) {
 +        guard error == nil else { return }
 +        error = failure
++        interleaved.removeAll(keepingCapacity: false)
++        interleavedBytes = 0
++        latestDecodeTicks.removeAll()
 +        pending.removeAll(keepingCapacity: false)
 +        pendingBytes = 0
 +        outputQueue?.finish()
@@ -2925,6 +3000,7 @@
 +        // Accepted PES cannot disappear just because another expected track
 +        // never arrived before stop. No valid common-origin stream was emitted.
 +        guard pending.isEmpty else { fail(.incompleteStartup); return }
++        drainInterleaved(flush: true)
 +        outputQueue?.finish()
 +        outputAccounting.finish()
      }
@@ -2935,7 +3011,7 @@
          audioFormat = nil
          audioContinuityCounter = 0
          videoFormat = nil
-@@ -147,17 +302,27 @@
+@@ -147,17 +373,31 @@
          pat.programs.removeAll()
          pat.programs = [1: Self.defaultPMTPID]
          pmt = TSProgramMap()
@@ -2944,6 +3020,10 @@
 -        clockTimeStamp = .zero
 -        rotatedTimeStamp = .zero
 +        transportClock = nil
++        interleavesMedia = false
++        interleaved.removeAll(keepingCapacity: false)
++        interleavedBytes = 0
++        latestDecodeTicks.removeAll()
 +        startupMinimum = .invalid
 +        startupMaximum = .invalid
 +        pending.removeAll(keepingCapacity: false)
@@ -2973,7 +3053,7 @@
 
          packets[0].adaptationField?.randomAccessIndicator = randomAccessIndicator
 
-@@ -176,20 +341,33 @@
+@@ -176,20 +416,33 @@
              bytes.append(packet.data)
          }
 
@@ -3018,7 +3098,7 @@
      }
 
      private func writeProgram() {
-@@ -208,18 +386,17 @@
+@@ -208,18 +461,17 @@
          guard !expectedMedias.isEmpty else {
              return
          }

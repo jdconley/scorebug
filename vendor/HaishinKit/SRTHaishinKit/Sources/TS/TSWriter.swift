@@ -100,6 +100,22 @@ final class TSWriter {
         var mediaSpan: Double = 2
     }
 
+    struct InterleaveLimits {
+        var packetCount = 256
+        var byteCount = 8 * 1024 * 1024
+        var mediaSpan: Double = 2
+    }
+    private struct InterleavedPacket {
+        let packet: PendingPacket
+        let ticks: UInt64
+        var bytes: Int { packet.pes.data.count + 6 + (packet.pes.optionalPESHeader?.data.count ?? 0) }
+    }
+    private let interleaveLimits: InterleaveLimits
+    private var interleavesMedia = false
+    private var interleaved: [InterleavedPacket] = []
+    private var interleavedBytes = 0
+    private var latestDecodeTicks: [AVMediaType: UInt64] = [:]
+
     /// One PES accepted by the local output boundary, never network delivery.
     struct MuxedPacketFrame: Sendable {
         let media: SRTStream.MuxedPacketFrame.Media
@@ -127,6 +143,7 @@ final class TSWriter {
     private var videoContinuityCounter: UInt8 = 0
     /// Creates a new instance with segument duration.
     init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init(),
+         interleaveLimits: InterleaveLimits = .init(),
          outputLimits: PublishingQueue<Data>.Limits = .init(count: 32, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
          maximumPayloadBytes: Int = 2 * 1024 * 1024,
          outputSink: ((Data) -> Bool)? = nil) {
@@ -135,6 +152,7 @@ final class TSWriter {
         self.outputSink = outputSink
         self.segmentDuration = segmentDuration
         self.startupLimits = startupLimits
+        self.interleaveLimits = interleaveLimits
     }
 
     /// Appends audio, retaining startup payloads until each required track arrives.
@@ -204,7 +222,13 @@ final class TSWriter {
     // Reject oversized input before allocating a compressed payload copy.
     private func preflightPayload(_ bytes: Int) -> Bool {
         guard bytes <= maximumPayloadBytes else { fail(.payloadByteLimitExceeded); return false }
-        guard !origin.isValid else { return true }
+        guard !origin.isValid else {
+            if interleavesMedia {
+                guard interleaved.count < interleaveLimits.packetCount else { fail(.interleavePacketLimitExceeded); return false }
+                guard bytes <= interleaveLimits.byteCount - interleavedBytes else { fail(.interleaveByteLimitExceeded); return false }
+            }
+            return true
+        }
         guard pending.count < startupLimits.packetCount else { fail(.startupPacketLimitExceeded); return false }
         guard bytes <= startupLimits.byteCount - pendingBytes else { fail(.startupByteLimitExceeded); return false }
         return true
@@ -212,7 +236,7 @@ final class TSWriter {
 
     private func append(_ packet: PendingPacket) {
         if origin.isValid {
-            emit(packet)
+            interleave(packet)
             return
         }
         let minimum = min(packet.presentationTime, packet.time)
@@ -234,6 +258,7 @@ final class TSWriter {
             clock.presentationTimestamp(for: $0.time) != nil
         }) else { fail(.invalidTimestamp); return }
         transportClock = clock
+        interleavesMedia = expectedMedias.contains(.audio) && expectedMedias.contains(.video)
         lastPCRTicks = 0
         rotatedClockTicks = 0
         pcrPID = initialMedias.contains(.video) ? Self.defaultVideoPID : Self.defaultAudioPID
@@ -241,7 +266,49 @@ final class TSWriter {
         let startup = pending
         pending.removeAll(keepingCapacity: false)
         pendingBytes = 0
-        for packet in startup { emit(packet) }
+        for packet in startup { interleave(packet) }
+    }
+
+    /// Keep the leading compressed track behind the other track's observed DTS.
+    /// This changes packet order only, never source timestamps or codec settings.
+    private func interleave(_ packet: PendingPacket) {
+        guard error == nil else { return }
+        guard interleavesMedia else { emit(packet); return }
+        guard let ticks = transportClock?.clockReference(for: packet.time),
+              latestDecodeTicks[packet.media].map({ ticks >= $0 }) ?? true else {
+            fail(.invalidTimestamp); return
+        }
+        let entry = InterleavedPacket(packet: packet, ticks: ticks)
+        guard interleaved.count < interleaveLimits.packetCount else { fail(.interleavePacketLimitExceeded); return }
+        guard entry.bytes <= interleaveLimits.byteCount - interleavedBytes else { fail(.interleaveByteLimitExceeded); return }
+        let other: AVMediaType = packet.media == .audio ? .video : .audio
+        if let otherTicks = latestDecodeTicks[other], ticks > otherTicks,
+           Double(ticks - otherTicks) / 90_000 > interleaveLimits.mediaSpan {
+            fail(.interleaveTimeLimitExceeded); return
+        }
+        if let first = interleaved.first, ticks > first.ticks,
+           Double(ticks - first.ticks) / 90_000 > interleaveLimits.mediaSpan {
+            fail(.interleaveTimeLimitExceeded); return
+        }
+        latestDecodeTicks[packet.media] = ticks
+        let index = interleaved.firstIndex { $0.ticks > ticks } ?? interleaved.endIndex
+        interleaved.insert(entry, at: index)
+        interleavedBytes += entry.bytes
+        drainInterleaved(flush: false)
+    }
+
+    private func drainInterleaved(flush: Bool) {
+        let watermark: UInt64
+        if flush { watermark = .max }
+        else {
+            guard let audio = latestDecodeTicks[.audio], let video = latestDecodeTicks[.video] else { return }
+            watermark = min(audio, video)
+        }
+        while let first = interleaved.first, first.ticks <= watermark, error == nil {
+            interleaved.removeFirst()
+            interleavedBytes -= first.bytes
+            emit(first.packet)
+        }
     }
 
     private func emit(_ packet: PendingPacket) {
@@ -274,6 +341,9 @@ final class TSWriter {
     private func fail(_ failure: SRTStream.MuxerError) {
         guard error == nil else { return }
         error = failure
+        interleaved.removeAll(keepingCapacity: false)
+        interleavedBytes = 0
+        latestDecodeTicks.removeAll()
         pending.removeAll(keepingCapacity: false)
         pendingBytes = 0
         outputQueue?.finish()
@@ -287,6 +357,7 @@ final class TSWriter {
         // Accepted PES cannot disappear just because another expected track
         // never arrived before stop. No valid common-origin stream was emitted.
         guard pending.isEmpty else { fail(.incompleteStartup); return }
+        drainInterleaved(flush: true)
         outputQueue?.finish()
         outputAccounting.finish()
     }
@@ -303,6 +374,10 @@ final class TSWriter {
         pat.programs = [1: Self.defaultPMTPID]
         pmt = TSProgramMap()
         transportClock = nil
+        interleavesMedia = false
+        interleaved.removeAll(keepingCapacity: false)
+        interleavedBytes = 0
+        latestDecodeTicks.removeAll()
         startupMinimum = .invalid
         startupMaximum = .invalid
         pending.removeAll(keepingCapacity: false)

@@ -20,14 +20,18 @@ Do not poll physical devices or request passcodes now; earlier readiness questio
 are superseded for current work. Existing local functional passes stand, but the
 remaining simulator/media failures below are not green.
 
-Next local batch: trace TSWriter A/V emission against encoder completion, using
-`headless-native-tC9YyK/packet-tail-analysis.json`. The interrupted input already
-has50.655ms extra audio; the mux adds about one video frame (83.998ms total).
-Both interrupted saved MP4s decode with84–87ms tails. Recovered packet evidence
-has one malformed row and is explicitly invalid; recovered saved files decode.
-New bounded packet tails and private guardian files survive worker SIGKILL.
-See [session](2026-09-28-crash-packet-tails.md). Do not infer that this fixes the
-prior107ms/native or500ms/simulator cases. No archive/UI/identity run was repeated.
+Latest production change: bounded TSWriter DTS interleaving (256PES/8MiB/2s),
+clean drain, unchanged timestamps and immediate single-track behavior.57focused SDK
+checks and complete short crash media pass. See [session](2026-09-28-dts-interleaving.md).
+`headless-native-a1rmZ9/interleave-acceptance.json`:2123continuous archive frames,
+matching live62–443/962–2102, all five MP4s decode, no internal A/V gaps;
+interrupted tails59.159ms, recovered≤16.889ms, cleanup[]. Do not rerun unchanged.
+
+Next local investigation: FFmpeg per-track shutdown/decoder queues or an ordered
+transport observation for the general abrupt-tail gate. Independent demux logs
+show track boundaries, not wire arrival order; neither the prior50.655ms nor the
+current71.978ms demux lead proves upstream emission order. Source interleaving is
+now covered, but prior107ms/native and500ms/simulator tails are not declared fixed.
 
 Saved simulator congestion loss is confined to the actual restriction; before/after
 periods remain30fps and the archive is continuous. Do not repeat failed GOP/latency
@@ -64,7 +68,7 @@ Simulator UHD/congestion and colocated VideoToolbox/probe limits remain document
   no unchanged fault sweeps. Latest worker crash after guardian pipe isolation:
   `headless-native-8guvcT/worker-crash-acceptance.json`; continuous2125frame archive,
   same publisher,17.267s live gap; interrupted tail still106–107ms, recovered≤37.5ms.
-  Latest incoming/mux boundary timing is now in `headless-native-tC9YyK`;
+  Latest incoming/mux boundary timing is now in `headless-native-tC9YyK` and `headless-native-a1rmZ9`;
   no evidence supports changing guardian timeouts.
 
 ## Hands-on use and environment

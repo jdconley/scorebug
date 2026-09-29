@@ -38,6 +38,9 @@ public actor SRTStream {
         case startupByteLimitExceeded
         case startupTimeLimitExceeded
         case incompleteStartup
+        case interleavePacketLimitExceeded
+        case interleaveByteLimitExceeded
+        case interleaveTimeLimitExceeded
     }
 
     /// First terminal publishing failure; retained through close and reset by publish.

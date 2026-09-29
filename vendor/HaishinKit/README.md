@@ -419,3 +419,10 @@ priority, lease, revocation and byte limits. Standard probes retain one-message
 pacing. UHD wake minimum is200µs. This is a sender scheduling change; v4 wire
 format and measured receiver admission are unchanged. Rate ceilings are permissions, not
 measured network or encoder capacity. App capability/admission wiring remains separate.
+
+The TS writer also interleaves dual-track compressed output by observed decode
+timestamps, rather than codec callback order. Its finite encoded-PES queue holds
+only the leading track, retains timestamps, drains on clean finish and fails on
+count/byte/time/backward-DTS violations. Single-track output stays immediate.
+See the [publishing bounds](../../docs/sdk-publishing-bounds.md); this is separate
+from raw-frame queues and never grants adaptation health or delivery credit.
