@@ -12,6 +12,15 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
+Latest direction: prioritize speed and simulator feature completion. The local
+functional checklist is complete on documented paths; do not restart completed
+acceptance or ask for hardware readiness. See [fast iteration](../fast-iteration.md).
+Next engineering work is the interrupted-output-tail path and unsupported backend
+gating in the plan. Inspect existing evidence/code first; choose one targeted check
+only after a concrete fix or new hypothesis. Other-host qualification and long
+soaks are later work, not prerequisites for local app iteration.
+
+
 Sustained native UHD PASSES: `headless-native-yFO9Hu/sustained-acceptance.json`.
 1050s capture/1056throughfinalization, normal ladder,4Kconfirmed316s. Receiver22635
 actualUHDframes/754.5s with exact30fps; no SDK/appdrops/submiterrors, hardwareselected.

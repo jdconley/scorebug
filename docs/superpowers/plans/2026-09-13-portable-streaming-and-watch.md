@@ -43,77 +43,44 @@ platform limits. [Session logs](../../session-logs/README.md) own experiments,
 commands and reviews. [NEXT](../../session-logs/NEXT.md) owns the current checkout
 and immediate handoff. Checkmarks mean the stated scope passes, not release readiness.
 
-## Completed local workflows
+## Local feature checklist
 
-- [x] Native phone A records/streams while phone B creates, joins and scores without
-  capture permission; archive/export and both changing-overlay outputs verified.
-- [x] Separate native Watch takes over, scores/undoes, relaunches and ends the match
-  while filming continues; real HTTP with explicitly limited simulator setup.
-- [x] Lost-reply/offline relaunch and pending-command takeover/stale rejection retain
-  exactly one intended durable outcome per command.
-- [x] Clean archive recovery/export through source interruption, storage shortage and
-  writer pressure; forced-termination/relaunch and playback coverage retained.
-- [x] Automatic API/worker restart and hard worker-crash recovery preserve the archive;
-  fresh recording/broadcast after source failure succeeds.
-- [x] Graceful remote match end and bounded publisher stop preserve final A/V tails.
-- [x] 1080p measured upload ladder and healthy periods around congestion meet media
-  criteria. Local recording continues after streaming stops.
-- [x] Native 4K recording/export/playback and bounded UHD probe protocol implemented;
-  source/output capability gating preserves the 1080 ceiling when unsupported.
-- [x] Relay credential isolation, revocation, generations, admission drain and late
-  current-reader decoding pass local checks.
-- [x] Worker readiness/backend/output reporting, local Mac service operation and
-  persistent VPS Compose wiring pass their local checks.
-- [x] README, architecture, runbooks and platform matrix reconciled; path-filtered
-  native CI added alongside existing server/relay/worker/container checks.
+These checks reuse retained evidence in the acceptance matrix; they are not a new
+full-suite run. Local functional integration is complete on the documented paths.
 
-## Remaining local work, in order
+- [x] Phone A records and streams while native phone B creates/joins and scores.
+- [x] Native Watch scores, takes over, undoes, relaunches and ends the match through
+  the real API while filming continues. Companion setup/radios remain unqualified.
+- [x] Durable commands reconcile offline/lost replies and reject stale authority.
+- [x] Clean archive supports recovery, export/playback, storage/queue/source faults,
+  and continues after streaming stops.
+- [x] SRT → changing score overlay → mock RTMP MP4, plus optional proxy MP4.
+- [x] Progressive upload starts low, climbs with measured headroom, falls back under
+  congestion and reconnects automatically without another Start.
+- [x] API/worker restart, publisher/relay outages and periodic packet loss have
+  retained recovery and saved-media evidence.
+- [x] Native Mac/software-proxy 1080p and sustained adaptive 4K pass with complete
+  clean archive and both final outputs. Simulator UHD limits remain below.
+- [x] Relay credentials/generations, bounded telemetry and worker readiness covered.
+- [x] Mac service and persistent Linux API/relay deployment wiring implemented.
 
-- [x] Implement automatic native-publisher reconnection bound to the active recording
-  and authorized broadcast. Fresh control, bounded retries and Stop/ownership guards
-  pass; an actual SRT disconnect rejoins without another broadcast Start. Clean
-  archive remains continuous and both outputs resume; measured live gap is reported.
-  Prolonged25s relay suspension also recovers across failed retries, with a continuous
-  archive and35.5667s live gap.
+## Remaining local work
 
-- [x] Verify normal local adaptive4K with clean archive and both final MP4 outputs.
-  Software proxy passes330s, including74s of actual4K/24Mbps; no source-frame/audio
-  gaps and A/V ends≤14ms. Static overlay is visually checked; dynamic scoring has
-  separate simulator evidence. Sustained/backend limits remain tracked below.
-- [x] Qualify native local congestion recovery with actual decoded media: Mac native
-  capture/software proxy passes a 25-second 750 kbps collapse, normal minimum reset
-  and return to 720p, with no video/audio gaps and 30 fresh fps throughout.
-  Earlier simulator media failures remain backend limits, not retroactive passes.
-- [x] Verify retained deterministic stale-report/no-progress, ownership/revision,
-  thermal/queue-pressure and continuous-control coverage in the
-  [local fault matrix](../../local-fault-coverage.md). Native1080 boundaries/media
-  retain their separate integration pass; physical pressure is not simulated proof.
-- [x] Verify isolated publishing-hop packet blackhole and restoration:25s bidirectional
-  loss, repeated retries, same broadcast and continuous clean archive; both outputs
-  recover with29.3333s measured live gap.
-- [x] Verify combined client API/SRT outage and restoration: 25 seconds offline,
-  continuous clean archive, same broadcast, automatic recovery and both MP4 outputs.
-  Measured live gap 27.233 seconds; physical radio routes remain deferred.
-- [x] Verify periodic packet-loss recovery: every100th datagram lost in both
-  directions, all dropped data repaired, continuous archive/live30fps and gap-free
-  audio in both outputs. Short nativeMac/software-proxy qualification.
-- [x] Reconcile optional delivery-audit retention/terminal coverage: production uses
-  continuous bounded-state monitoring; selected finite audits report overflow and
-  cannot return health for unretained rows. Row/byte/serialization terminal behavior
-  and runtime monitoring beyond audit caps have retained focused passing evidence.
-  Missing live audio remains a separate media failure; limits are unchanged.
-- [ ] Bound interrupted output tails across abrupt failure timing/load. Graceful stops
-  pass; current native/software-proxy crash retains107ms extra audio, while older
-  simulator/VideoToolbox output retains508–548ms. File-input decoder-mode comparison
-  does not reproduce the live tail; do not change decoder defaults on that evidence.
-- [x] Qualify sustained native Mac/software-proxy UHD: normal adaptive ramp,1050s
-  capture,754.5s actual4K receiver video, zero input/media loss, clean archive and
-  both MP4 outputs fully decoded with gap-free audio and A/V ends≤35ms.
-- [ ] Qualify remaining profiles/backends and full-match operation. Preserve the
-  working software-proxy path; colocated VideoToolbox/probe, simulator congestion
-  and simulator UHD encoder limits remain explicit.
-- [ ] Confirm hosted native CI when a push is authorized. Hosted builds do not replace
-  local simulator/media acceptance.
+- [ ] Bound interrupted output tails across abrupt failure timing/load. Current
+  native/software-proxy crash retains 107 ms extra audio; older simulator/
+  VideoToolbox outputs retain 508–548 ms. Graceful stops pass. Reuse saved output
+  and inspect the responsible path before choosing another targeted reproduction.
+- [ ] Resolve or explicitly gate unsupported simulator/backend combinations:
+  simulator UHD pending-input limit, simulator severe-congestion media gaps, and
+  colocated VideoToolbox/probe input drops. Preserve the working software-proxy
+  path; no repeated parameter sweeps or larger queues to hide overload.
+
+## Later qualification (not missing local features)
+
+- [ ] Qualify remaining profiles/backends and full-match operation. Reuse the passed
+  sustained native Mac/software-proxy UHD result; do not repeat it unchanged.
+- [ ] Confirm hosted native CI when a push is authorized. Hosted builds do not
+  replace local simulator/media acceptance.
 
 ## Deferred hardware and external acceptance
 
@@ -135,9 +102,14 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 ## Iteration and completion policy
 
 Simulator-first; defer hardware until simulator-testable features work together.
-Batch related fixes, run focused checks, reuse passing evidence and incremental
-builds, and run broad integration only at workflow checkpoints. Use the headless
-native pipeline for media diagnosis. Do not repeat unchanged failing experiments.
+Batch related fixes, run one affected check after the batch, and reuse passing
+evidence and incremental builds. No application tests for documentation-only work.
+Run the full native vertical only after changes across component boundaries or a
+meaningful feature checkpoint; do not run every runner in sequence. Use the
+[fast iteration guide](../../fast-iteration.md) to select a check. Long soaks,
+hardware and other-host qualification do not belong in the routine edit loop.
+Use the headless native pipeline for media diagnosis. Before any new capture,
+state which unresolved question it answers. Do not repeat unchanged experiments.
 
 Preserve Downloads originals, recordings and unrelated simulators. No agents,
 pushes, cloud purchases, production keys or real broadcasts without authorization.

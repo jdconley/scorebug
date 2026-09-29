@@ -56,15 +56,12 @@ Node 22.13+ and the repository-pinned pnpm 9.15.0 are used for the TypeScript ap
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm run doctor
-pnpm test:container
-pnpm test:local
-pnpm test:relay
-pnpm test:worker software
 ```
+
+Use the [fast iteration guide](docs/fast-iteration.md) for focused checks and the
+full native simulator checkpoint. The full suite is a release/integration tool,
+not the default after every edit. Existing local feature evidence is recorded in
+the [acceptance matrix](docs/simulator-acceptance.md).
 
 Start the isolated fixtures with `pnpm local:up` and the local API with
 `pnpm dev:api`. On a clean host, first build the maintained ingest with
