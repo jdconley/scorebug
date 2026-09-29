@@ -405,7 +405,9 @@ extension FilmModelTests {
             let expectReconnect: Bool?
             let fixedUHD: Bool?
             let fixedUHDTransition: Bool?
+            let ownedUHDTransition: Bool?
             let directUHD: Bool?
+            let freezeUHDPolling: Bool?
         }
         let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         guard (10...600).contains(config.duration) else { throw URLError(.badURL) }
@@ -419,9 +421,15 @@ extension FilmModelTests {
         let fixedUHDTransition = config.fixedUHDTransition == true
         guard !fixedUHDTransition || fixedUHD else { throw URLError(.badURL) }
         streaming.nativeUHDTransitionForDiagnostics = fixedUHDTransition
+        let ownedUHDTransition = config.ownedUHDTransition == true
+        guard !ownedUHDTransition || fixedUHDTransition else { throw URLError(.badURL) }
+        streaming.nativeOwnedUHDTransitionForDiagnostics = ownedUHDTransition
         let directUHD = config.directUHD == true
         guard !directUHD || (config.uhd && !fixedUHD && config.duration <= 120 && config.timingAudit == false && config.expectReconnect != true) else { throw URLError(.badURL) }
         streaming.nativeDirectUHDForDiagnostics = directUHD
+        let freezeUHDPolling = config.freezeUHDPolling == true
+        guard !freezeUHDPolling || (directUHD && config.duration <= 60) else { throw URLError(.badURL) }
+        streaming.nativeFreezeUHDPollingForDiagnostics = freezeUHDPolling
         let nativeBoundaries = HeadlessNativeBoundaries()
         if config.uhd {
             streaming.nativeHealthFixtureObserver = { nativeBoundaries.health($0) }
@@ -474,6 +482,7 @@ extension FilmModelTests {
                 }
                 if config.uhd {
                     var row = nativeBoundaries.snapshot()
+                    row["adaptivePollingFrozen"] = String(streaming.nativeUHDPollingIsFrozen)
                     row["at"] = String(ProcessInfo.processInfo.systemUptime)
                     row["profile"] = streaming.qualityDiagnostic.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String] }?["policyAppliedProfile"]
                     if let ingress = streaming.ingressObservation {
@@ -492,7 +501,8 @@ extension FilmModelTests {
                         row["omittedVideoWindows"] = String(video.omittedCompletedWindowCount)
                     }
                     if fixedUHD {
-                        row["profile"] = fixedUHDTransition && transitionReceipt == nil ? "1080p30-fixed-diagnostic" : "2160p30-fixed-diagnostic"
+                        row["profile"] = fixedUHDTransition && transitionReceipt == nil
+                            ? (ownedUHDTransition ? "240p30-fixed-diagnostic" : "1080p30-fixed-diagnostic") : "2160p30-fixed-diagnostic"
                     }
                     boundaries.append(row)
                 }
@@ -521,7 +531,9 @@ extension FilmModelTests {
             "recordingAtEnd": wasRecording, "publishingAtEnd": wasPublishing,
             "timingAuditEnabled": timingAudit, "fixedUHD": fixedUHD, "boundarySampleCount": boundaries.count,
             "fixedUHDTransition": fixedUHDTransition, "transitionAcknowledged": transitionReceipt != nil,
+            "ownedUHDTransition": ownedUHDTransition,
             "directUHD": directUHD,
+            "freezeUHDPolling": freezeUHDPolling,
             "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
         try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
             to: artifact.appendingPathComponent("diagnostic.json"), options: .atomic)
@@ -536,6 +548,7 @@ extension FilmModelTests {
             XCTAssertEqual(transitionReceipt?.width, 3840)
             XCTAssertEqual(transitionReceipt?.height, 2160)
         }
+        if freezeUHDPolling { XCTAssertTrue(boundaries.contains { $0["adaptivePollingFrozen"] == "true" }) }
         if fixedUHD { XCTAssertFalse(boundaries.isEmpty, "Expected native boundary diagnostics") }
         else { XCTAssertFalse(samples.isEmpty, "Expected real quality diagnostics") }
         XCTAssertEqual(film.state, .idle, "Archive finalization must complete")

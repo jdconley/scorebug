@@ -81,7 +81,9 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   adaptive upload fails. Adaptive UHD still incurs SDK raw-input queue loss after
   the scalar readiness optimization. A short combined1080→UHD replacement passes;
   direct adaptive240→UHD reproduces loss by37s with hardware encoding confirmed.
-  Isolate adaptive probing/observation and native service waits using that short
+  Ongoing adaptive polling and publisher setup alone are excluded by short
+  comparisons; isolate pre-upgrade candidate encoding versus bandwidth probing
+  and native service waits using that short
   path before another full climb. The simulator's 4K candidate encoder exceeds
   its pending-input limit; keep that ceiling explicit rather than enlarging queues.
 - [ ] Reduce severe-congestion A/V loss and verify recovery with actual decoded media.

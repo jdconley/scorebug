@@ -12,25 +12,30 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current finding and next action
 
-Starting92d2369, added short DEBUG-only diagnostics; normal production settings
-unchanged. Combined guarded1080→UHD replacement (`headless-native-19R4qp`) passes:
-908consecutiveUHD receiver frames,0drops, hardware selection,36ms max submission.
-Direct adaptive240→UHD (`headless-native-MuMtrg`) reaches UHD26s and reproduces SDK
-raw loss37s; two trials yield15SDK drops, app drops0, hardware confirmed. First
-rollback reasons are missingCapacity/unknownPressure/trialRollback, not the previous
-sourceLoss decision. Native encoder waits on VideoToolbox XPC in a brief stack
-sample; root cause inside that service remains unproven. First loss precedes
-sampling, but389ms maximum at profiling/rollback is not an undisturbed measurement.
-See [session](2026-09-28-fast-uhd-reproduction.md); both artifacts contain
-`isolation-analysis.json` and producing HEAD/patch/hashes.
-Handles11000/63939/16512 joined0, cleanup empty. **No active jobs.**
+Starting8db60e7. Two short DEBUG-only comparisons:
+- `headless-native-mx1Wwc`: real direct UHD admission then freeze worker-status and
+  quality polling.18SDK raw drops,0app drops, hardware selected, median sampled
+  UHD submission33.05ms. Ongoing polling is not sufficient to explain the loss.
+- `headless-native-dZDuaa`: production UHD publisher wrapper/initial240 with a manual
+  guarded UHD change, no measurement campaigns.909consecutiveUHD receiver frames,
+ 0drops, hardware selected. Publisher setup alone does not reproduce the slowdown.
+Both recording/publishing survive; both incremental builds/targeted lifecycle tests
+pass. Reports are `isolation-analysis.json` in each capture with source patch/hashes.
+See [session](2026-09-28-uhd-polling-isolation.md).
+Handles23488/29036 joined0, cleanup empty. **No active jobs.**
 
-Next investigate adaptive probing/observation versus the passing combined
-replacement. Long runtime/intermediate transitions are not required to reproduce.
-Use `--direct-uhd on --duration 55` (normal admission/timing; skipped middle rungs,
-not full ladder acceptance). Preserve normal queues and thresholds. Profile native
-service work or isolate adaptive components before another production optimization.
-No unchanged300s climb, broad suite or full decode when boundary loss already fails.
+Next isolate pre-upgrade candidate native encoding from bandwidth probing, e.g. a
+short measurement warmup before the passing owned-publisher transition. Join the
+actual candidate lifecycle; do not fake admission evidence. No resource leak has
+been proven: candidate terminal code explicitly drains/stops/clears its codec.
+Do not make another history-copy, queue-size or timing optimization speculatively.
+
+Retain the faster real adaptive reproduction `--direct-uhd on --duration 55`:
+`headless-native-MuMtrg` reachesUHD26s and loses first SDK frame37s, with hardware
+confirmed. Its first rollback reason differs from full-ladder sourceLoss. Native
+submission stacks wait for VideoToolbox XPC; service cause remains unproven.
+Skipped rungs mean diagnostic only. No unchanged300s climb/full media decode;
+verify a fix here before returning to the full ladder.
 
 Already isolated: single/triple native hardware UHD encoders and verified SDK
 1080→UHD replacement each deliver450/450frames without drops; plain encoder count,
@@ -78,3 +83,7 @@ Short combined replacement: fixed command above plus `--fixed-uhd-transition on`
 Direct adaptive reproduction: normal command with `--direct-uhd on`, quality2160,
 audit off, no outage/fixed mode,≤120s. Private130s slice available at
 `artifacts/qa/uhd-readiness-20260928/content-215-345.mov`.
+
+Polling ablation: direct command plus `--freeze-uhd-polling on`,≤60s. It deliberately
+halts adaptive reaction after UHD; never acceptance. Owned-publisher transition:
+fixed-transition command plus `--owned-uhd-transition on` (starts240, no campaigns).

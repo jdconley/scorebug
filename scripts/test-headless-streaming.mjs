@@ -24,7 +24,9 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--publisher-blackhole-seconds',
       '--fixed-uhd',
       '--fixed-uhd-transition',
+      '--owned-uhd-transition',
       '--direct-uhd',
+      '--freeze-uhd-polling',
     ].includes(key) &&
       value &&
       !values.has(key),
@@ -62,8 +64,12 @@ assert(Number.isInteger(duration) && duration >= 10 && duration <= 600);
 const fixedUHD = values.get('--fixed-uhd') === 'on';
 const fixedUHDTransition = values.get('--fixed-uhd-transition') === 'on';
 assert(!values.has('--fixed-uhd-transition') || (fixedUHDTransition && fixedUHD));
+const ownedUHDTransition = values.get('--owned-uhd-transition') === 'on';
+assert(!values.has('--owned-uhd-transition') || (ownedUHDTransition && fixedUHDTransition));
 const directUHD = values.get('--direct-uhd') === 'on';
 assert(!values.has('--direct-uhd') || directUHD);
+const freezeUHDPolling = values.get('--freeze-uhd-polling') === 'on';
+assert(!values.has('--freeze-uhd-polling') || (freezeUHDPolling && directUHD && duration <= 60));
 assert(!directUHD || (quality === '2160' && !fixedUHD && duration <= 120 && timingAudit === 'off' && disconnectAfter === 0));
 assert(!values.has('--fixed-uhd') || values.get('--fixed-uhd') === 'on');
 assert(
@@ -129,7 +135,9 @@ try {
       expectReconnect: disconnectAfter > 0,
       fixedUHD,
       fixedUHDTransition,
+      ownedUHDTransition,
       directUHD,
+      freezeUHDPolling,
     }),
     { mode: 0o600 },
   );
@@ -199,7 +207,9 @@ try {
   assert.equal(result.publishingAtEnd, true);
   assert.equal(result.fixedUHD, fixedUHD);
   assert.equal(result.fixedUHDTransition, fixedUHDTransition);
+  assert.equal(result.ownedUHDTransition, ownedUHDTransition);
   assert.equal(result.directUHD, directUHD);
+  assert.equal(result.freezeUHDPolling, freezeUHDPolling);
   if (fixedUHDTransition) assert.equal(result.transitionAcknowledged, true);
   assert(
     (fixedUHD ? result.boundarySampleCount : result.samples.length) > 0,

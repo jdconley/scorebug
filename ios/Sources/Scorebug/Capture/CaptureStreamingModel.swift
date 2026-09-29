@@ -96,14 +96,20 @@ struct PublishingClockObservation: Equatable, Sendable {
     #if DEBUG
     var nativeFixedUHDForDiagnostics = false
     var nativeUHDTransitionForDiagnostics = false
+    var nativeOwnedUHDTransitionForDiagnostics = false
     var nativeDirectUHDForDiagnostics = false
+    var nativeFreezeUHDPollingForDiagnostics = false
+    var nativeUHDPollingIsFrozen: Bool {
+        nativeDirectUHDForDiagnostics && nativeFreezeUHDPollingForDiagnostics && appliedPublishingSettings?.profileID == "2160p30"
+    }
     /// Short combined-path isolation; never used by the app's adaptive controller.
     func performNativeUHDTransitionDiagnostic() async throws -> PublishingVideoProfileChange {
         guard nativeFixedUHDForDiagnostics, nativeUHDTransitionForDiagnostics,
               localState == .publishing, let session = publishing?.session else {
             throw SRTMediaPublisher.PublisherError.invalidState
         }
-        let baseline = try await session.setVideoBitRate(PublishingVideoProfile.hd1080.bitRate)
+        let baseline = try await session.setVideoBitRate(nativeOwnedUHDTransitionForDiagnostics
+            ? PublishingVideoProfile.minimumStartup.bitRate : PublishingVideoProfile.hd1080.bitRate)
         let replacement = try await session.setVideoProfile(.uhd2160, expecting: baseline)
         _ = try await session.setVideoBitRate(PublishingVideoProfile.uhd2160.bitRate, expecting: .replacement(replacement))
         return replacement
@@ -587,9 +593,14 @@ struct PublishingClockObservation: Equatable, Sendable {
                     #if DEBUG
                     if nativeFixedUHDForDiagnostics {
                         guard allowsUHD else { throw SRTMediaPublisher.PublisherError.invalidState }
+                        if nativeOwnedUHDTransitionForDiagnostics {
+                            publisher = Self.productionUHDPublisher(url: access.publishUrl, observations: observations,
+                                healthObserver: nativeHealthFixtureObserver, submissionObserver: nativeSubmissionFixtureObserver)
+                        } else {
                         publisher = SRTMediaPublisher(url: access.publishUrl, observations: observations,
                             videoProfile: nativeUHDTransitionForDiagnostics ? .hd1080 : .uhd2160,
                             healthObserver: nativeHealthFixtureObserver, encoderSubmissionObserver: nativeSubmissionFixtureObserver)
+                        }
                     } else {
                     publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations,
                         healthObserver: nativeHealthFixtureObserver, submissionObserver: nativeSubmissionFixtureObserver) : publisherFactory(access.publishUrl, observations)
@@ -851,6 +862,9 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     private func pollWorkerStatus(controlStartedUptime: Double) async -> Bool {
+        #if DEBUG
+        if nativeUHDPollingIsFrozen { return false }
+        #endif
         guard !Task.isCancelled else { return false }
         let request: Task<Bool, Never>
         if let inFlight = workerStatusRequest {
@@ -1031,8 +1045,14 @@ struct PublishingClockObservation: Equatable, Sendable {
         ingressObservation = snapshot.ingressObservation
         publishingClockObservation = clockObservation(snapshot.transportClock,
             scope: videoObservation?.scope, isClosed: false)
-        qualityDriver?.tick(encoderReady: publishing.observations?.hasEncodedSourceHistory == true,
+        #if DEBUG
+        let shouldTickQuality = !nativeUHDPollingIsFrozen
+        #else
+        let shouldTickQuality = true
+        #endif
+        if shouldTickQuality { qualityDriver?.tick(encoderReady: publishing.observations?.hasEncodedSourceHistory == true,
             source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: snapshot))
+        }
         if snapshot.failure != nil || snapshot.state == .stopped {
             let retryable = snapshot.failure == .publisherUnhealthy || snapshot.failure == .appendFailed
             let gameID = setup?.credential?.gameId

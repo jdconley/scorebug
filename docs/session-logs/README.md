@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 UHD polling isolation](2026-09-28-uhd-polling-isolation.md) — frozen adaptive polling still loses frames; production publisher without campaigns passes.
+
 - [September 28 faster UHD reproduction](2026-09-28-fast-uhd-reproduction.md) — short combined replacement passes; direct adaptive path reproduces SDK loss by37s.
 
 - [September 28 adaptive UHD comparison](2026-09-28-adaptive-uhd-comparison.md) — readiness change did not fix loss; short same-content fixed UHD passes.

@@ -122,3 +122,11 @@ profiling; hardware selection confirmed. It skips middle rungs and does not qual
 the normal ladder. See each `isolation-analysis.json` and the
 [session log](session-logs/2026-09-28-fast-uhd-reproduction.md). These results narrow
 the difference to adaptive workload without requiring long accumulated state.
+
+Further short isolation: `headless-native-mx1Wwc` freezes adaptive polling after
+real UHD admission but still has18SDK raw drops; `headless-native-dZDuaa` uses the
+production publisher wrapper without measurement campaigns and manually changes
+240→UHD, delivering909consecutiveUHD frames with0drops. Both select hardware and
+preserve recording/publishing. See their `isolation-analysis.json` and
+[session log](session-logs/2026-09-28-uhd-polling-isolation.md). Pre-upgrade measurement
+work remains the differentiator; no adaptive fix or full-media pass is claimed.
