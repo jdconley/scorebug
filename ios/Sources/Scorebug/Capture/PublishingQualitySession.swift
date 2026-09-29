@@ -186,8 +186,19 @@ actor PublishingQualitySession {
             fields["expected"] = window.sourceLoss.map { String($0.expectedFrames) }
             fields["lost"] = window.sourceLoss.map { String($0.lostFrames) }
             fields["capacity"] = window.usableVideoCapacity.map { String($0) }
-            if window.thermalPressure == .elevated, let sample = diagnostics?.thermal.interval(from: window.start, to: window.end) {
-                fields["thermalState"] = String(describing: sample.enclosingMaximumState)
+            // Preserve why an unknown reading caused a rollback: fair OS state,
+            // stale sampling and missing interval coverage need different fixes.
+            if let history = diagnostics?.thermal {
+                fields["thermalFresh"] = String(history.freshSample(at: now) != nil)
+                fields["thermalClosed"] = String(history.isClosed)
+                fields["thermalQuarantined"] = String(history.isQuarantined)
+                fields["thermalLastAt"] = history.samples.last.map { String($0.sampledAt) }
+                fields["thermalLastState"] = history.samples.last.map { String(describing: $0.state) }
+                if let sample = history.interval(from: window.start, to: window.end) {
+                    fields["thermalState"] = String(describing: sample.enclosingMaximumState)
+                    fields["thermalStart"] = String(sample.enclosingStart)
+                    fields["thermalEnd"] = String(sample.enclosingEnd)
+                }
             }
             if window.transportPressure == .elevated, let history = diagnostics?.transport, let limits = transportLimits,
                let interval = history.interval(from: window.start, to: window.end) {

@@ -109,6 +109,41 @@ final class PhysicalStreamingTests: XCTestCase {
     private var runnerNetworkSettingReadOnly = false
     private enum SmokeFailure: Error { case failed(String) }
 
+    @MainActor func testResetIdentifiedPhoneWatchRequest() throws {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        guard let game = environment["SCOREBUG_RECONCILE_WATCH_GAME"],
+              let pairing = environment["SCOREBUG_RECONCILE_WATCH_PAIRING"],
+              UUID(uuidString: game) != nil, UUID(uuidString: pairing) != nil else {
+            throw XCTSkip("Requires the exact identified test-owned phone setup request.")
+        }
+        executionTimeAllowance = 90; deadline = Date().addingTimeInterval(80)
+        let app = XCUIApplication(); app.activate()
+        try selectTab("Film", app)
+        try wait("Film did not expose its capture state.", seconds: 10) {
+            app.buttons["film.start"].exists || app.buttons["film.stop"].exists
+        }
+        try require(app.buttons["film.start"].exists && !app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists,
+                    "Preserve any existing recording or stream.")
+        // Only after proving capture is idle, launch the installed diagnostic build.
+        app.terminate(); app.launch()
+        try selectTab("Watch", app)
+        let button = app.buttons["phoneWatch.reset"]
+        try require(button.waitForExistence(timeout: 10), "No saved phone setup request to reconcile.")
+        let encoded = button.value as? String ?? ""
+        let attachment = XCTAttachment(string: encoded)
+        attachment.name = "Phone-pending-Watch-setup-provenance"; attachment.lifetime = .keepAlways; add(attachment)
+        let identity = try JSONDecoder().decode([String: String].self, from: Data(encoded.utf8))
+        try require(identity["gameID"] == game && identity["pairingID"]?.lowercased() == pairing.lowercased(),
+                    "Saved request is not the identified test request; preserve it.")
+        try tap(button, in: app)
+        try wait("Saved test setup request did not clear.", seconds: 10) { !button.exists }
+        evidence(app, phase: "identified-phone-watch-request-cleared", screenshot: true)
+        #else
+        throw XCTSkip("Guarded request recovery requires DEBUG identity metadata.")
+        #endif
+    }
+
     @MainActor func testPhysicalIPhoneCameraPublishScoreStopAndExport() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Physical iPhone camera smoke is not a simulator test.")

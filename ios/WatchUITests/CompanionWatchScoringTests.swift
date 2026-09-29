@@ -6,8 +6,66 @@ import XCTest
 final class CompanionWatchScoringTests: XCTestCase {
     private var initialEvidenceAttached = false
     private var pendingEvidenceAttached = false
+    /// Inspect saved identity without test-issued setup/scoring actions.
+    /// Normal app restoration and receipt recovery still run on launch.
+    @MainActor func testInspectPersistedSetup() throws {
+        guard ProcessInfo.processInfo.environment["SCOREBUG_WATCH_INSPECT_SETUP"] == "1" else {
+            throw XCTSkip("Explicit saved-setup inspection only.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let app = XCUIApplication()
+        app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = ""
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = ""
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] = ""
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.refresh"].waitForExistence(timeout: 30))
+        let deadline = Date().addingTimeInterval(15)
+        var current = try provenance(app)
+        while (!current.ready || current.busy) && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            current = try provenance(app)
+        }
+        let metadata = XCTAttachment(string: current.encoded)
+        metadata.name = "Watch-inspected-setup-provenance"
+        metadata.lifetime = .keepAlways; add(metadata)
+        attach(app, "Watch saved setup inspection")
+        XCTAssertTrue(current.ready && !current.busy, "Saved setup restoration did not settle.")
+    }
     @MainActor func testScoreUsingRealCompanionSetup() throws {
         try runScoring(directFixture: nil)
+    }
+    @MainActor func testReconcileIdentifiedExpiredSetup() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let game = environment["SCOREBUG_RECONCILE_WATCH_GAME"],
+              let pairing = environment["SCOREBUG_RECONCILE_WATCH_PAIRING"] else {
+            throw XCTSkip("Requires an explicitly identified test-owned pending setup.")
+        }
+        let expected = try WatchSetupProvenance.Identity(gameID: game, pairingID: pairing)
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let app = XCUIApplication()
+        app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = ""
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = ""
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] = ""
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.refresh"].waitForExistence(timeout: 30))
+        try tap(app, "watch.reconcilePairing") {
+            let current = try self.provenance(app)
+            XCTAssertTrue(current.ready && !current.busy && !current.scoringPending)
+            XCTAssertEqual(current.pending, expected)
+        }
+        let deadline = Date().addingTimeInterval(20)
+        var current = try provenance(app)
+        while (current.setupPending || current.busy) && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            current = try provenance(app)
+        }
+        let metadata = XCTAttachment(string: current.encoded)
+        metadata.name = "Watch-reconciled-setup-provenance"
+        metadata.lifetime = .keepAlways; add(metadata)
+        attach(app, "Watch pairing reconciliation")
+        XCTAssertTrue(current.ready && !current.busy && !current.setupPending && !current.scoringPending)
     }
     @MainActor func testScoreUsingSimulatorFixtureSetup() throws {
         #if targetEnvironment(simulator)
@@ -179,6 +237,12 @@ final class CompanionWatchScoringTests: XCTestCase {
 }
 #else
 final class CompanionWatchScoringTests: XCTestCase {
+    func testReconcileIdentifiedExpiredSetup() throws {
+        throw XCTSkip("Identified setup reconciliation requires DEBUG-only metadata.")
+    }
+    func testInspectPersistedSetup() throws {
+        throw XCTSkip("Saved-setup inspection requires DEBUG-only metadata.")
+    }
     func testScoreUsingRealCompanionSetup() throws {
         throw XCTSkip("Companion scoring requires DEBUG-only setup provenance metadata; Release never runs unguarded scoring.")
     }

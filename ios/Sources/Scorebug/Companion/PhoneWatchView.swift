@@ -19,6 +19,9 @@ struct PhoneWatchView: View {
                             .disabled(model.busy || model.notice == nil).accessibilityIdentifier("phoneWatch.retry")
                         Button("Start a new setup request") { model.resetRequest() }
                             .disabled(model.busy).accessibilityIdentifier("phoneWatch.reset")
+                            #if DEBUG
+                            .accessibilityValue(model.pendingSetupProvenance)
+                            #endif
                     }
                 } else {
                     Section("Send current match") {

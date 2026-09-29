@@ -66,6 +66,15 @@ protocol PhoneWatchRequestStorage {
     private(set) var bootstrapAuthority: WatchBootstrapAuthority?
     @Published private(set) var busy = false
     @Published private(set) var message: String?
+    #if DEBUG
+    /// Nonsecret identity for guarded recovery of an explicitly owned test request.
+    var pendingSetupProvenance: String {
+        guard let pending else { return "none" }
+        return (try? WatchSetupProvenance.Identity(gameID: pending.gameId,
+            pairingID: pending.request.pairingId)).flatMap { try? JSONEncoder().encode($0) }
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "unavailable"
+    }
+    #endif
     private let storage: any PhoneWatchRequestStorage
     private let clientFactory: @Sendable (ScoringEndpoint) -> MatchHTTPClient
     private let sendEnvelope: (WatchPairingEnvelope) throws -> Void

@@ -32,10 +32,10 @@ MP4 of the final overlaid stream.
 | Area | Working locally | Remaining |
 | --- | --- | --- |
 | Native phone scoring | Create/discover/join, durable scoring/undo, takeover, end and restoration; separate scorer while filming | Sustained/physical qualification |
-| Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI | Actual companion/radio routes; simulator setup fixture is not WatchConnectivity qualification |
-| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults;1050s native4K archive | Physical camera and full-match profiles |
+| Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI; physical Ultra2 companion setup and scoring while paired phone captures | Physical route handoffs, Series7 and sustained qualification |
+| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults;1050s native4K archive; short physical1080p archive decodes with continuous encoded A/V | Physical adaptive recovery, fresh-motion/sync and full-match profiles |
 | Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; native congestion/loss and sustained4K pass | Simulator/backend limits, abrupt output tails and full-match profiles |
-| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K and complete saved media with software proxy | Other backends, physical and full-match qualification |
+| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K and complete saved media with software proxy | Physical360p trial rolls back on missing capacity/unknown thermal evidence; other backends and full-match qualification |
 | Deployment | Local Mac service; persistent Linux container stack and CPU/GPU runbooks | External networking/TLS and runtime/backend qualification |
 
 The [acceptance matrix](../../simulator-acceptance.md) owns retained results and
@@ -74,6 +74,10 @@ acceptance matrix for its cleanup reconciliation and exact scope.
 
 ## Immediate delivery checkpoint
 
+The short physical paired-phone/Ultra2 vertical also passes at240p upload: real
+companion setup, Watch scoring/undo/end, clean1080p recording/export and both
+changing-overlay MP4 outputs. Physical adaptive recovery remains open.
+
 The core simulator vertical is available now: two native phones, a native Watch,
 clean recording/export, adaptive SRT, changing score overlay, mock RTMP MP4 and
 optional proxy MP4. Use the [hands-on launcher](../../fast-iteration.md#hands-on-simulator-session)
@@ -85,6 +89,7 @@ Keep these boundaries explicit during local use:
 | Configuration | Delivery status |
 | --- | --- |
 | iPhone/Watch simulators, 1080p fixture, software proxy | Core functional vertical accepted; available for hands-on use |
+| Physical iPhone16Pro/Ultra2, software proxy | Short paired recording/scoring/output workflow and saved encoded A/V pass at240p upload; adaptive recovery unqualified |
 | Native Mac publisher, software proxy, adaptive UHD | Retained sustained media pass; does not qualify simulator UHD |
 | Simulator UHD | Not accepted: encoder pending-input limit; failed candidates retain the applied profile |
 | Simulator severe congestion | Not accepted for continuous live media: saved video/audio gaps; archive and recovery pass |
@@ -99,7 +104,7 @@ probe a prerequisite for using the accepted simulator workflow.
 Next implementation work must address an observed functional failure in that
 workflow or a specific open fault below. For each fault, state a bounded hypothesis
 and use saved evidence or a minimal reproduction; do not automatically start another
-full capture. Physical and remote-host work stays deferred.
+full capture. Physical testing has resumed with the supplied phone, Watch and TV volleyball footage; remote-host work remains deferred.
 
 ## Remaining local work
 
@@ -136,15 +141,24 @@ full capture. Physical and remote-host work stays deferred.
 - [ ] Confirm hosted native CI when a push is authorized. Hosted builds do not
   replace local simulator/media acceptance.
 
-## Deferred hardware and external acceptance
+## Hardware and external acceptance
 
-Current signed phone/embedded-Watch Debug bundle is prepared; signatures and the
-requested team/device profiles pass. Installation and physical behavior remain
-unqualified. The existing device-readiness question is pending; no repeated probes.
+Physical phone automation and the app-loopback control route work. A short TV
+volleyball capture produced a clean1080p archive and both overlaid MP4 outputs;
+all fully decode with continuous encoded video/audio. The360p trial rolled back
+before the controlled impairment, so adaptive recovery remains unqualified. Watch
+saved-setup inspection and normal expiry reconciliation pass, as does paired
+Watch scoring/undo/end during real camera capture. Both output recordings visibly
+carry the Watch score changes; archive/export and encoded A/V checks pass. See the current session
+log and acceptance matrix for evidence and limits.
 
-- [ ] Restore physical readiness and reconcile only the identified test-owned pending
+- [ ] Diagnose the physical360p thermal/capacity rollback without relaxing quality
+  gates; distinguish OS state from missing/stale samples in retained diagnostics.
+- [x] Restore Watch automation readiness and reconcile only the identified test-owned pending
   Watch pairing. Preserve Keychain and uncertain commands until ownership is known.
-- [ ] Verify filming-phone/Watch and separate-phone/Watch scoring on Ultra 2 and
+- [x] Short physical filming-phone/Ultra2 setup, takeover, point, undo, away point,
+  match end, independent archive/export and both recorded score overlays.
+- [ ] Verify sustained filming-phone/Watch and separate-phone/Watch scoring on Ultra 2 and
   Series 7: wrist lowering/reopen, Wi-Fi/cellular, paired fallback and route handoff.
 - [ ] Run 10-minute 1080p30 and supported 4K30 capture, then two-hour release profiles;
   measure frames, A/V sync, heat, battery, storage, reconnect and archive continuity.
@@ -159,8 +173,8 @@ unqualified. The existing device-readiness question is pending; no repeated prob
 
 ## Iteration and completion policy
 
-Simulator-first; defer hardware until simulator-testable features work together.
-Do not poll devices or request passcodes during this phase. Prioritize functional
+Simulator-first; the core simulator vertical now passes and the user has supplied
+hardware for targeted physical acceptance. Prioritize functional
 failures over additional qualification of already-passing paths.
 
 Batch related fixes and run one affected check after the batch. Reuse passing

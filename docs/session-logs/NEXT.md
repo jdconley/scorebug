@@ -2,7 +2,7 @@
 
 ## Direction and checkout
 
-Goal remains active: complete the planned system quickly, with necessary focused
+Objective: complete the planned system quickly, with necessary focused
 checks only. Native phone/Watch scoring, independent clean recording, adaptive SRT,
 score overlay, mock RTMP MP4 and optional proxy MP4 remain the required scope.
 
@@ -11,32 +11,46 @@ Worktree `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch
 files; do not overwrite it. No agents, pushes, purchases or external broadcasts.
 Preserve originals, recordings and unrelated simulators. The
 [plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns TODOs;
-[acceptance](../simulator-acceptance.md) owns results. No lab/test jobs active.
+[acceptance](../simulator-acceptance.md) owns results. See live job status below.
 
 ## Current readiness and next work
 
-Handoff audit: device readiness remains unanswered across three consecutive goal
-turns; local preparation is complete. Goal is blocked pending that reply, not
-complete. See [audit](2026-09-28-device-handoff-blocked.md). No running jobs to wait on.
+Hardware work resumed on September29 after the user supplied the phone, Watch and
+TV volleyball footage. See [session](2026-09-29-physical-tv-capture.md).
 
-Current simulator core vertical AND targeted API/worker crash regression pass.
-Latest: ordinary-native-Ha71gs/crash-tail-verification/results.json; six saved MP4s
-fully decode, maximum59.826ms A/V end offset against unchanged100ms. Workflow and
-cleanup pass. See [session](2026-09-28-current-simulator-crash.md) for scope/hashes.
-Do not rerun unchanged. Older500ms simulator tails used software, not VideoToolbox;
-they predate DTS interleaving and are retained as historical failures.
+Current simulator core vertical and targeted API/worker crash regression pass; reuse
+them unchanged. Physical phone app-loopback control probe passed. Short physical
+capture `physical-recovery-EcJuQu` produced a143s clean1080p archive and both overlaid
+MP4s, all fully decoding with continuous encoded A/V; phone point/export/independent
+archive continuation observed. Adaptive360p confirmation failed before impairment,
+resetting to240p on missing capacity/unknown thermal evidence. Do not call recovery
+accepted. New bounded raw thermal/freshness diagnostics are built for the next run;
+one focused native transition check and signed phone build passed.
 
-Current signed device build is ready: artifacts/qa/device-build-current-el0CCp/
-Scorebug.app includes Watch/ScorebugWatch.app. Generic-device build-for-testing and
-deep/strict signature check pass; both teamB222J9J7B8 profiles include the known
-devices. Producing6ebcf36, readiness.json retains hashes. Reuse PhysicalPhone derived
-products for the first physical workflow; no device execution occurred.
+Actual Watch saved-setup inspection passed after the user kept it unlocked on-wrist.
+It confirmed the old owned test pairing; normal receipt-first expiry reconciliation
+passed against an owned backup at the original endpoint. Original database, Keychain
+and recordings preserved. Temporary recovery API stopped and joined.
 
-Hardware readiness question is now pending after this checkpoint: are phone/Watch
-connected and unlocked for the next physical stage, or should hardware stay deferred?
-Wait for its reply before device polling/automation; do not repeat the question.
-TeamB222J9J7B8 remains authorized. First automation may require manual device passcodes.
-No live process handles remain. Source unchanged since e40294e;6221bdb captured code.
+First paired run failed because the phone still had the exact old test setup
+request. Identity delivery worked; normal guarded phone-request reset passed.
+Physical paired vertical `physical-paired-live-LlJlWn/vertical-acceptance.json` now
+passes: both phone/Ultra2 workflows, real companion setup, Watch takeover/point/undo/
+away/end, independent clean archive continuation/export, changing score in both
+recorded outputs. Archive3829frames/127.637s; live3283frames; all3fully decode with
+continuous encoded A/V and≤72ms track-end differences. All owned processes joined;
+no active test/lab jobs. Reuse this pass.
+
+Next: physical adaptive qualification, not another unchanged paired-scoring test.
+The successful paired run stayed240p; one captured candidate failed capacityHeadroom.
+The first recovery run's360p rollback had unknown thermal evidence; do not conflate
+that with the failed paired run's70ms buffer versus60ms negotiated-delay limit.
+Raw thermal diagnostics are added, but no successful application in the latest run
+exercised them. Extend only the missing bounded evidence or reproduce one concrete
+cause; do not weaken health gates or restart broad suites. Saved originals remain.
+
+TeamB222J9J7B8 remains authorized. Xcode26.2 and LAN192.168.1.130. Watch automation
+works while on-wrist/unlocked; initial phone automation may need manual passcodes.
 
 Broader interrupted-tail timing/load/backends remain unqualified. No speculative
 shortest flag or timeout change: single-input proxy comparisons did not reproduce
