@@ -28,6 +28,17 @@ does not become a hardware qualification. `headless-native-nZ4tzv/final-acceptan
 records the full decode, source identities, audio, output/clean-archive previews and
 source provenance. Reuse it for unchanged code rather than repeating the capture.
 
+## Targeted native congestion
+
+Use the same headless command with a prepared1080p source and
+`--duration 330 --quality 1080 --timing-audit off --worker-encoder software
+--congestion-seconds 25`. The harness waits for actual confirmed720p, applies the
+existing750kbps link fixture, then restores bandwidth. It asserts minimum fallback,
+confirmed upward recovery and the same publishing session. Saved-media verification
+is separate; retained `headless-native-44b0fy/congestion-analysis.json` passes all
+three recordings, including the constraint interval. No simulator encoder or
+physical camera performance is inferred. Do not combine this mode with outage flags.
+
 ## Targeted client outage
 
 For a short API-and-streaming outage, use the headless command with a prepared

@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 native congestion pass](2026-09-28-native-congestion-pass.md) — normal fallback/recovery with consecutive live frames and gap-free audio through the750kbps constraint.
+
 - [September 28 combined client network outage](2026-09-28-client-network-outage.md) — API/SRT loss preserves archive and automatically restores both outputs.
 
 - [September 28 adaptive UHD media pass](2026-09-28-adaptive-uhd-media-pass.md) — normal ladder and all three saved A/V files pass with software proxy; backend limits remain explicit.

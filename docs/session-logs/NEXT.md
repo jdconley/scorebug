@@ -12,26 +12,28 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
-Starting ba0c570; current code adds only a private TCP outage fixture and a combined
-headless option. `headless-native-KJYNvL/client-network-acceptance.json` passes
-25-second native API/SRT loss: continuous 2,727-frame archive, gap-free audio,
-same generation, one Start/Stop, restored output at 40s. 366 API connections rejected,
-no API bytes or SRT sends during loss. Both outputs match; all five files decode,
-A/V ends≤49ms. Live gap27.233s. Capture53810/export-media9029 joined0; cleanup[].
-[Session](2026-09-28-client-network-outage.md). **No active jobs.**
+Starting7eef49d; new harness supports `--congestion-seconds 25`, no production
+policy/codec/timing changes. `headless-native-44b0fy/congestion-analysis.json` passes
+normal adaptive720→minimum→720 through25s at750kbps using Mac native/software proxy.
+Archive9,926/live9,844consecutive frames, zero audio gaps, all5s windows30freshfps,
+A/V ends≤35ms.167segment hashes; fullA/V decode, same publisher/gen1, oneStart/Stop.
+Forward queue peak28,968bytes, no drops/errors, pending0. Capture44417/export4256
+joined0,cleanup[]. Initialbi8j3p/3887 failed before fault on log-creation race;
+ENOENT retry fixed,cleanup[]. [Session](2026-09-28-native-congestion-pass.md).
+**No active jobs.** Earlier simulator failures remain failures; configuration
+comparison does not prove an isolated platform/backend cause.
 
-Normal native240→360→720→1080→2160 and complete saved media remain passed with
-software proxy: `headless-native-nZ4tzv/final-acceptance.json`.330s run including74s
-UHD; no SDK/app drops, archive9927/live9846consecutive frames, gap-free audio.
-[Prior session](2026-09-28-adaptive-uhd-media-pass.md) documents RTMP timestamp
-precision correction from retained packets, without another decode. UI/Watch and
-changing-score results are separate retained passes, not part of these headless runs.
+Combined25s API/SRT outage remains passed in
+`headless-native-KJYNvL/client-network-acceptance.json`: continuousarchive, same
+broadcast, livegap27.233s, bothoutputs restored. Normal native adaptiveUHD/media
+remain passed in `headless-native-nZ4tzv/final-acceptance.json`:330s including74sUHD,
+zero SDK/app drops, allmedia consecutive/gap-free. UI/Watch/dynamic scores separate.
 
-Next address intermittent packet loss and severe-congestion A/V loss, then abrupt
-output tails and sustained/backend qualification. Do not repeat completed client,
-publisher or relay outage captures, nor reopen the resolved software-proxy UHD path.
-Use existing severe-congestion evidence to identify a concrete fix before another
-capture; no unchanged parameter sweeps.
+Next: intermittent packet-loss integration; abrupt output tails; sustained/backend
+qualification. Reuse native congestion/outage/UHD passes. Do not repeat unsupported
+simulator low-latency properties, bitrate-first or buffering experiments; older
+session logs document failures. Simulator congestion/UHD and localVideoToolbox/probe
+limits remain tracked, not erased by native software-proxy results.
 
 ## Backend limits and useful short diagnostics
 
@@ -56,8 +58,9 @@ production shortcuts or false acceptance. No more speculative parameter sweeps.
   deployment.25s publishing blackout preserves archive and resumes outputs with
   29.3333s live gap;25s relay suspension recovers with35.5667s gap. No equivalent rerun.
 - Retained deterministic fault/audit coverage: [matrix](../local-fault-coverage.md).
-- Healthy congestion periods pass; severe collapse still has87missing IDs,
- 16audio gaps/2.4s max gap. Buffer/GOP candidates were worse and rejected.
+- Native Mac/software-proxy congestion passes with no video/audio loss. Prior
+ simulator collapse retains87missing IDs/16audio gaps; no retroactive pass.
+ Buffer/GOP candidates were worse and rejected.
 - Hosted CI requires authorized push. Physical routes, devices, other hosts and
   YouTube remain deferred gates, not inferred from local evidence.
 

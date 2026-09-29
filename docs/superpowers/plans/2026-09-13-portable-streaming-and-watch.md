@@ -80,8 +80,10 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   Software proxy passes330s, including74s of actual4K/24Mbps; no source-frame/audio
   gaps and A/V ends≤14ms. Static overlay is visually checked; dynamic scoring has
   separate simulator evidence. Sustained/backend limits remain tracked below.
-- [ ] Reduce severe-congestion A/V loss and verify recovery with actual decoded media.
-  Healthy-period acceptance already passes; do not relabel outage losses as healthy.
+- [x] Qualify native local congestion recovery with actual decoded media: Mac native
+  capture/software proxy passes a 25-second 750 kbps collapse, normal minimum reset
+  and return to 720p, with no video/audio gaps and 30 fresh fps throughout.
+  Earlier simulator media failures remain backend limits, not retroactive passes.
 - [x] Verify retained deterministic stale-report/no-progress, ownership/revision,
   thermal/queue-pressure and continuous-control coverage in the
   [local fault matrix](../../local-fault-coverage.md). Native1080 boundaries/media
@@ -101,7 +103,7 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 - [ ] Bound interrupted output tails across abrupt failure timing/load. Graceful stops
   pass; hard-crash interrupted outputs can retain about half a second of extra audio.
 - [ ] Qualify sustained local profiles/backends beyond the short UHD run. Resolve or
-  document the colocated VideoToolbox/probe limit and simulator UHD encoder ceiling;
+  document the colocated VideoToolbox/probe limit, simulator congestion loss and UHD ceiling;
   preserve the working software proxy path. Full-match qualification remains open.
 - [ ] Confirm hosted native CI when a push is authorized. Hosted builds do not replace
   local simulator/media acceptance.

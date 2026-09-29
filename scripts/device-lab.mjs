@@ -291,6 +291,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     stopUplink,
     outageUplink,
     outageAPI,
+    recoveryUplink,
     relayStarted = false,
     stopping,
     restarting;
@@ -433,6 +434,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
           endAfterMilliseconds: 25000,
         },
       });
+      recoveryUplink = uplink;
       stopUplink = createUplinkEvidenceStopper({
         uplink,
         artifact,
@@ -561,6 +563,39 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
       setup,
       stop,
       workerClosed: worker.closed,
+      constrainPublisher(seconds) {
+        assert(
+          recoveryUplink && !stopping && !restarting,
+          'Publisher congestion must be selected and serialized',
+        );
+        assert(Number.isInteger(seconds) && seconds >= 10 && seconds <= 60);
+        const operation = (async () => {
+          const constrained = recoveryUplink.constrainForward();
+          let restored;
+          try {
+            await delay(seconds * 1000, undefined, { signal });
+          } finally {
+            restored = recoveryUplink.restoreForward();
+          }
+          await writeFile(
+            join(artifact, 'headless-congestion.json'),
+            JSON.stringify(
+              {
+                scope: 'Native headless network constraint; not UI or physical camera',
+                constrained,
+                restored,
+              },
+              null,
+              2,
+            ),
+            { flag: 'wx', mode: 0o600 },
+          );
+        })();
+        restarting = operation;
+        return operation.finally(() => {
+          restarting = undefined;
+        });
+      },
       blackholePublisher(seconds) {
         assert(
           outageUplink && !stopping && !restarting,

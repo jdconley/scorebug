@@ -49,8 +49,11 @@ control returns. Both destinations decode with no within-session loss; live gap
 scoped client networking, not physical radio loss. See the
 [session](session-logs/2026-09-28-client-network-outage.md).
 
-Intermittent loss still needs integration evidence. Severe congestion has measured
-media loss; healthy periods pass. Normal adaptive UHD and complete saved media now
+Intermittent loss still needs integration evidence. Native Mac/software-proxy
+congestion now passes in headless-native-44b0fy: normal confirmed720→minimum→720,
+25 seconds at750kbps, archive9,926/live9,844 consecutive frames, gap-free audio and
+30 fresh fps in every five-second window. This does not erase older simulator
+congestion failures or establish which configuration difference caused them. Normal adaptive UHD and complete saved media now
 pass with the software proxy; sustained/backend and physical thermal/radio limits
 remain open in the delivery plan.
 
