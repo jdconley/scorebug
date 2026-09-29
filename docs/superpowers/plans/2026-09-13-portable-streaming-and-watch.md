@@ -103,7 +103,9 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   and runtime monitoring beyond audit caps have retained focused passing evidence.
   Missing live audio remains a separate media failure; limits are unchanged.
 - [ ] Bound interrupted output tails across abrupt failure timing/load. Graceful stops
-  pass; hard-crash interrupted outputs can retain about half a second of extra audio.
+  pass; current native/software-proxy crash retains107ms extra audio, while older
+  simulator/VideoToolbox output retains508–548ms. File-input decoder-mode comparison
+  does not reproduce the live tail; do not change decoder defaults on that evidence.
 - [ ] Qualify sustained local profiles/backends beyond the short UHD run. Resolve or
   document the colocated VideoToolbox/probe limit, simulator congestion loss and UHD ceiling;
   preserve the working software proxy path. Full-match qualification remains open.

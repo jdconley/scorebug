@@ -26,6 +26,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--client-outage-seconds',
       '--congestion-seconds',
       '--packet-loss-every',
+      '--worker-crash-after',
       '--fixed-uhd',
       '--fixed-uhd-transition',
       '--owned-uhd-transition',
@@ -52,6 +53,17 @@ const blackholeSeconds = Number(values.get('--publisher-blackhole-seconds') ?? '
 const clientOutageSeconds = Number(values.get('--client-outage-seconds') ?? '0');
 const congestionSeconds = Number(values.get('--congestion-seconds') ?? '0');
 const packetLossEvery = Number(values.get('--packet-loss-every') ?? '0');
+const workerCrashAfter = Number(values.get('--worker-crash-after') ?? '0');
+assert(
+  Number.isInteger(workerCrashAfter) &&
+    workerCrashAfter >= 0 &&
+    (workerCrashAfter === 0 ||
+      (workerCrashAfter >= 10 &&
+        workerCrashAfter + 40 < duration &&
+        disconnectAfter === 0 &&
+        quality === '1080' &&
+        timingAudit === 'off')),
+);
 assert(
   Number.isInteger(packetLossEvery) &&
     (packetLossEvery === 0 ||
@@ -83,6 +95,7 @@ assert(
     clientOutageSeconds,
     congestionSeconds,
     packetLossEvery,
+    workerCrashAfter,
   ].filter(Boolean).length <= 1,
   'Select one outage',
 );
@@ -175,6 +188,7 @@ try {
       clientNetworkOutage: clientOutageSeconds > 0,
       publisherRecovery: congestionSeconds > 0,
       ...(packetLossEvery ? { publisherPacketLoss: packetLossEvery } : {}),
+      ...(workerCrashAfter ? { serverRecovery: true, workerCrash: true } : {}),
     },
     { signal: controller.signal },
   );
@@ -231,7 +245,7 @@ try {
     'workflow',
     (duration + 90) * 1000,
   );
-  if (disconnectAfter > 0 || congestionSeconds > 0) {
+  if (disconnectAfter > 0 || congestionSeconds > 0 || workerCrashAfter > 0) {
     const inject = (async () => {
       if (congestionSeconds > 0) {
         // Observe a real confirmed production rung before constraining the link.
@@ -265,9 +279,12 @@ try {
         assert(Date.now() < deadline, 'Native capture did not become ready');
         await delay(100, undefined, { signal: controller.signal });
       }
-      await delay(disconnectAfter * 1000, undefined, { signal: controller.signal });
+      await delay((disconnectAfter || workerCrashAfter) * 1000, undefined, {
+        signal: controller.signal,
+      });
       controller.signal.throwIfAborted();
-      if (blackholeSeconds > 0 || clientOutageSeconds > 0)
+      if (workerCrashAfter > 0) await lab.restart('worker');
+      else if (blackholeSeconds > 0 || clientOutageSeconds > 0)
         await lab.blackholePublisher(blackholeSeconds || clientOutageSeconds);
       else if (relayOutageSeconds > 0) await lab.pauseRelay(relayOutageSeconds);
       else await lab.disconnectPublisher();
@@ -284,11 +301,11 @@ try {
   assert.equal(result.scope, 'headless-native-diagnostic-v1');
   assert.equal(result.recordingAtEnd, true);
   assert.equal(result.publishingAtEnd, true);
-  if (packetLossEvery > 0) {
+  if (packetLossEvery > 0 || workerCrashAfter > 0) {
     assert.equal(
       result.lifecycle.length,
       1,
-      'Intermittent loss must retain the publishing session',
+      'This fault must retain the publishing session',
     );
     assert.equal(result.lifecycle[0].state, 'publishing');
   }

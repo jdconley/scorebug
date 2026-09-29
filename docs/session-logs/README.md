@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 interrupted output-tail comparison](2026-09-28-interrupted-tail-comparison.md) — short proxy comparison and current native worker crash; no speculative decoder setting change.
+
 - [September 28 intermittent packet loss](2026-09-28-intermittent-loss-pass.md) — actual SRT retransmission and complete archive/live media pass through1% periodic loss.
 
 - [September 28 native congestion pass](2026-09-28-native-congestion-pass.md) — normal fallback/recovery with consecutive live frames and gap-free audio through the750kbps constraint.

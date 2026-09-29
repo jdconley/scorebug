@@ -12,27 +12,27 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
-Starting7467e56. New short headless `--packet-loss-every 100` reuses existing
-UDP impairment/diagnostics; no production changes. `headless-native-MUpcfR/loss-acceptance.json`
-passes1% periodic loss in both directions:167forward/63reverse drops, all124data
-losses later forwarded as retransmissions; trace complete. Archive2,724/live2,643
-consecutive30fps frames, no audio gaps, all5s windows30freshfps, A/V ends≤15ms.
-47segment hashes, bothMP4s, samepublisher/gen1, oneStart/Stop. Capture9406 and
-export/media83451 joined0,cleanup[]. [Session](2026-09-28-intermittent-loss-pass.md).
-**No active jobs.**
+Starting36c93c2. `--worker-crash-after 15` adds a short native integration lane;
+no production settings change. `headless-native-MAuIfq/worker-crash-analysis.json`:
+actualSIGKILL,15.186s down, same nativepublisher/gen1 and archive.37segments,
+archive2,124consecutiveframes; bothoutputs62–442 then962–2104, gap17.3s.
+All5filesdecode, no within-session video/audio gaps; interruptedaudio107ms,
+recoveredends≤36ms. Capture10982/export53068 joined0,cleanup[].
+[Session](2026-09-28-interrupted-tail-comparison.md). **No active jobs.**
 
-Retain completed native Mac/software-proxy congestion (`headless-native-44b0fy`),
-clientAPI/SRT outage (`headless-native-KJYNvL`) and normal adaptiveUHD
-(`headless-native-nZ4tzv`) passes; do not rerun unchanged. Simulator congestion/UHD
-and colocatedVideoToolbox limits remain explicit, not retroactive passes.
-UI/Watch/changing-score results are separate retained evidence.
+Four6s production-proxy file-input/SIGTERM comparisons (automatic/slice × VT/software)
+all endwithin29ms, so do not justify a decoder-default change. Process43499 joined0;
+artifacts/interrupted-tail-20260928/run-krr5eu. Earlier fixture failed before spawning
+FFmpeg due unopened log descriptor, fixed with pipe/freshdirectory. General crash-tail
+bound across load/backends remains open; oldsimulator508–548ms is not a native pass.
+TSWriter only buffersstartup; audio/video then emitonarrival. Live source encoder
+lag is a possible contributor, not a proved cause. Do not add speculative mux queues.
 
-Next: interrupted output tails, then sustained/backend qualification. Guardian
-SIGTERMs FFmpeg immediately on workerIPC loss. Pipeline defaults toautomatic input
-decoder threading and already supports explicitslice; retained crash outputs had
-508–548ms extraaudio. A short controlled decoder-mode comparison can investigate
-buffered decoding before any shutdown/latency change. Not a proved root cause.
-Avoid a full native app/Watch/adaptive capture to isolate that small question.
+Next prioritize sustained local1080/UHD qualification using the workingsoftware
+proxy; reuse all completed UI/scoring/fault results. No unchanged crash or file-input
+comparison rerun. SourceMOVs last600s; native runner max600s, leave startup/drain room.
+Retained periodicloss MUpcfR, congestion44b0fy, API/SRToutageKJYNvL, adaptiveUHDnZ4tzv
+remainpassed. Simulator congestion/UHD and colocatedVideoToolbox limits stay explicit.
 
 ## Backend limits and useful short diagnostics
 

@@ -49,6 +49,15 @@ queue drops. It retains a bounded header-only SRT trace and both output recordin
 `headless-native-MUpcfR/loss-acceptance.json` binds the completed repair/media pass.
 Do not combine this option with other fault modes; random/radio loss is not implied.
 
+## Targeted worker crash
+
+Select `--duration 70 --quality 1080 --timing-audit off --worker-encoder software
+--worker-crash-after 15` in the headless command. This reuses owned worker SIGKILL,
+15-second downtime and replacement. The native publisher must remain connected;
+archive continuity and interrupted/recovered output segments require media inspection.
+The current native result is `headless-native-MAuIfq/worker-crash-analysis.json`.
+It records a107ms interrupted audio tail and does not claim a general crash-tail bound.
+
 ## Targeted client outage
 
 For a short API-and-streaming outage, use the headless command with a prepared
