@@ -25,6 +25,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--publisher-blackhole-seconds',
       '--client-outage-seconds',
       '--congestion-seconds',
+      '--packet-loss-every',
       '--fixed-uhd',
       '--fixed-uhd-transition',
       '--owned-uhd-transition',
@@ -50,6 +51,18 @@ const relayOutageSeconds = Number(values.get('--relay-outage-seconds') ?? '0');
 const blackholeSeconds = Number(values.get('--publisher-blackhole-seconds') ?? '0');
 const clientOutageSeconds = Number(values.get('--client-outage-seconds') ?? '0');
 const congestionSeconds = Number(values.get('--congestion-seconds') ?? '0');
+const packetLossEvery = Number(values.get('--packet-loss-every') ?? '0');
+assert(
+  Number.isInteger(packetLossEvery) &&
+    (packetLossEvery === 0 ||
+      (packetLossEvery >= 50 &&
+        packetLossEvery <= 1000 &&
+        duration >= 30 &&
+        duration <= 120 &&
+        disconnectAfter === 0 &&
+        quality === '1080' &&
+        timingAudit === 'off')),
+);
 assert(
   Number.isInteger(congestionSeconds) &&
     (congestionSeconds === 0 ||
@@ -64,8 +77,13 @@ assert(Number.isInteger(relayOutageSeconds) && relayOutageSeconds >= 0);
 assert(Number.isInteger(blackholeSeconds) && blackholeSeconds >= 0);
 assert(Number.isInteger(clientOutageSeconds) && clientOutageSeconds >= 0);
 assert(
-  [relayOutageSeconds, blackholeSeconds, clientOutageSeconds, congestionSeconds].filter(Boolean)
-    .length <= 1,
+  [
+    relayOutageSeconds,
+    blackholeSeconds,
+    clientOutageSeconds,
+    congestionSeconds,
+    packetLossEvery,
+  ].filter(Boolean).length <= 1,
   'Select one outage',
 );
 const outageSeconds = relayOutageSeconds || blackholeSeconds || clientOutageSeconds;
@@ -156,6 +174,7 @@ try {
       publisherBlackhole: blackholeSeconds > 0 || clientOutageSeconds > 0,
       clientNetworkOutage: clientOutageSeconds > 0,
       publisherRecovery: congestionSeconds > 0,
+      ...(packetLossEvery ? { publisherPacketLoss: packetLossEvery } : {}),
     },
     { signal: controller.signal },
   );
@@ -265,6 +284,14 @@ try {
   assert.equal(result.scope, 'headless-native-diagnostic-v1');
   assert.equal(result.recordingAtEnd, true);
   assert.equal(result.publishingAtEnd, true);
+  if (packetLossEvery > 0) {
+    assert.equal(
+      result.lifecycle.length,
+      1,
+      'Intermittent loss must retain the publishing session',
+    );
+    assert.equal(result.lifecycle[0].state, 'publishing');
+  }
   if (congestionSeconds > 0) {
     const confirmed = result.samples.findIndex(
       (entry) => entry.policyAppliedProfile === '720p30' && entry.policyTrialActive === 'false',

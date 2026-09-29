@@ -12,28 +12,27 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
-Starting7eef49d; new harness supports `--congestion-seconds 25`, no production
-policy/codec/timing changes. `headless-native-44b0fy/congestion-analysis.json` passes
-normal adaptive720→minimum→720 through25s at750kbps using Mac native/software proxy.
-Archive9,926/live9,844consecutive frames, zero audio gaps, all5s windows30freshfps,
-A/V ends≤35ms.167segment hashes; fullA/V decode, same publisher/gen1, oneStart/Stop.
-Forward queue peak28,968bytes, no drops/errors, pending0. Capture44417/export4256
-joined0,cleanup[]. Initialbi8j3p/3887 failed before fault on log-creation race;
-ENOENT retry fixed,cleanup[]. [Session](2026-09-28-native-congestion-pass.md).
-**No active jobs.** Earlier simulator failures remain failures; configuration
-comparison does not prove an isolated platform/backend cause.
+Starting7467e56. New short headless `--packet-loss-every 100` reuses existing
+UDP impairment/diagnostics; no production changes. `headless-native-MUpcfR/loss-acceptance.json`
+passes1% periodic loss in both directions:167forward/63reverse drops, all124data
+losses later forwarded as retransmissions; trace complete. Archive2,724/live2,643
+consecutive30fps frames, no audio gaps, all5s windows30freshfps, A/V ends≤15ms.
+47segment hashes, bothMP4s, samepublisher/gen1, oneStart/Stop. Capture9406 and
+export/media83451 joined0,cleanup[]. [Session](2026-09-28-intermittent-loss-pass.md).
+**No active jobs.**
 
-Combined25s API/SRT outage remains passed in
-`headless-native-KJYNvL/client-network-acceptance.json`: continuousarchive, same
-broadcast, livegap27.233s, bothoutputs restored. Normal native adaptiveUHD/media
-remain passed in `headless-native-nZ4tzv/final-acceptance.json`:330s including74sUHD,
-zero SDK/app drops, allmedia consecutive/gap-free. UI/Watch/dynamic scores separate.
+Retain completed native Mac/software-proxy congestion (`headless-native-44b0fy`),
+clientAPI/SRT outage (`headless-native-KJYNvL`) and normal adaptiveUHD
+(`headless-native-nZ4tzv`) passes; do not rerun unchanged. Simulator congestion/UHD
+and colocatedVideoToolbox limits remain explicit, not retroactive passes.
+UI/Watch/changing-score results are separate retained evidence.
 
-Next: intermittent packet-loss integration; abrupt output tails; sustained/backend
-qualification. Reuse native congestion/outage/UHD passes. Do not repeat unsupported
-simulator low-latency properties, bitrate-first or buffering experiments; older
-session logs document failures. Simulator congestion/UHD and localVideoToolbox/probe
-limits remain tracked, not erased by native software-proxy results.
+Next: interrupted output tails, then sustained/backend qualification. Guardian
+SIGTERMs FFmpeg immediately on workerIPC loss. Pipeline defaults toautomatic input
+decoder threading and already supports explicitslice; retained crash outputs had
+508–548ms extraaudio. A short controlled decoder-mode comparison can investigate
+buffered decoding before any shutdown/latency change. Not a proved root cause.
+Avoid a full native app/Watch/adaptive capture to isolate that small question.
 
 ## Backend limits and useful short diagnostics
 

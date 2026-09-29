@@ -94,7 +94,9 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 - [x] Verify combined client API/SRT outage and restoration: 25 seconds offline,
   continuous clean archive, same broadcast, automatic recovery and both MP4 outputs.
   Measured live gap 27.233 seconds; physical radio routes remain deferred.
-- [ ] Complete intermittent packet-loss integration coverage.
+- [x] Verify periodic packet-loss recovery: every100th datagram lost in both
+  directions, all dropped data repaired, continuous archive/live30fps and gap-free
+  audio in both outputs. Short nativeMac/software-proxy qualification.
 - [x] Reconcile optional delivery-audit retention/terminal coverage: production uses
   continuous bounded-state monitoring; selected finite audits report overflow and
   cannot return health for unretained rows. Row/byte/serialization terminal behavior

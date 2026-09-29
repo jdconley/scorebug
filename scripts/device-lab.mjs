@@ -255,6 +255,16 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     !options.clientNetworkOutage || options.publisherBlackhole,
     'Client outage requires the isolated publisher blackout fixture',
   );
+  assert(
+    options.publisherPacketLoss === undefined ||
+      (Number.isInteger(options.publisherPacketLoss) &&
+        options.publisherPacketLoss >= 50 &&
+        options.publisherPacketLoss <= 1000),
+  );
+  assert(
+    !options.publisherPacketLoss || !(options.publisherBlackhole || options.publisherRecovery),
+    'Select one publisher impairment fixture',
+  );
   const seedMatch = deviceLabSeedsMatch(options.seedMatch);
   const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
@@ -417,6 +427,46 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     assert(relayReady, 'Lab relay did not become ready');
     signal?.throwIfAborted();
     let publisherEnvironment = {};
+    if (options.publisherPacketLoss) {
+      const uplink = await createUDPImpairmentProxy({
+        bindHost: recoveryBind,
+        receiverHost: options.host,
+        receiverPort: ingestPort,
+        forward: { dropEvery: options.publisherPacketLoss, recordTimeline: true },
+        reverse: { dropEvery: options.publisherPacketLoss, recordTimeline: true },
+        recordPacketDiagnostics: true,
+        packetDiagnosticsWindow: {
+          origin: 'firstPeerPacket',
+          startAfterMilliseconds: 0,
+          endAfterMilliseconds: 120000,
+        },
+      });
+      const save = createUplinkEvidenceStopper({ uplink, artifact });
+      stopUplink = async () => {
+        await save();
+        const result = uplink.snapshot();
+        assert.deepEqual(result.errors, []);
+        assert.equal(result.foreignPeerPackets, 0);
+        for (const name of ['forward', 'reverse']) {
+          const direction = result[name],
+            counts = direction.queue;
+          assert.equal(direction.pendingPackets, 0);
+          assert(counts.injectedDrop.packets > 0, 'Packet loss must actually occur');
+          assert.equal(
+            counts.injectedDrop.packets,
+            Math.floor(counts.received.packets / options.publisherPacketLoss),
+          );
+          assert.equal(
+            counts.overflowDrop.packets + counts.oversizeDrop.packets + counts.closeDiscard.packets,
+            0,
+          );
+        }
+      };
+      publisherEnvironment = {
+        INGEST_PUBLISH_HOST: recoveryBind,
+        INGEST_PUBLISH_PORT: String(uplink.port),
+      };
+    }
     if (options.publisherRecovery) {
       const uplink = await createUDPImpairmentProxy({
         bindHost: recoveryBind,

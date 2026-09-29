@@ -49,7 +49,11 @@ control returns. Both destinations decode with no within-session loss; live gap
 scoped client networking, not physical radio loss. See the
 [session](session-logs/2026-09-28-client-network-outage.md).
 
-Intermittent loss still needs integration evidence. Native Mac/software-proxy
+headless-native-MUpcfR verifies periodic1% bidirectional datagram loss:167forward
+and63reverse drops, all124dropped data events later forwarded as retransmissions.
+Archive2,724/live2,643consecutive frames, gap-free audio and30freshfps in every5s
+window. Same native publisher/generation, both saved outputs; A/V ends≤15ms.
+90s Mac/software-proxy run; no random-loss or physical-radio claim. Native Mac/software-proxy
 congestion now passes in headless-native-44b0fy: normal confirmed720→minimum→720,
 25 seconds at750kbps, archive9,926/live9,844 consecutive frames, gap-free audio and
 30 fresh fps in every five-second window. This does not erase older simulator

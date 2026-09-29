@@ -39,6 +39,16 @@ is separate; retained `headless-native-44b0fy/congestion-analysis.json` passes a
 three recordings, including the constraint interval. No simulator encoder or
 physical camera performance is inferred. Do not combine this mode with outage flags.
 
+## Periodic packet loss
+
+For the existing short native lane, select `--duration 90 --quality 1080
+--timing-audit off --worker-encoder software --packet-loss-every 100`. Both UDP
+directions discard every100th datagram, including data/control traffic. The runner
+requires one surviving publisher and actual loss counters, with no accidental
+queue drops. It retains a bounded header-only SRT trace and both output recordings.
+`headless-native-MUpcfR/loss-acceptance.json` binds the completed repair/media pass.
+Do not combine this option with other fault modes; random/radio loss is not implied.
+
 ## Targeted client outage
 
 For a short API-and-streaming outage, use the headless command with a prepared

@@ -3,7 +3,7 @@
 Updated September 28, 2026. The normal local vertical works: native phone recording
 and scoring, separate native Watch scoring, SRT upload, score overlay, RTMP to a
 mock YouTube recorder, and optional proxy MP4. **The full release gate is still
-open**, chiefly for platform limits, intermittent loss, sustained profiles and external deployment.
+open**, chiefly for platform limits, interrupted output tails, sustained profiles and external deployment.
 
 This checkpoint consolidates retained incremental results. It is not a claim that
 every test was rerun at one Git revision. Artifact directories below are relative
@@ -25,6 +25,7 @@ production behavior changes, not when unrelated documentation or fixtures change
 | Earlier UHD app integration (superseded for native media; UI remains separate) | `ordinary-native-z1va0e/attachments`, `production-report-timing-20260928` | Versioned report timing confirms360/720probation;1080applies after its gate. Higher admission is limited by measured padding headroom.4K gate now actually requires2160. Native archive retained; export wait was clipped by terminal test budget, corrected but not reverified. Full4K/live-media/sustained acceptance remains open. |
 | 1080p production upload | `ordinary-native-PpPozK/1080-final-acceptance.json` | Native240→360→720→1080climb confirmed at6Mbps; receiver sees1077actual1080frames. Archive8518/live8260consecutive30fps frames, no audio gaps, waveform and changing score pass. Archive continues110frames. A/V ends≤34ms. Short local qualification; no4K/physical/full-match claim. |
 | Native adaptive UHD and complete saved media | `headless-native-nZ4tzv/final-acceptance.json` | Normal ladder confirms4K/24Mbps;2234UHD receiver frames, no input loss. Archive9927/live9846consecutive30fps frames, gap-free audio, both3840×2160outputs and clean archive; A/V ends≤14ms. Local software proxy; headless native, not UI/physical/full-match. |
+| Intermittent packet loss | `headless-native-MUpcfR/loss-acceptance.json` | Every100th datagram dropped each direction:167forward/63reverse losses. All124 dropped data events later retransmitted. Archive2,724/live2,643consecutive frames, gap-free audio, every5s window30freshfps; A/V ends≤15ms. NativeMac/software proxy,90s, same publisher. |
 | Native congestion recovery | `headless-native-44b0fy/congestion-analysis.json` | Mac native/software proxy: normal 720→240→720 recovery through 25 seconds at 750 kbps. Archive9,926/live9,844 consecutive frames, no audio gaps, all five-second windows30 fresh fps, A/V ends≤35ms. Both saved outputs decode. No production changes; earlier simulator results remain separate failures. |
 | Adaptive upload | `ordinary-native-IZI72F` | Start-low, increase, minimum fallback and recovery work. Clean archive continuous. Severe-collapse live media **fails**: 87 missing frame IDs, 16 audio gaps, maximum video gap 2.4 seconds. |
 | Buffered adaptation scheduling and bounded stop | `ordinary-native-kStE7J` | Full720p increase/fallback/recovery, transport, geometry and transitions pass; archive12,991 consecutive frames. Stop ends within97ms A/V. Larger buffering worsens severe-congestion media (149missing IDs,15audio gaps,4.033s maxgap), so production timing is restored. Packet analysis is incomplete due to truncated ranges. |
