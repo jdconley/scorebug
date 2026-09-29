@@ -87,6 +87,16 @@ No unrelated simulator is modified. Each new launch creates a fresh session and
 credentials; remove only those named devices after saving any wanted recordings.
 Lab timeout stops the backend; it does not delete devices or stop a local recording.
 
+To run the proxy in the prebuilt Linux CPU image on this Mac's Docker Desktop,
+add `--worker-image scorebug/home-daemon:YOUR_TAG` to the simulator launcher or
+backend-only device lab. The image must already exist; startup never pulls it.
+Build it once with `docker build -f apps/home-daemon/Dockerfile -t
+scorebug/home-daemon:YOUR_TAG .`. The lab maps only worker state and proxy recordings,
+keeps credentials in a private environment file, and removes its owned container
+on shutdown. The lab worker ID remains `mac` for compatibility with app setup.
+This local adapter is software-only; production home/cloud configuration remains
+in the [worker deployment guide](../apps/home-daemon/README.md#linux-cpugpu-deployment).
+
 For an already installed app or a later physical session, use the backend-only
 [device lab instructions](device-testing.md#start-the-local-stack).
 

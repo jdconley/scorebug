@@ -65,6 +65,8 @@ full-suite run. Local functional integration is complete on the documented paths
 - [x] Mac service and persistent Linux API/relay deployment wiring implemented.
 - [x] Portable Linux worker image provides required encoder timing; compiled paced
   overlay pipeline decodes both FLV/MP4 outputs on local Linux arm64 Docker VM.
+- [x] Linux CPU container proxy works with native Mac capture, real local SRT/RTMP,
+  confirmed240→360 increase, clean archive and both final MP4s; short integration.
 - [x] Hands-on simulator launcher opens two native phones and a Watch with the local
   lab, without UI automation; preserves app data and recordings after shutdown.
 

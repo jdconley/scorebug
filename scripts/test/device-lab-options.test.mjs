@@ -279,3 +279,36 @@ test('publishing pacing rejects malformed CLI options and API values before allo
     /recovery budget/,
   );
 });
+
+test('container lane preserves credentials/routes while mapping host loopback and mounted paths', async () => {
+  const { containerLabEnvironment, validateWorkerImage } =
+    await import('../container-lab-worker.mjs');
+  const input = {
+    ENCODER: 'software',
+    CONTROL_PLANE_URL: 'http://127.0.0.1:9876',
+    OUTPUT_URL: 'rtmp://localhost:5432/live/fixture?scope=local',
+    HOME_TOKEN: 'fixture-secret',
+    SCORE_DIR: '/private/lab/worker',
+    OUTPUT_RECORDING_DIR: '/private/lab/outputs',
+  };
+  const result = containerLabEnvironment(input);
+  assert.equal(result.CONTROL_PLANE_URL, 'http://host.docker.internal:9876/');
+  assert.equal(result.OUTPUT_URL, 'rtmp://host.docker.internal:5432/live/fixture?scope=local');
+  assert.equal(result.HOME_TOKEN, input.HOME_TOKEN);
+  assert.equal(result.SCORE_DIR, '/scorebug/state');
+  assert.equal(result.OUTPUT_RECORDING_DIR, '/scorebug/recordings');
+  assert.equal(input.SCORE_DIR, '/private/lab/worker');
+  assert.equal(
+    containerLabEnvironment({ ...input, CONTROL_PLANE_URL: 'http://192.168.1.130:9876' })
+      .CONTROL_PLANE_URL,
+    'http://192.168.1.130:9876/',
+  );
+  assert.throws(() => containerLabEnvironment({ ...input, ENCODER: 'videotoolbox' }));
+  for (const image of ['--privileged', '', 'bad\nimage', 'image with spaces'])
+    assert.throws(() => validateWorkerImage(image));
+  const opts = deviceLabOptions(
+    ['--host', '192.168.1.130', '--worker-image', 'scorebug/home-daemon:local'],
+    interfaces,
+  );
+  assert.equal(opts.workerImage, 'scorebug/home-daemon:local');
+});

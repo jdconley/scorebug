@@ -16,6 +16,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
     [
       '--host',
       '--worker-encoder',
+      '--worker-image',
       '--source',
       '--duration',
       '--quality',
@@ -185,6 +186,7 @@ try {
   lab = await startDeviceLab(
     {
       ...options,
+      ...(values.has('--worker-image') ? { workerImage: values.get('--worker-image') } : {}),
       ...(quality === '2160' ? { uhd: true } : {}),
       decodedGeometry: true,
       publisherBlackhole: blackholeSeconds > 0 || clientOutageSeconds > 0,

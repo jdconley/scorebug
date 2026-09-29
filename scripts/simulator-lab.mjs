@@ -27,8 +27,8 @@ export function simulatorLabOptions(args) {
       source = args[i + 1];
     } else {
       assert(
-        ['--host', '--duration'].includes(args[i]),
-        'Use --host, --duration and optional --source',
+        ['--host', '--duration', '--worker-image'].includes(args[i]),
+        'Use --host, --duration, optional --source and --worker-image',
       );
       labArgs.push(args[i], args[i + 1]);
     }

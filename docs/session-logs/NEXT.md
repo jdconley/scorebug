@@ -12,6 +12,25 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
+Native→Linux proxy integration now passes:
+`headless-native-wJYttO/linux-integration-acceptance.json`,lab`device-lab-0tavVM`.
+120s normal native capture, real local SRT, Linuxarm64 CPU proxy, RTMP mock and
+proxy MP4. Confirmed240→360 at71s; actualreceiver1467frames240/2080frames360 with
+exact3000/90000steps. Archive3628consecutive frames, live3547matching source62–3608;
+archive continues19frames. All3fully decode with gap-free audibleaudio and ends≤26ms.
+Capture67041/export-media45761 joined0; ten focused adapter tests55966 pass;
+worker exit0,cleanup[],no Docker containers remain. No broad UI/hardware run.
+
+New --worker-image option on device-lab, simulator-lab and headless lane reuses
+prebuilt `scorebug/home-daemon:qa-timing-trixie`. Mac Docker Desktop adapter maps
+only state/recordings, uses private envfile, routes loopback viahost.docker.internal,
+requiresCPU/timing, neverpulls, and removes ownedcontainer. Container crash injection
+is intentionally separate. [Session](2026-09-28-native-linux-proxy.md). No lab/test
+jobs active; three earlier manual simulators remain preserved. Static overlay in
+this run; dynamic scoring has separate native/Mac results. Otherhost/full-ladder/
+full-match and livecrashtail remainopen. Do not repeat this120s run unchanged.
+
+
 Linux image timing gap fixed: worker Dockerfile now Node22/Trixie, FFmpeg7.1.5.
 Bookworm5.1.9 probe returned unsupported. Strengthened existing container check
 requires actual completed encoder timing and fully decodes paced720p FLV+MP4.

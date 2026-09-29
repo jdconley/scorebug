@@ -28,6 +28,17 @@ does not become a hardware qualification. `headless-native-nZ4tzv/final-acceptan
 records the full decode, source identities, audio, output/clean-archive previews and
 source provenance. Reuse it for unchanged code rather than repeating the capture.
 
+## Linux worker in the local native lane
+
+Build the current worker image once, then add
+`--worker-image scorebug/home-daemon:YOUR_TAG --worker-encoder software` to the
+headless command. This replaces only the proxy process with a Linux container;
+native capture/archive, local API, real SRT relay and mock RTMP recorder stay in
+the existing lab. Docker Desktop host routing is explicit. No real destination or
+GPU is used, and images are never pulled at session startup. Container crash
+injection is not combined with this lane. Use the same option on the hands-on
+simulator launcher when operating the apps manually.
+
 ## Targeted native congestion
 
 Use the same headless command with a prepared1080p source and

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { startContainerLabWorker, validateWorkerImage } from './container-lab-worker.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawn, execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -32,6 +33,7 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
         '--host',
         '--duration',
         '--encoder',
+        '--worker-image',
         '--publish-peer-latency-ms',
         '--publish-pacing',
       ].includes(key) &&
@@ -49,6 +51,11 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
   assert(/^[1-9][0-9]*$/.test(durationText) && duration <= 7200, 'Duration must be 1–7200 seconds');
   const encoder = values.get('--encoder') ?? 'software';
   assert(['software', 'videotoolbox'].includes(encoder), 'Unsupported lab encoder');
+  const workerImage = values.get('--worker-image');
+  if (workerImage !== undefined) {
+    validateWorkerImage(workerImage);
+    assert.equal(encoder, 'software');
+  }
   const latencyText = values.get('--publish-peer-latency-ms');
   if (latencyText !== undefined)
     assert(/^[1-9][0-9]*$/.test(latencyText), 'Invalid publishing recovery budget');
@@ -59,6 +66,7 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
     host,
     duration,
     encoder,
+    ...(workerImage === undefined ? {} : { workerImage }),
     ...(publishPeerLatencyMs === undefined ? {} : { publishPeerLatencyMs }),
     ...(publishPacing === undefined ? {} : { publishPacing }),
   };
@@ -236,7 +244,16 @@ export function deviceLabSeedsMatch(value) {
   return value !== false;
 }
 
-export async function startDeviceLab(options, { signal, workerFactory = startWorker } = {}) {
+export async function startDeviceLab(options, { signal, workerFactory } = {}) {
+  if (options.workerImage !== undefined) {
+    validateWorkerImage(options.workerImage);
+    assert.equal(options.encoder, 'software');
+    assert(!options.workerCrash, 'Container crash injection is a separate qualification');
+    assert(!workerFactory, 'Choose one worker factory');
+  }
+  workerFactory ??= options.workerImage
+    ? (env, dir, log) => startContainerLabWorker(options.workerImage, env, dir, log)
+    : startWorker;
   assert(
     options.uhd === undefined || typeof options.uhd === 'boolean',
     'Invalid UHD lab selection',
@@ -595,6 +612,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
       ...(matchId === undefined ? { seedMatch: false } : { matchId }),
       artifact,
       encoder: options.encoder,
+      ...(options.workerImage ? { workerImage: options.workerImage } : {}),
       durationSeconds: options.duration,
       ...(options.publishPeerLatencyMs === undefined
         ? {}
