@@ -106,4 +106,11 @@ shows the combined archive/SRT/proxy path delivering998consecutive4Kreceiver fra
 with0SDK/app queue drops. It skips adaptive quality/probing and uses different source
 time from the failing climb; not adaptive/sustained/full-media acceptance. The later
 scalar-readiness optimization passes11focused history checks and an incremental
-FilmModel build; no new adaptive integration result is claimed.
+FilmModel build. Its adaptive follow-up `headless-native-iOmUFd` still drops29SDK
+raw-input frames (app ingress0), reaches87.1ms native submission time and falls back
+from UHD; recording/publishing survive. A35s fixed-UHD comparison on a remux of the
+same250–300s content region (`headless-native-aWay18`) delivers997consecutive4K
+receiver frames with0SDK/app drops and36.4ms maximum submission. This narrows the
+difference to adaptive workload/accumulated state, without proving a cause. Both
+jobs exit0 and cleanup succeeds; those runner exits are not adaptive quality passes.
+No redundant full media decode. Hashed comparison: `uhd-readiness-20260928/comparison.json`.

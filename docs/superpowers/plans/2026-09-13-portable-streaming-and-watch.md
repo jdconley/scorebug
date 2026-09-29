@@ -76,11 +76,11 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   Prolonged25s relay suspension also recovers across failed retries, with a continuous
   archive and35.5667s live gap.
 
-- [ ] Qualify sustained adaptive4K and final media. A35s fixed-profile native
-  archive/SRT/proxy path delivers998consecutive4Kreceiver frames with no SDK/app
-  queue drops; it skips adaptive admission. The last adaptive run detects SDK raw
-  queue loss. Scalar health-readiness polling now avoids unnecessary history copies
-  and has focused test/build coverage; its adaptive integration remains unverified. The simulator's 4K candidate encoder exceeds
+- [ ] Qualify sustained adaptive4K and final media. Short fixed-profile native
+  archive/SRT/proxy runs pass receiver cadence, including the content region where
+  adaptive upload fails. Adaptive UHD still incurs SDK raw-input queue loss after
+  the scalar readiness optimization; isolate adaptive workload/accumulated state
+  with a short reproduction before another full climb. The simulator's 4K candidate encoder exceeds
   its pending-input limit; keep that ceiling explicit rather than enlarging queues.
 - [ ] Reduce severe-congestion A/V loss and verify recovery with actual decoded media.
   Healthy-period acceptance already passes; do not relabel outage losses as healthy.

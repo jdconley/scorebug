@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 adaptive UHD comparison](2026-09-28-adaptive-uhd-comparison.md) — readiness change did not fix loss; short same-content fixed UHD passes.
+
 - [September 28 fixed UHD and readiness](2026-09-28-fixed-uhd-and-readiness.md) — short combined 4K path and allocation-free readiness polling.
 
 - [September 28 encoder-load isolation](2026-09-28-encoder-load-isolation.md) — short native hardware/concurrency/replacement checks narrow the UHD failure.
