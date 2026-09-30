@@ -15,6 +15,17 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
+**LIVE standby; user explicitly requested pause before capture.** One-hour physical
+4K archive/1080p stream/audio setup passes, recording off. See
+[hour setup](2026-09-30-hour-stream-setup.md). Backend exec87395 is live in
+`device-lab-1wgb5o`; finite two-hour expiry is in
+`physical-hour-preparation-20260930/standby.json`. Phone4K selected,166.65GB free.
+Prepare59573/build88150 joined0. Wait for positioning confirmation, then check
+backend lifetime and execute `physical-hour-preparation-20260930/run-hour.sh`.
+Hour hold/export not run; do not mark sustained acceptance. After media collection,
+write `stop\n` to87395 and join owned backend. No agents or Watch rerun.
+
+
 Physical local adaptive upload now reaches real1080p at6Mbps. See
 [adaptive phone debugging](2026-09-29-adaptive-phone-debug.md).
 
