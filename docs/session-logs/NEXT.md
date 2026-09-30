@@ -15,6 +15,18 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
+Follow the [focused remediation plan](../superpowers/plans/2026-09-30-sustained-4k-recording-1080-streaming.md).
+Target: iPhone16Pro, clear case and USB charging, home LAN/software proxy;
+progressive startup followed by60continuous minutes of actual1080p30/6Mbps input
+while recording clean4K30/audio, then successful stop/export/playback/relaunch.
+Planning only this session; no new capture, builds or runtime checks.
+
+Order: saved phone recovery/export and short Stop; bounded cause diagnostics;
+proxy cap/pressure attribution; reproduced receiver-proof reset; measured phone
+thermal optimization; repeatable qualification harness;30-minute checkpoint then
+one final60-minute confirmed1080p hold. Keep real safety guards. No unchanged Watch
+suite or blind hour retries. Case-off/battery comparisons are diagnostic only.
+
 Hour capture finished; no live jobs. See [hour result](2026-09-30-hour-stream-setup.md).
 `physical-hour-preparation-20260930/hour-acceptance.json` is the current result.
 Clean4K/audio archive recovered on Mac:60m26s,108796decodedframes, continuous

@@ -108,19 +108,34 @@ full capture. Physical testing has resumed with the supplied phone, Watch and TV
 
 ## Remaining local work
 
+The immediate workstream is the [sustained 4K recording / 1080p streaming
+plan](2026-09-30-sustained-4k-recording-1080-streaming.md). Its target is the current
+iPhone16Pro with clear case and USB charging on the home LAN/software proxy:
+normal progressive startup, then60continuous minutes of confirmed actual1080p30
+input while recording clean4K30/audio, followed by successful native stop/export.
+Current hour evidence does not meet this target. Work through these milestones in
+order; reuse saved recordings and focused checks before another long capture.
+
 - [x] Bound archive recovery/assembly memory independently of payload size; retain
   checksum, path and corruption guarantees. Focused regressions and real-hour Mac
   replay pass; current signed iPhone build installed.
 - [ ] Confirm fixed phone recovery/export of the preserved hour recording, then a
   short stop check. Preserve originals and interrupted status; no new hour required.
+- [ ] Persist bounded transition causes and exact receiver-proof rejection reasons
+  during capture, with joined source/worker/transport/thermal evidence.
 - [ ] Separate intentional proxy timestamp-cap omissions from resource overload.
   Replay the single-omission healthy window against the stated frame-loss target;
   preserve meaningful capture/delivery/processing pressure checks.
-- [ ] Log exact receiver-proof unavailability/revocation reasons and resolve
-  unnecessary resets while preserving real authority/context-change guards.
+- [ ] Resolve the reproduced receiver-proof reset cause while preserving real
+  expiry, revocation and authority/context-change guards.
 - [ ] Isolate phone thermal load after adaptation faults are addressed; measure
-  capture/encoding/probe load and charging conditions. Keep serious/critical fallback.
-
+  capture/encoding/probe load and charging conditions, then reduce the measured
+  dominant cost. Keep serious/critical fallback.
+- [ ] Add repeatable saved-export and combined-duration physical harness modes
+  with actual-input geometry gates and safe finite finalization/cleanup.
+- [ ] Pass one30-minute combined checkpoint, then one60-minute confirmed1080p
+  hold with4K/audio recording and phone stop/export/playback/relaunch. Fully
+  validate all three media files, fresh cadence, sync and resource trajectory.
 
 - [x] Keep encoder progress/telemetry writable after worker death so finalization
   cannot fail on a broken parent pipe. Guardian owns and drains those readers;

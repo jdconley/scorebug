@@ -1,5 +1,7 @@
 # Session logs
 
+- [September 30 sustained 4K/1080p plan](2026-09-30-sustained-4k1080-plan.md) — scoped crash recovery, adaptation attribution, phone workload and staged physical qualification; planning only.
+
 - [September 30 hour-stream setup](2026-09-30-hour-stream-setup.md) — one-hour4K/audio recovered; sustained1080 and phone stop fail; archive memory fix, saved-media results and adaptation causes.
 
 - [September 29 adaptive phone debugging](2026-09-29-adaptive-phone-debug.md) — thermal/UI fixes, measured CPU reduction and confirmed physical1080p upload; sustained qualification remains.

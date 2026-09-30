@@ -3,7 +3,9 @@
 The local feature set has retained integration evidence. Start with the
 [acceptance matrix](simulator-acceptance.md) and
 [remaining work](superpowers/plans/2026-09-13-portable-streaming-and-watch.md),
-not a fresh broad test run. Hardware is deferred.
+not a fresh broad test run. Physical qualification is now scoped by the
+[4K recording / sustained1080p plan](superpowers/plans/2026-09-30-sustained-4k-recording-1080-streaming.md);
+reuse the accepted simulator/Watch workflows unless their contracts change.
 
 ## Choose one check for the change
 
