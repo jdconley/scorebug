@@ -1,3 +1,4 @@
+import { workerProcessingSchema, processingProgresses } from '../src/worker-processing.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { WorkerObservation } from '@scorebug/protocol';
@@ -941,6 +942,7 @@ function processingObservation() {
 it('negotiates processing and accepts pending-to-complete reports without changing decoder identity', async () => {
   const f = await fixture();
   expect(f.session.workerProcessing).toBe('source-processing-v1');
+  expect(f.session.workerFrameCapOmissions).toBe('tokenbucket-90k-v1');
   const o = processingObservation();
   const report = (sequence: number) =>
     f.report({ ...f.body, sequence, timingToken: f.session.timingToken, observation: o });
@@ -1238,4 +1240,28 @@ it('a new token cannot refresh or retrospectively date a frozen delivery sample'
     store.report({ ...body, sequence: 4, timingToken: omissionAck.timingToken });
     expect(store.status('match', true).status.decoderDeliveryAgeUpperBoundMs).toBeUndefined();
   }
+});
+
+it('validates optional cap attribution and prevents its mutation inside a fixed source window', () => {
+  const report = processingObservation().processing;
+  report.interval.submittedFrames = 149;
+  report.interval.completedFrames = 148;
+  report.interval.omittedBeforeEncoderFrames = 1;
+  const cap = { ...report, interval: { ...report.interval, intentionalFrameCapOmissions: 1 } };
+  expect(workerProcessingSchema.safeParse(cap).success).toBe(true);
+  expect(workerProcessingSchema.safeParse(report).success).toBe(true);
+  for (const invalid of [-1, 2, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(
+      workerProcessingSchema.safeParse({
+        ...cap,
+        interval: { ...cap.interval, intentionalFrameCapOmissions: invalid },
+      }).success,
+    ).toBe(false);
+  }
+  expect(
+    processingProgresses(cap, {
+      ...cap,
+      interval: { ...cap.interval, intentionalFrameCapOmissions: 0 },
+    }),
+  ).toBe(false);
 });

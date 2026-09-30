@@ -13,6 +13,8 @@ export type WorkerProcessingInterval = Readonly<{
   completedFrames: number;
   pendingFrames: number;
   omittedBeforeEncoderFrames: number;
+  /** Exact cap-policy prediction, corroborated by encoder submissions; absent if unknown. */
+  intentionalFrameCapOmissions?: number;
   /** Reader-observed after-decode to encoder submission. Not CPU execution cost. */
   filterDuration: ObservedDuration | null;
   /** Reader-observed after-decode to packet completion, excluding decode itself. */
@@ -69,7 +71,18 @@ export function workerProcessingInterval(
       maximumMs: Math.max(...known),
     };
   };
+  const intervalSources = decoded.frames.slice(first + 1, last + 1);
+  // The predictor runs from pipeline start, including frames no longer retained.
+  // Unknown policy or a contradictory actual submission disables attribution.
+  // Predicted selected-but-missing frames remain unexpected omissions.
+  const capKnown =
+    intervalSources.every((frame) => typeof frame.selectedByFrameCap === 'boolean') &&
+    bracket.every((entry) => sources.get(entry.pts!)!.selectedByFrameCap === true);
+  const intentionalFrameCapOmissions = capKnown
+    ? intervalSources.filter((frame) => frame.selectedByFrameCap === false).length
+    : undefined;
   return {
+    ...(intentionalFrameCapOmissions !== undefined ? { intentionalFrameCapOmissions } : {}),
     sourceStartExclusive: start,
     sourceEndInclusive: end,
     decodedFrames,

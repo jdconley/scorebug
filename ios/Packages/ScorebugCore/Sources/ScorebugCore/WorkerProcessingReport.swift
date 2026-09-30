@@ -13,23 +13,26 @@ public struct WorkerProcessingInterval: Codable, Equatable, Sendable {
     public var completedFrames: Int64
     public var pendingFrames: Int64
     public var omittedBeforeEncoderFrames: Int64
+    public var intentionalFrameCapOmissions: Int64?
     public var filterDuration: WorkerObservedDuration?
     public var processingDuration: WorkerObservedDuration?
     public init(sourceStartExclusive: Int64, sourceEndInclusive: Int64, decodedFrames: Int64, submittedFrames: Int64,
                 completedFrames: Int64, pendingFrames: Int64, omittedBeforeEncoderFrames: Int64,
-                filterDuration: WorkerObservedDuration?, processingDuration: WorkerObservedDuration?) {
+                filterDuration: WorkerObservedDuration?, processingDuration: WorkerObservedDuration?, intentionalFrameCapOmissions: Int64? = nil) {
         self.sourceStartExclusive = sourceStartExclusive; self.sourceEndInclusive = sourceEndInclusive
         self.decodedFrames = decodedFrames; self.submittedFrames = submittedFrames; self.completedFrames = completedFrames
         self.pendingFrames = pendingFrames; self.omittedBeforeEncoderFrames = omittedBeforeEncoderFrames
+        self.intentionalFrameCapOmissions = intentionalFrameCapOmissions
         self.filterDuration = filterDuration; self.processingDuration = processingDuration
     }
-    private enum CodingKeys: String, CodingKey { case sourceStartExclusive, sourceEndInclusive, decodedFrames, submittedFrames, completedFrames, pendingFrames, omittedBeforeEncoderFrames, filterDuration, processingDuration }
+    private enum CodingKeys: String, CodingKey { case sourceStartExclusive, sourceEndInclusive, decodedFrames, submittedFrames, completedFrames, pendingFrames, omittedBeforeEncoderFrames, filterDuration, processingDuration, intentionalFrameCapOmissions }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(sourceStartExclusive, forKey: .sourceStartExclusive); try c.encode(sourceEndInclusive, forKey: .sourceEndInclusive)
         try c.encode(decodedFrames, forKey: .decodedFrames); try c.encode(submittedFrames, forKey: .submittedFrames)
         try c.encode(completedFrames, forKey: .completedFrames); try c.encode(pendingFrames, forKey: .pendingFrames)
         try c.encode(omittedBeforeEncoderFrames, forKey: .omittedBeforeEncoderFrames)
+        try c.encodeIfPresent(intentionalFrameCapOmissions, forKey: .intentionalFrameCapOmissions)
         try c.encode(filterDuration, forKey: .filterDuration); try c.encode(processingDuration, forKey: .processingDuration)
     }
 }
@@ -83,6 +86,9 @@ private extension WorkerProcessingReport {
         guard interval.submittedFrames <= interval.decodedFrames, interval.completedFrames <= interval.submittedFrames,
               interval.pendingFrames == interval.submittedFrames - interval.completedFrames,
               interval.omittedBeforeEncoderFrames == interval.decodedFrames - interval.submittedFrames else { return false }
+        if let intentional = interval.intentionalFrameCapOmissions {
+            guard intentional >= 0, intentional <= interval.omittedBeforeEncoderFrames else { return false }
+        }
         for duration in [interval.filterDuration, interval.processingDuration].compactMap({ $0 }) {
             guard duration.meanMs.isFinite, duration.maximumMs.isFinite, duration.meanMs >= 0,
                   duration.meanMs <= duration.maximumMs, duration.maximumMs <= Double(maximum) else { return false }

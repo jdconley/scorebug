@@ -1,6 +1,11 @@
+import { FrameRateCap } from './frame-rate-cap.js';
 import { randomUUID } from 'node:crypto';
 import { DecodedVideoParser } from './decoded-video.js';
-export type DecodedFrameRecord = Readonly<{ pts: number; observedAt: number }>;
+export type DecodedFrameRecord = Readonly<{
+  pts: number;
+  observedAt: number;
+  selectedByFrameCap?: boolean;
+}>;
 export type DecodedFrameHistorySnapshot = Readonly<{
   scopeID: string;
   frames: readonly DecodedFrameRecord[];
@@ -10,6 +15,7 @@ export type DecodedFrameHistorySnapshot = Readonly<{
 }>;
 /** Source history only; decoder completion is not encoder or viewer delivery. */
 export class DecodedFrameHistory {
+  private readonly frameCap?: FrameRateCap;
   private frames: DecodedFrameRecord[] = [];
   private accepted = 0;
   private lastNow: number | undefined;
@@ -22,7 +28,10 @@ export class DecodedFrameHistory {
   constructor(
     private readonly now: () => number = () => performance.now(),
     readonly scopeID: string = randomUUID(),
-  ) {}
+    capFPS?: number,
+  ) {
+    if (capFPS !== undefined) this.frameCap = new FrameRateCap(capFPS);
+  }
   private fail(reason: string) {
     this.invalidReason ??= reason;
   }
@@ -55,7 +64,11 @@ export class DecodedFrameHistory {
       return;
     }
     if (this.frames.length === 512) this.frames.shift();
-    this.frames.push({ pts, observedAt: now });
+    this.frames.push({
+      pts,
+      observedAt: now,
+      ...(this.frameCap ? { selectedByFrameCap: this.frameCap.select(pts) } : {}),
+    });
     this.accepted++;
   }
   push(chunk: Buffer) {

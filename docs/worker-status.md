@@ -115,6 +115,21 @@ sequences and frame count. Repeated reports can update completion without refres
 the original source-age anchor; omission clears attached processing. No pressure or
 capacity classification follows from completion counts alone.
 
+The optional `workerFrameCapOmissions: "tokenbucket-90k-v1"` session capability
+allows `interval.intentionalFrameCapOmissions`. Older peers keep the unchanged
+v1 processing protocol and timing/count fields; a new worker strips cap attribution
+unless that separate capability was negotiated. The API validates its count against
+total omissions and freezes it with the source interval.
+
+Cap attribution predicts the exact bounded-credit selection rule from pipeline
+start at the shared90kHz timebase, then corroborates selected frames against actual
+encoder submissions. Unknown policy or a contradictory submission omits attribution.
+The native classifier excludes only this attributed count from resource-overload
+classification; unexpected/legacy omissions and excessive filter/completion durations
+still produce pressure. Counts remain visible, and capture/delivery/cadence safeguards
+are unchanged. This is historical frame selection evidence, not proxy CPU utilization
+or viewer receipt.
+
 For the owned local simulator fixture, add `SCOREBUG_TEST_WORKER_PROCESSING=1` alongside
 `SCOREBUG_TEST_RELAY_PUBLICATION=1` to `pnpm test:native-streaming`. The gate requires
 two completed API/native processing intervals matching independently qualified source

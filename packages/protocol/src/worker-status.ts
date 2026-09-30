@@ -113,6 +113,7 @@ export type WorkerSessionResponse = {
   decodedVideoClock?: string;
   pipelineReadIdentity?: string;
   workerProcessing?: string;
+  workerFrameCapOmissions?: string;
   decoderCadence?: string;
   decoderDelivery?: string;
   sessionId: string;

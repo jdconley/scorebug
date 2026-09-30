@@ -2,9 +2,9 @@ import { expect, it } from 'vitest';
 import { DecodedFrameHistory } from '../src/decoded-frame-history.js';
 import { EncoderTimingTelemetry } from '../src/encoder-timing.js';
 import { workerProcessingInterval } from '../src/worker-processing.js';
-function fixture(points = [0, 3000, 6000, 9000], submitted = points) {
+function fixture(points = [0, 3000, 6000, 9000], submitted = points, capFPS?: number) {
   let now = 0;
-  const decoded = new DecodedFrameHistory(() => now, 'scope'),
+  const decoded = new DecodedFrameHistory(() => now, 'scope', capFPS),
     encoded = new EncoderTimingTelemetry(() => now, 'scope');
   for (const [i, pts] of points.entries()) {
     now = i * 10;
@@ -179,5 +179,55 @@ it('excludes a pending boundary anchor from included completion counts', () => {
     completedFrames: 3,
     pendingFrames: 0,
     processingDuration: { meanMs: 100, maximumMs: 110 },
+  });
+});
+
+it('attributes only cap-predicted omissions corroborated by actual encoder submissions', () => {
+  const f = fixture([0, 1500, 3000, 4500, 6000, 7500, 9000], [0, 1500, 3000, 6000, 9000], 30);
+  f.complete();
+  expect(workerProcessingInterval(f.snapshot(), 0, 7500)).toMatchObject({
+    omittedBeforeEncoderFrames: 2,
+    intentionalFrameCapOmissions: 2,
+  });
+  // A selected frame missing downstream remains unexpected loss.
+  const lost = fixture([0, 1500, 3000, 4500, 6000, 7500, 9000], [0, 1500, 6000, 9000], 30);
+  lost.complete();
+  expect(workerProcessingInterval(lost.snapshot(), 0, 7500)).toMatchObject({
+    omittedBeforeEncoderFrames: 3,
+    intentionalFrameCapOmissions: 2,
+  });
+  // Any submission disagreeing with the predictor makes attribution unknown.
+  const mismatch = fixture([0, 1500, 3000, 4500, 6000, 7500, 9000], [0, 4500, 9000], 30);
+  mismatch.complete();
+  expect(workerProcessingInterval(mismatch.snapshot(), 0, 7500)).not.toHaveProperty(
+    'intentionalFrameCapOmissions',
+  );
+  const legacy = fixture([0, 1500, 3000, 4500, 6000, 7500, 9000], [0, 1500, 3000, 6000, 9000]);
+  legacy.complete();
+  expect(workerProcessingInterval(legacy.snapshot(), 0, 7500)).not.toHaveProperty(
+    'intentionalFrameCapOmissions',
+  );
+});
+it('does not reset cap credit when the bounded decoder history trims old frames', () => {
+  let now = 0,
+    ordinal = 0;
+  const decoded = new DecodedFrameHistory(() => now, 'scope', 30),
+    encoded = new EncoderTimingTelemetry(() => now, 'scope');
+  for (let n = 0; n < 700; n++) {
+    now = n * 10;
+    decoded.push(Buffer.from(`frame:${n} pts:${n * 1500} pts_time:0\nscorebug.source=1\n`));
+    if (n === 0 || n === 1 || n % 2 === 0) {
+      now += 1;
+      encoded.push(
+        Buffer.from(`pre ${ordinal} 1/90000 ${n * 1500}\npost ${ordinal} 1/90000 ${n * 1500}\n`),
+      );
+      ordinal++;
+    }
+  }
+  const f = { snapshot: () => ({ decoded: decoded.snapshot(), encoded: encoded.snapshot() }) };
+  expect(workerProcessingInterval(f.snapshot(), 600 * 1500, 697 * 1500)).toMatchObject({
+    decodedFrames: 97,
+    omittedBeforeEncoderFrames: 49,
+    intentionalFrameCapOmissions: 49,
   });
 });

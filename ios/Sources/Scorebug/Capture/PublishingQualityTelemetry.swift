@@ -269,7 +269,9 @@ enum PublishingQualityTelemetry {
             guard duration.meanMs.isFinite, duration.maximumMs.isFinite, duration.meanMs >= 0,
                   duration.meanMs <= duration.maximumMs, duration.maximumMs <= Double(maximum) else { return .unknown }
         }
-        if i.omittedBeforeEncoderFrames > 0 { return .elevated }
+        if let intentional = i.intentionalFrameCapOmissions,
+           intentional < 0 || intentional > i.omittedBeforeEncoderFrames { return .unknown }
+        if i.omittedBeforeEncoderFrames - (i.intentionalFrameCapOmissions ?? 0) > 0 { return .elevated }
         if let filter = i.filterDuration, filter.maximumMs > limits.maximumFilterMs { return .elevated }
         if let processing = i.processingDuration, processing.maximumMs > limits.maximumProcessingMs { return .elevated }
         guard i.submittedFrames > 0, i.pendingFrames == 0, i.filterDuration != nil, i.processingDuration != nil else { return .unknown }

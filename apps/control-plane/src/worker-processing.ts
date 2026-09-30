@@ -32,6 +32,7 @@ export const workerProcessingSchema = z
         completedFrames: count,
         pendingFrames: count,
         omittedBeforeEncoderFrames: count,
+        intentionalFrameCapOmissions: count.optional(),
         filterDuration: duration.nullable(),
         processingDuration: duration.nullable(),
       })
@@ -48,6 +49,8 @@ export const workerProcessingSchema = z
       i.completedFrames <= i.submittedFrames &&
       i.pendingFrames === i.submittedFrames - i.completedFrames &&
       i.omittedBeforeEncoderFrames === i.decodedFrames - i.submittedFrames &&
+      (i.intentionalFrameCapOmissions === undefined ||
+        i.intentionalFrameCapOmissions <= i.omittedBeforeEncoderFrames) &&
       (i.submittedFrames > 0 || (i.filterDuration === null && i.processingDuration === null)) &&
       (i.pendingFrames === 0 || i.processingDuration === null)
     );

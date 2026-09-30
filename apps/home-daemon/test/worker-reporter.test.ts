@@ -624,7 +624,7 @@ it.each([
   expect(samples).toBe(2);
 });
 
-it.each([undefined, 'future', 'source-processing-v1'])(
+it.each([undefined, 'future', 'source-processing-v1', 'source-processing-v2'])(
   'negotiates processing extension %s without changing the source snapshot',
   async (version) => {
     const supported = {
@@ -645,14 +645,17 @@ it.each([undefined, 'future', 'source-processing-v1'])(
         invalidReason: null,
         ended: false,
       },
-      processing: { scopeID: 'test-only' },
+      processing: { scopeID: 'test-only', interval: { intentionalFrameCapOmissions: 0 } },
     };
     await f.reporter.report(() => sampled);
     const actual = f.requests.at(-1)!.body.observation;
     expect(actual.processing).toEqual(
-      version === 'source-processing-v1' ? sampled.processing : undefined,
+      version === 'source-processing-v1' ? { scopeID: 'test-only', interval: {} } : undefined,
     );
-    expect(sampled.processing).toEqual({ scopeID: 'test-only' });
+    expect(sampled.processing).toEqual({
+      scopeID: 'test-only',
+      interval: { intentionalFrameCapOmissions: 0 },
+    });
   },
 );
 it.each(['clock', 'readIdentity', 'readId'])(
@@ -676,7 +679,7 @@ it.each(['clock', 'readIdentity', 'readId'])(
           ...(missing === 'readId'
             ? {}
             : { pipelineReadId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }),
-          processing: { scopeID: 'test-only' },
+          processing: { scopeID: 'test-only', interval: {} },
         }) as any,
     );
     expect(f.requests.at(-1)!.body.observation).not.toHaveProperty('processing');
@@ -712,7 +715,7 @@ it('renegotiates processing on session renewal and omits it after capability dow
           invalidReason: null,
           ended: false,
         },
-        processing: { scopeID: 'test-only' },
+        processing: { scopeID: 'test-only', interval: {} },
       }) as any,
   );
   const reports = f.requests.filter((r) => r.path.endsWith('observations'));
@@ -1111,3 +1114,38 @@ it('keeps the original deadline through challenge session recovery', async () =>
   expect(samples).toBe(0);
   expect(registrations).toBe(2);
 });
+
+it.each([undefined, 'future', 'tokenbucket-90k-v1'])(
+  'negotiates cap attribution independently of the legacy processing protocol: %s',
+  async (version) => {
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions')
+        ? {
+            sessionId: 'one',
+            decodedVideoClock: 'mpegts-pts-90k-v1',
+            pipelineReadIdentity: 'srt-read-query-v1',
+            workerProcessing: 'source-processing-v1',
+            workerFrameCapOmissions: version,
+          }
+        : { accepted: true },
+    }));
+    const sampled: any = {
+      ...observation,
+      pipelineReadId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      decodedVideo: {
+        clock: 'mpegts-pts-90k-v1',
+        completed: null,
+        invalidReason: null,
+        ended: false,
+      },
+      processing: { scopeID: 'test-only', interval: { intentionalFrameCapOmissions: 1 } },
+    };
+    await f.reporter.report(() => sampled);
+    expect(f.requests.at(-1)!.body.observation.processing).toEqual(
+      version === 'tokenbucket-90k-v1'
+        ? sampled.processing
+        : { scopeID: 'test-only', interval: {} },
+    );
+    expect(sampled.processing.interval.intentionalFrameCapOmissions).toBe(1);
+  },
+);

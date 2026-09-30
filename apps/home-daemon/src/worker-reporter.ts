@@ -5,6 +5,7 @@ import {
   deliveryDelta,
   type DecoderDeliveryCursor,
   WORKER_PROCESSING_PROTOCOL,
+  WORKER_FRAME_CAP_OMISSIONS_PROTOCOL,
   WORKER_DECODER_CADENCE_PROTOCOL,
   WORKER_PIPELINE_READ_IDENTITY,
   WORKER_SAMPLE_TIMING_PROTOCOL,
@@ -20,6 +21,7 @@ const session = z.object({
   decodedVideoClock: z.string().optional(),
   pipelineReadIdentity: z.string().optional(),
   workerProcessing: z.string().optional(),
+  workerFrameCapOmissions: z.string().optional(),
   decoderCadence: z.string().optional(),
   decoderDelivery: z.string().optional(),
   sampleTiming: z.string().optional(),
@@ -176,6 +178,13 @@ export class WorkerReporter {
           observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
         )
           delete observation.processing;
+        // Older control planes reject unknown interval fields. Preserve their
+        // v1 timing/count evidence but never send unnegotiated cap attribution.
+        if (
+          registered.workerFrameCapOmissions !== WORKER_FRAME_CAP_OMISSIONS_PROTOCOL &&
+          observation.processing
+        )
+          delete observation.processing.interval.intentionalFrameCapOmissions;
         if (
           registered.decoderCadence !== WORKER_DECODER_CADENCE_PROTOCOL ||
           !canIdentifyRead ||

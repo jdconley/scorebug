@@ -1,3 +1,4 @@
+import { frameRateCapFilter } from './frame-rate-cap.js';
 import type { DecodedGeometrySnapshot } from './decoded-geometry.mjs';
 import type { DecoderDeliveryPacket } from '@scorebug/protocol';
 import { DecoderDeliveryTelemetry, type DecoderDeliverySnapshot } from './decoder-delivery.js';
@@ -157,13 +158,13 @@ export function buildFfmpegArgs(
   // Preserve acquisition gaps on the common A/V timeline. Auto/CFR can pad
   // early audio with duplicates; VFR can remove frames around timestamp wrap.
   // Passthrough leaves frame removal solely to the explicit cap below.
-  // Select at most one frame per anchored cap interval, retaining source PTS.
-  // Allow one input tick for floor-quantized acquisition timestamps plus half
-  // a tick for input rescaling, so boundary frames keep their intended bucket.
+  // A two-credit token bucket tolerates acquisition jitter with one spare frame,
+  // while limiting sustained selection to the output rate. Anchored floor buckets
+  // discarded ordinary 30fps frames on either side of a clock boundary. Credits
+  // never grow across an outage; duplicate/regressing PTS cannot be selected or
+  // mint new credits. Keep source PTS and the shared A/V timeline unchanged.
   video.push('-fps_mode', 'passthrough', '-enc_time_base:v', '-1');
-  const cap = profile
-    ? `select='isnan(prev_selected_t)+gt(floor((t-start_t+1.5*TB)*${profile.fps}),floor((prev_selected_t-start_t+1.5*TB)*${profile.fps}))',`
-    : '';
+  const cap = profile ? `${frameRateCapFilter(profile.fps)},` : '';
   const filter = profile
     ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:eval=frame,${drawtext}`
     : drawtext;
@@ -177,7 +178,7 @@ export function buildFfmpegArgs(
   const telemetry =
     'metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,' +
     geometry +
-    "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]";
+    "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]settb=1/90000,";
 
   // copyts preserves the decoder's transport clock; avoid_negative_ts only
   // normalizes outgoing mux timestamps onto a nonnegative timeline.
@@ -361,7 +362,7 @@ export function startPipeline(
     ? new DecoderDeliveryTelemetry(options.monotonicNow)
     : undefined;
   const decodedHistory = encoderTiming
-    ? new DecodedFrameHistory(options.monotonicNow, encoderTiming.scopeID)
+    ? new DecodedFrameHistory(options.monotonicNow, encoderTiming.scopeID, spec.profile?.fps)
     : undefined;
   const processingWindows = encoderTiming ? new WorkerProcessingWindows() : undefined;
   const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;

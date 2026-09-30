@@ -44,6 +44,20 @@ final class WorkerProcessingReportTests: XCTestCase {
             XCTAssertNil(WorkerProcessingEvidence(response: response, receivedAt: .now, requestDuration: .zero))
         }
     }
+    func testOptionalCapAttributionRoundTripsAndRejectsContradictoryCounts() throws {
+        var response = try XCTUnwrap(fixture()["complete"])
+        response.status.observation?.processing?.interval.submittedFrames = 149
+        response.status.observation?.processing?.interval.completedFrames = 149
+        response.status.observation?.processing?.interval.omittedBeforeEncoderFrames = 1
+        response.status.observation?.processing?.interval.intentionalFrameCapOmissions = 1
+        let decoded = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: JSONEncoder().encode(response))
+        XCTAssertEqual(decoded.status.observation?.processing?.interval.intentionalFrameCapOmissions, 1)
+        XCTAssertNotNil(WorkerProcessingEvidence(response: decoded, receivedAt: .now, requestDuration: .zero))
+        for bad: Int64 in [-1, 2, Int64.max] {
+            response.status.observation?.processing?.interval.intentionalFrameCapOmissions = bad
+            XCTAssertNil(WorkerProcessingEvidence(response: response, receivedAt: .now, requestDuration: .zero))
+        }
+    }
     func testRequiresPublicationClockAndProvenUnexpiredAge() throws {
         let original = try XCTUnwrap(fixture()["complete"])
         let mutations: [(inout WorkerMediaStatusResponse) -> Void] = [

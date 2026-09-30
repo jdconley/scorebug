@@ -97,7 +97,7 @@ describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timesta
       expect(filter).toContain(':(ow-iw)/2:(oh-ih)/2:eval=frame,drawtext=');
       expect(args.indexOf('-reinit_filter:v:0')).toBeLessThan(inputIndex);
       expect(filter).toContain(
-        "nullsink;[live]select='isnan(prev_selected_t)+gt(floor((t-start_t+1.5*TB)*30),floor((prev_selected_t-start_t+1.5*TB)*30))',scale=1280:720",
+        "nullsink;[live]settb=1/90000,select='st(0,if(isnan(prev_t),2,min(2,ld(0)+max(0,t-ld(1))*30)))",
       );
       expect(filter.indexOf('[decoded]settb=1/90000')).toBeGreaterThan(-1);
       expect(filter.indexOf('[decoded]settb=1/90000')).toBeLessThan(filter.indexOf('select='));
@@ -130,7 +130,7 @@ it('observes fixed-timebase decoder ingress before cap and strips an exact fixed
     'metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,',
   );
   expect(vf).toContain(
-    "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]select=",
+    "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]settb=1/90000,select=",
   );
 });
 

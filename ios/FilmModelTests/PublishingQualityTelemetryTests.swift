@@ -24,7 +24,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         var now: Double = 110.5
     }
     private func fixture(configurations: [Int: VideoEncodingConfiguration?] = [:],
-                         missingEncoded: Set<Int> = [], decodedCount: Int64 = 150,
+                         missingEncoded: Set<Int> = [], decodedCount: Int64 = 150, sourceWindowFrames: Int64 = 150,
                          thermalState: PublishingThermalState = .nominal,
                          retransmitted: UInt64 = 0, drops: Int32 = 0, buffer: Int32 = 0,
                          rtt: Double = 10, delay: Int32? = nil, frameOffset: Int = 0, workerEpoch: String? = nil,
@@ -48,17 +48,17 @@ final class PublishingQualityTelemetryTests: XCTestCase {
             clock: .init(convention: "mpegts-ingress-origin-90k-v1", originPTS: "10919"))
         func response(_ sequence: Int64) -> WorkerMediaStatusResponse {
             let position = sequence - windowSequence + 2
-            let first = (position - 1) * 150 + Int64(frameOffset), end = position * 150 - 1 + Int64(frameOffset)
+            let first = (position - 1) * sourceWindowFrames + Int64(frameOffset), end = position * sourceWindowFrames - 1 + Int64(frameOffset)
             let w = DecodedVideoWindow(sequence: sequence, durationMs: 5000, ageMs: 100,
                 firstPTS: first * 3000 - 1919, lastPTS: end * 3000 - 1919,
-                freshFrames: sequence == windowSequence ? decodedCount : 150, duplicateFrames: 0, reorderedFrames: 0, valid: true)
+                freshFrames: sequence == windowSequence ? decodedCount : sourceWindowFrames, duplicateFrames: 0, reorderedFrames: 0, valid: true)
             var observation = WorkerObservation(gameId: "match", generation: 1, state: .producingOutput, reason: nil,
                 attempt: 1, frame: 300, outTimeUs: 10_000_000, scoreRevision: 1,
                 decodedVideo: .init(completed: w, invalidReason: nil, ended: false, clock: "mpegts-pts-90k-v1"))
             if sequence == windowSequence {
                 observation.processing = .init(scopeID: "55555555-5555-5555-5555-555555555555", encoder: "videotoolbox",
                     previousSequence: sequence - 1, sequence: sequence, firstPTS: w.firstPTS!,
-                    interval: .init(sourceStartExclusive: Int64(149 + frameOffset) * 3000 - 1919, sourceEndInclusive: w.lastPTS!,
+                    interval: .init(sourceStartExclusive: (sourceWindowFrames - 1 + Int64(frameOffset)) * 3000 - 1919, sourceEndInclusive: w.lastPTS!,
                         decodedFrames: decodedCount, submittedFrames: decodedCount, completedFrames: decodedCount,
                         pendingFrames: 0, omittedBeforeEncoderFrames: 0,
                         filterDuration: .init(meanMs: 1, maximumMs: 4), processingDuration: .init(meanMs: 400, maximumMs: 430)))
@@ -528,6 +528,29 @@ final class PublishingQualityTelemetryTests: XCTestCase {
             f = base; mutation(&f.source.processing!)
             XCTAssertEqual(try window(f).workerPressure, .unknown)
         }
+    }
+    func testProvenCapOmissionsDoNotInventResourceOverloadButUnexpectedLossStillDoes() throws {
+        var f = try fixture(decodedCount: 151, sourceWindowFrames: 151)
+        f.source.processing?.interval.submittedFrames = 150
+        f.source.processing?.interval.completedFrames = 150
+        f.source.processing?.interval.omittedBeforeEncoderFrames = 1
+        f.source.processing?.interval.intentionalFrameCapOmissions = 1
+        f.source.processing?.interval.filterDuration = .init(meanMs: 1, maximumMs: 4.35)
+        f.source.processing?.interval.processingDuration = .init(meanMs: 4, maximumMs: 7.17)
+        XCTAssertEqual(try window(f).workerPressure, .nominal)
+        // Arithmetic contradictions never establish healthy processing.
+        for invalid: Int64 in [-1, 2, Int64.max] {
+            f.source.processing?.interval.intentionalFrameCapOmissions = invalid
+            XCTAssertEqual(try window(f).workerPressure, .unknown)
+        }
+        f.source.processing?.interval.intentionalFrameCapOmissions = 0
+        XCTAssertEqual(try window(f).workerPressure, .elevated)
+        f.source.processing?.interval.intentionalFrameCapOmissions = 1
+        f.source.processing?.interval.processingDuration?.maximumMs = 1001
+        XCTAssertEqual(try window(f).workerPressure, .elevated)
+        f.source.processing?.interval.processingDuration = nil
+        f.source.processing?.interval.filterDuration = nil
+        XCTAssertEqual(try window(f).workerPressure, .unknown)
     }
     func testCountsBothCaptureAndIngressLossWithoutInventingWorkerOutputLoss() throws {
         let w = try window(fixture(missingEncoded: [200], decodedCount: 145))
