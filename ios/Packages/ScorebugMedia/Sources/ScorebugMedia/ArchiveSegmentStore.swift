@@ -255,11 +255,19 @@ private enum Disk {
         guard size == segment.byteCount else { throw ArchiveStoreError.corruptArchive("Payload size mismatch") }
         var hash = SHA256()
         var read = 0
-        while let chunk = try input.read(upToCount: 1024 * 1024), !chunk.isEmpty {
-            read += chunk.count
-            guard read <= segment.byteCount else { throw ArchiveStoreError.corruptArchive("Payload grew while reading") }
-            hash.update(data: chunk)
-            try output?.write(contentsOf: chunk)
+        while true {
+            // FileHandle bridges through Foundation's autoreleased buffers. A
+            // recovery/export actor can verify gigabytes before its outer pool
+            // drains, so release those buffers after each bounded chunk.
+            let count = try autoreleasepool {
+                guard let chunk = try input.read(upToCount: 1024 * 1024), !chunk.isEmpty else { return 0 }
+                read += chunk.count
+                guard read <= segment.byteCount else { throw ArchiveStoreError.corruptArchive("Payload grew while reading") }
+                hash.update(data: chunk)
+                try output?.write(contentsOf: chunk)
+                return chunk.count
+            }
+            if count == 0 { break }
         }
         let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
         guard read == segment.byteCount, digest == segment.sha256 else { throw ArchiveStoreError.corruptArchive("Payload checksum mismatch") }

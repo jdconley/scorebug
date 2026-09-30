@@ -1,6 +1,6 @@
 # Session logs
 
-- [September 30 hour-stream setup](2026-09-30-hour-stream-setup.md) — physical4K/audio preparation passes;1080p backend live; paused before capture.
+- [September 30 hour-stream setup](2026-09-30-hour-stream-setup.md) — one-hour4K/audio recovered; sustained1080 and phone stop fail; archive memory fix, saved-media results and adaptation causes.
 
 - [September 29 adaptive phone debugging](2026-09-29-adaptive-phone-debug.md) — thermal/UI fixes, measured CPU reduction and confirmed physical1080p upload; sustained qualification remains.
 

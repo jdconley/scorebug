@@ -15,60 +15,36 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
-**LIVE standby; user explicitly requested pause before capture.** One-hour physical
-4K archive/1080p stream/audio setup passes, recording off. See
-[hour setup](2026-09-30-hour-stream-setup.md). Backend exec87395 is live in
-`device-lab-1wgb5o`; finite two-hour expiry is in
-`physical-hour-preparation-20260930/standby.json`. Phone4K selected,166.65GB free.
-Prepare59573/build88150 joined0. Wait for positioning confirmation, then check
-backend lifetime and execute `physical-hour-preparation-20260930/run-hour.sh`.
-Hour hold/export not run; do not mark sustained acceptance. After media collection,
-write `stop\n` to87395 and join owned backend. No agents or Watch rerun.
+Hour capture finished; no live jobs. See [hour result](2026-09-30-hour-stream-setup.md).
+`physical-hour-preparation-20260930/hour-acceptance.json` is the current result.
+Clean4K/audio archive recovered on Mac:60m26s,108796decodedframes, continuous
+encoded A/V. Both overlaid outputs fully decode, rolling5s minimum29fps; seven
+short video gaps, audio continuous. Actual1080 input lasted14m20s total; sustained
+1080 and physical stop/export remain failed/unqualified.
 
+Phone exited during stop/finalization; exact original recording
+33D2FF99-7918-42EA-8D41-9A5C076B2011 preserved on phone and copied to
+`physical-hour-preparation-20260930/phone-original-recording`. Mac native recovery
+export is `device-lab-1wgb5o/phone-clean-archive.mp4`. Do not promote interrupted
+completion status or manually concatenate segments.
 
-Physical local adaptive upload now reaches real1080p at6Mbps. See
-[adaptive phone debugging](2026-09-29-adaptive-phone-debug.md).
+Fixed archive verification/copy buffer retention: isolated real-hour recovery
+RSS13.8GB→35MB.20focused archive-store tests pass; signed iPhone build passes and
+updated app installed. No new capture or physical export confirmation afterward.
+Next, reuse this exact saved recording to check fixed phone recovery/export, then
+a short stop check; do not start another hour until its unresolved questions warrant it.
 
-Two fixes: fair thermal state is known/non-elevated (matches candidate encoder),
-and internal100ms telemetry no longer redraws all SwiftUI tabs. Control/health
-cadence and pressure gates are unchanged. Focused checks:45telemetry,38driver,
-125capture-model,2transition tests and10runner checks. Matching25s CPU profiles
-show main-thread21.95→6.31CPU-seconds; total24.75→11.525.
+Adaptive causes: initial receiver-proof invalidation resets1080→240; single
+proxy timestamp-cap omission/151frames classified as worker pressure drops1080→720;
+phone serious temperature then drops720→360→240. Transport nominal, worker timings
+4.35/7.17ms. Distinguish deliberate cap removal from actual overload and log local
+receiver-proof rejection reasons before altering policy. Retain authority/thermal
+safety gates. USB charging+clear case initially; user unplugged~44min; no quality
+recovery through finish. Isolate thermal workload after algorithm fixes.
 
-`physical-recovery-T2Pdtv` passes the consecutive240→360→720→1080 climb, native
-phone point, stream stop, independent archive continuation and native export.
-`1080-acceptance.json` includes full saved-media decode/encoded continuity: archive7555
-frames, both outputs7242frames, A/V ends≤44ms, visible score change. Receiver confirms
-1254 actual1920×1080 frames at30fps. Explicit700ms publishing
-peer latency; software proxy; screenshot-only XCTest capture. All owned phone/lab
-processes joined; cleanupFailures[]. Phone originals retained. No Watch rerun.
-
-Next focused physical work: sustained1080p, then fallback/recovery. An earlier
-run `physical-recovery-uusTBV` reduced720→240 on the extra growing-sender-retention
-warning (230ms buffer/700ms delay,12.193ms RTT, zero drops/retransmits). It did not
-recur in the accepted climb. Thresholds unchanged; bounded last12gauges now persist
-in pressure-transition journals to distinguish sustained buildup from bursts.
-Do not call full-match stability, radio handoffs or perceptual sync qualified.
-
-Reuse accepted paired physical workflow `physical-paired-live-LlJlWn`: real
-phone/Ultra2 companion setup/scoring, clean archive and changing overlaid outputs
-with continuous encoded A/V. It used240p upload. Saved setup was reconciled safely;
-do not repeat the old recovery actions or delete Keychain/recordings. Reuse simulator
-core vertical and native sustained4K results below; no unchanged broad test reruns.
-
-TeamB222J9J7B8 remains authorized. Xcode26.2 and LAN192.168.1.130. Watch automation
-works while on-wrist/unlocked; initial phone automation may need manual passcodes.
-
-Broader interrupted-tail timing/load/backends remain unqualified. No speculative
-shortest flag or timeout change: single-input proxy comparisons did not reproduce
-the bad tail, and the old independent-input shortest test lost audio. Deprecated
-muxer shortest was removed from FFmpeg8; see session references.
-Simulator UHD/congestion and colocated VideoToolbox/probe limitations remain gated;
-failed candidates retain applied settings and recover conservatively.
-
-Use the working hands-on simulator launcher now. One affected check per real fix,
-no broad suites or unchanged soaks. No agents, pushes, external broadcasts or
-purchases. Preserve original videos and unrelated simulator data.
+Reuse earlier short physical1080/paired Watch and accepted simulator passes below.
+No broad suites, unchanged soaks, agents, pushes or external broadcasts. Keep plan
+pure goals/status/TODO; session logs retain exact experiments. TeamB222J9J7B8.
 
 ## Reuse these passes
 

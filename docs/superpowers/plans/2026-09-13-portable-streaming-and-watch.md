@@ -33,9 +33,9 @@ MP4 of the final overlaid stream.
 | --- | --- | --- |
 | Native phone scoring | Create/discover/join, durable scoring/undo, takeover, end and restoration; separate scorer while filming | Sustained/physical qualification |
 | Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI; physical Ultra2 companion setup and scoring while paired phone captures | Physical route handoffs, Series7 and sustained qualification |
-| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults;1050s native4K archive; short physical1080p archive decodes with continuous encoded A/V | Physical adaptive recovery, fresh-motion/sync and full-match profiles |
-| Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; native congestion/loss and sustained4K pass | Simulator/backend limits, abrupt output tails and full-match profiles |
-| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K; physical240→1080p/6Mbps confirmed with software proxy | Physical sustained/fallback qualification, intermittent sender-retention warning, other backends and full-match profiles |
+| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults; physical60m26s4K/audio recovered with continuous encoded A/V; long-archive memory fix | Confirm fixed phone stop/recovery/export; fresh-motion/sync and full-match profiles |
+| Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; hour physical outputs fully decode and meet encoded cadence | Distinguish cap omissions from overload; simulator/backend limits, abrupt tails and full-match profiles |
+| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K; physical240→1080p/6Mbps; hour decoded1080 input14m20s total | Receiver-proof resets, cap-omission false pressure, serious phone heat; sustained/fallback qualification and other backends |
 | Deployment | Local Mac service; persistent Linux container stack and CPU/GPU runbooks | External networking/TLS and runtime/backend qualification |
 
 The [acceptance matrix](../../simulator-acceptance.md) owns retained results and
@@ -108,6 +108,20 @@ full capture. Physical testing has resumed with the supplied phone, Watch and TV
 
 ## Remaining local work
 
+- [x] Bound archive recovery/assembly memory independently of payload size; retain
+  checksum, path and corruption guarantees. Focused regressions and real-hour Mac
+  replay pass; current signed iPhone build installed.
+- [ ] Confirm fixed phone recovery/export of the preserved hour recording, then a
+  short stop check. Preserve originals and interrupted status; no new hour required.
+- [ ] Separate intentional proxy timestamp-cap omissions from resource overload.
+  Replay the single-omission healthy window against the stated frame-loss target;
+  preserve meaningful capture/delivery/processing pressure checks.
+- [ ] Log exact receiver-proof unavailability/revocation reasons and resolve
+  unnecessary resets while preserving real authority/context-change guards.
+- [ ] Isolate phone thermal load after adaptation faults are addressed; measure
+  capture/encoding/probe load and charging conditions. Keep serious/critical fallback.
+
+
 - [x] Keep encoder progress/telemetry writable after worker death so finalization
   cannot fail on a broken parent pipe. Guardian owns and drains those readers;
   bounded shutdown, focused process checks and a short FFmpeg comparison pass.
@@ -143,6 +157,13 @@ full capture. Physical testing has resumed with the supplied phone, Watch and TV
 
 ## Hardware and external acceptance
 
+Current hour qualification failed sustained1080 and physical stop/export. The
+preserved60m26s4K/audio recording recovered on Mac and both final overlaid outputs
+fully decode; encoded cadence meets the24fps rolling-window target. The archive
+memory defect is fixed and installed, with device recheck pending. Reuse this saved
+recording and focused evidence before another soak. Current fault tracking is above;
+exact results belong in the acceptance matrix and session log.
+
 Physical phone automation and the app-loopback control route work. A short TV
 volleyball capture produced a clean1080p archive and both overlaid MP4 outputs;
 all fully decode with continuous encoded video/audio. Physical240→360→720→1080p
@@ -157,7 +178,8 @@ log and acceptance matrix for evidence and limits.
 - [x] Fix fair-temperature misclassification and high-frequency telemetry redraws;
   retain full-rate control checks and serious/critical thermal fallback.
 - [x] Confirm real physical1080p upload at6Mbps through the normal adaptive ladder.
-- [ ] Qualify sustained physical1080p and fallback/recovery with saved media; inspect
+- [ ] Qualify sustained physical1080p and fallback/recovery after the current
+  proof-reset, cap-omission and heat faults are resolved; inspect
   bounded sender-buffer gauges if the retention warning recurs. Keep measured
   headroom/frame gates.
 - [x] Restore Watch automation readiness and reconcile only the identified test-owned pending

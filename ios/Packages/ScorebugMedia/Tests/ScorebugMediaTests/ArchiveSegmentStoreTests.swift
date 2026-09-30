@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import ScorebugMedia
 
@@ -12,6 +13,62 @@ final class ArchiveSegmentStoreTests: XCTestCase {
 
     private func store(at directory: URL) throws -> ArchiveSegmentStore {
         try ArchiveSegmentStore(directory: directory, profile: ArchiveProfile(), availableBytes: { Int64.max })
+    }
+
+    private func residentBytes() throws -> UInt64 {
+        var info = mach_task_basic_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard status == KERN_SUCCESS else { throw NSError(domain: NSMachErrorDomain, code: Int(status)) }
+        return info.resident_size
+    }
+
+    private func largeArchive() throws -> URL {
+        let directory = try temporaryRoot().appendingPathComponent("part")
+        let writer = try store(at: directory)
+        try writer.append(data: Data([1]), kind: .initialization)
+        let payload = Data(repeating: 42, count: 8 * 1024 * 1024)
+        for sequence in 0..<16 {
+            _ = try autoreleasepool {
+                try writer.append(data: payload, kind: .media, startTime: Double(sequence * 2), duration: 2)
+            }
+        }
+        return directory
+    }
+
+    func testRecoveryMemoryDoesNotGrowWithVerifiedPayloadBytes() throws {
+        let directory = try largeArchive()
+        try autoreleasepool {
+            let before = try residentBytes()
+            let archive = try ArchiveSegmentStore.recover(directory: directory)
+            XCTAssertEqual(archive.segments.count, 17)
+            for _ in 0..<8 { _ = try ArchiveSegmentStore.recover(directory: directory) }
+            let growth = Int64(try residentBytes()) - Int64(before)
+            XCTAssertLessThan(growth, 32 * 1024 * 1024,
+                              "Repeated recovery retained verified payloads")
+        }
+    }
+
+    func testAssemblyMemoryDoesNotGrowWithCopiedPayloadBytes() throws {
+        let directory = try largeArchive()
+        let archive = try autoreleasepool { try ArchiveSegmentStore.recover(directory: directory) }
+        let output = directory.deletingLastPathComponent().appendingPathComponent("assembled.mp4")
+        try autoreleasepool {
+            let before = try residentBytes()
+            try archive.assemble(to: output)
+            for index in 0..<8 {
+                try archive.assemble(to: directory.deletingLastPathComponent().appendingPathComponent("copy-\(index).mp4"))
+            }
+            let growth = Int64(try residentBytes()) - Int64(before)
+            XCTAssertLessThan(growth, 32 * 1024 * 1024,
+                              "Repeated assembly retained copied payloads")
+        }
+        let size = try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? NSNumber
+        XCTAssertEqual(size?.int64Value, 128 * 1024 * 1024 + 1)
     }
 
     func testProfileDefaultsAndValidation() throws {
