@@ -5,6 +5,13 @@ import ScorebugMedia
 import ScorebugStreaming
 import SRTHaishinKit
 
+#if DEBUG
+/// Isolated from the capture UI: frequent diagnostic strings must not redraw all tabs.
+@MainActor final class PublishingQualityDiagnosticDisplay: ObservableObject {
+    @Published var value: String?
+}
+#endif
+
 /// Immutable historical mapping owned by exactly one observation attempt.
 struct PublishingClockObservation: Equatable, Sendable {
     let scope: VideoFrameObservationScope
@@ -27,10 +34,16 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var connectedGameID: String?
     @Published private(set) var busy = false
     @Published private(set) var stopping = false
-    @Published private(set) var needsStorageRetry = false
-    @Published private(set) var commandState: BroadcastCoordinatorState?
-    @Published private(set) var workerState: WorkerMediaState = .unknown
-    @Published private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
+    private(set) var needsStorageRetry = false {
+        willSet { if newValue != needsStorageRetry { objectWillChange.send() } }
+    }
+    private(set) var commandState: BroadcastCoordinatorState? {
+        willSet { if newValue != commandState { objectWillChange.send() } }
+    }
+    private(set) var workerState: WorkerMediaState = .unknown {
+        willSet { if newValue != workerState { objectWillChange.send() } }
+    }
+    private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
     private(set) var workerDecoderCadenceFreshness: WorkerDecoderCadenceFreshness?
     private(set) var workerDecoderDeliveryFreshness: WorkerDecoderDeliveryFreshness? {
         didSet {
@@ -47,7 +60,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         #endif
     }
     private var workerDeliveryTracker = WorkerDecoderDeliveryTracker()
-    @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness? {
+    private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness? {
         didSet {
             if let evidence = workerReceiverProbeFreshness, candidateAuthority?.permits(evidence) == true { return }
             candidateAuthority?.revoke()
@@ -87,11 +100,11 @@ struct PublishingClockObservation: Equatable, Sendable {
                 permitsCurrentCandidate: snapshot.permitsCurrentCandidate)
         }
     }
-    @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
+    private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
     private var receiverProbeTracker = WorkerReceiverProbeTracker()
     private var receiverProbeLeaseDeadline: ContinuousClock.Instant?
     private var receiverProbeOwner: PublishingProbeObservation?
-    @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
+    private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
     @Published private(set) var appliedPublishingSettings: QualityController.Settings?
     #if DEBUG
     var nativeFixedUHDForDiagnostics = false
@@ -129,18 +142,22 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
     var nativeHealthFixtureObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)?
     var nativeSubmissionFixtureObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)?
-    @Published private(set) var qualityDiagnostic: String?
+    let qualityDiagnosticDisplay = PublishingQualityDiagnosticDisplay()
+    private(set) var qualityDiagnostic: String? {
+        get { qualityDiagnosticDisplay.value }
+        set { qualityDiagnosticDisplay.value = newValue }
+    }
     private var candidateInputDiagnostic: [String: String] = [:]
     #endif
-    @Published private(set) var sentSamples = 0
+    private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
     /// evidence; a starting snapshot establishes neither applied settings nor readiness.
-    @Published private(set) var videoObservation: VideoFrameObservationSnapshot?
+    private(set) var videoObservation: VideoFrameObservationSnapshot?
     /// Same attempt/anchor as video observations, but closes at ingress cancellation
     /// rather than encoder-drain completion. This is not transport capacity or loss.
-    @Published private(set) var ingressObservation: LiveIngressObservationSnapshot?
+    private(set) var ingressObservation: LiveIngressObservationSnapshot?
     /// Historical native clock mapping; closure marks detach, not current readiness.
-    @Published private(set) var publishingClockObservation: PublishingClockObservation?
+    private(set) var publishingClockObservation: PublishingClockObservation?
     #if DEBUG
     // Explicit simulator fixture flag; Mac unit tests opt in by injection.
     var workerReportAgeProofsEnabled: Bool = {
@@ -228,7 +245,10 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var teardownID: UUID?
     @Published private var publisherStopping = false
     private var epoch = UUID()
-    @Published private var controlBusy = false
+    private var controlBusy = false {
+        // Only the setup sheet displays whether polling temporarily locks its fields.
+        willSet { if newValue != controlBusy && isSetupPresented { objectWillChange.send() } }
+    }
     private struct NativeReconnect {
         let id = UUID()
         let context: CurrentCapture
@@ -657,7 +677,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                           (self.localState == .starting || self.localState == .publishing), self.diagnosticAttemptID == attempt,
                           self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
                           session.snapshot.state == .publishing, session.snapshot.failure == nil else { return }
-                    self.appliedPublishingSettings = settings
+                    if self.appliedPublishingSettings != settings { self.appliedPublishingSettings = settings }
                 }
                 #if DEBUG
                 qualityDriver?.candidateInputDiagnosticProvider = { [weak self, weak session] in

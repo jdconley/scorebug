@@ -500,6 +500,14 @@ final class PhysicalStreamingTests: XCTestCase {
         if physicalRecovery && phase == "initial-encoder-ack" { physicalEncoderDiagnosticReceived = true }
         recoverySamples.append(["phase": phase, "diagnostic": diagnostic,
             "readStartedUptimeSeconds": started, "readEndedUptimeSeconds": ended])
+        if physicalRecovery && quality1080,
+           let encoded = diagnostic["appliedTransition"], let data = encoded.data(using: .utf8),
+           let transition = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
+           ["reset", "rollback", "decrease"].contains(transition["kind"] ?? "") {
+            // This lane requires a consecutive climb. Fail immediately even when
+            // the reset has not acquired its next accepted source window yet.
+            throw SmokeFailure.failed("Physical climb reduced quality: \(transition["reasons"] ?? "unknown").")
+        }
         if quality2160, diagnostic["lastMeasurementCandidateReason"] == "inputRejected",
            let cause = diagnostic["lastMeasurementEncoderFailure"] ?? diagnostic["lastMeasurementTransportFailure"] {
             throw SmokeFailure.failed("UHD candidate rejected input: \(cause)")
@@ -1187,7 +1195,9 @@ final class PhysicalStreamingTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_RECOVERY_720"] == "1" else {
             throw XCTSkip("Use the explicit physical recovery720 launcher.")
         }
-        recovery720 = true; physicalRecovery = true; evidencePrefix = "PhysicalRecovery720Streaming"
+        recovery720 = true; physicalRecovery = true
+        quality1080 = ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_QUALITY_1080"] == "1"
+        evidencePrefix = quality1080 ? "Physical1080Streaming" : "PhysicalRecovery720Streaming"
         defer { attachRecoveryEvidence() }
         do {
             recoveryControlConfiguration = try RecoveryControlConfiguration(

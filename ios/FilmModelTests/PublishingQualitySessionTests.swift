@@ -1644,7 +1644,8 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
     }
 
     func testAppliedTransportRollbackRetainsSelectedIntervalAndActualDelayLimit() async throws {
-        let f = try await CandidateQualityFixture.make()
+        let exported = AppliedTransitionExportCapture()
+        let f = try await CandidateQualityFixture.make(appliedTransitionExport: { exported.append($0) })
         let trial = try await f.owner.evaluateCandidate(f.admission)
         try await f.owner.apply(XCTUnwrap(trial.recommendation))
         f.native.setNow(120.2)
@@ -1680,7 +1681,16 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         XCTAssertEqual(witness["rttDelayMs"], "1000")
         XCTAssertEqual(witness["drops"], "0")
         XCTAssertEqual(witness["revision"], "2")
+        XCTAssertNil(witness["transportRecentSamples"], "Raw gauges must not expand the UI diagnostic")
         await f.owner.stop()
+        let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported.values.first)) as? [String: Any])
+        XCTAssertEqual(audit["overflow"] as? Bool, false)
+        let records = try XCTUnwrap(audit["records"] as? [[String: String]])
+        let row = try XCTUnwrap(records.last)
+        let gauges = try XCTUnwrap(row["transportRecentSamples"])
+        let samples = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(gauges.utf8)) as? [[Double]])
+        XCTAssertEqual(samples, [[119.8, 0, 0, 10000, 0, 300, -1, -1], [120.2, 0, 0, 11000, 0, 300, -1, -1]])
+        XCTAssertLessThanOrEqual(try JSONSerialization.data(withJSONObject: row).count, 8192)
     }
 
     func testResetEpisodeRetainsPressureCauseAfterStaleAdmissionAndHealthyReissue() async throws {

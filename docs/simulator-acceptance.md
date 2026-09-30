@@ -1,6 +1,6 @@
 # Simulator acceptance checkpoint
 
-Updated September 28, 2026. The normal local vertical works: native phone recording
+Updated September 29, 2026. The normal local vertical works: native phone recording
 and scoring, separate native Watch scoring, SRT upload, score overlay, RTMP to a
 mock YouTube recorder, and optional proxy MP4. **The full release gate is still
 open**, chiefly for platform limits, interrupted output tails, sustained profiles and external deployment.
@@ -13,6 +13,7 @@ production behavior changes, not when unrelated documentation or fixtures change
 
 | Capability | Evidence | Result and scope |
 | --- | --- | --- |
+| Physical adaptive1080p upload | `physical-recovery-T2Pdtv/1080-acceptance.json` | Real phone240→360→720→1080/6Mbps climb passes after fair-thermal/UI fixes. Receiver1254actual1080frames/about41.8s,30fps. Archive7555frames/251.84s; both live MP4s7242frames; all3decode, no encoded video gaps>50ms/audio gaps>5ms, ends≤44ms. Native point, visible0–0→1–0 proxy overlay, archive continuation/export and cleanup pass. Explicit700ms SRT peer latency/software proxy. Sustained/fallback/fresh-motion/perceptual-sync not qualified; earlier intermittent sender-retention warning remains for diagnosis. |
 | Physical paired iPhone16Pro/Ultra2 vertical | `physical-paired-live-LlJlWn/vertical-acceptance.json` | Both native workflows pass using real WatchConnectivity setup. Watch takeover/point/undo/away/end observed by recording phone. Clean1080p archive3829frames/127.637s; both live MP4s3283frames with changing1–0/0–1 overlay. All3fully decode; no video gaps>50ms/audio gaps>5ms; track ends≤72ms. Independent archive continuation/export and cleanup pass. Upload stayed240p; adaptive recovery, fresh-motion/perceptual-sync/full-match/radio handoffs remain unqualified. |
 | Physical TV volleyball capture | `physical-recovery-EcJuQu/media-validation.json` | Short physical1080p archive:4297frames/143.24s; both overlaid MP4s3735frames. All three fully decode, no encoded video gaps over50ms or audio gaps over5ms. Native phone point and archive continuation/export observed. Adaptive workflow failed:360p trial returned to240p on missing capacity/unknown thermal evidence before impairment. Encoded continuity does not establish fresh-motion, perceptual sync or recovery acceptance. |
 | Linux worker image timing and both output formats | `linux-worker-20260928/acceptance.json` | Trixie/FFmpeg7.1.5: compiled worker, actual encoder timing, paced2s720p overlay FLV+MP4, full A/V decode and clean shutdown pass on local Linuxarm64 Docker VM. Bookworm/FFmpeg5.1.9 lacked timing options. No real RTMP/SRT network, sustained or remote-host claim. |
@@ -51,7 +52,7 @@ production behavior changes, not when unrelated documentation or fixtures change
 | iOS 17.5/18.5 simulator | Preserved earlier archive/relaunch/export results in [native recording](native-film-app.md); not a fresh full-feature matrix. Use installed runtimes, never assume deleted runtimes remain. |
 | Mac software/VideoToolbox worker | Software proxy passes330s native adaptive UHD/media; local VideoToolbox proxy has a measured UHD/probe interaction. No blanket backend/full-match guarantee. |
 | Local Linux container stack | API persistence, managed relay and software worker checks. Not external TLS/firewall/NVIDIA qualification. |
-| Physical iPhone/Watch | Short paired phone/Ultra2 functional vertical and saved encoded A/V pass. Physical360p recovery confirmation failed before impairment; sustained profiles and radio handoffs remain open. |
+| Physical iPhone/Watch | Short paired phone/Ultra2 functional vertical and saved encoded A/V pass. Short physical240→1080/6Mbps climb also passes; sustained/fallback profiles and radio handoffs remain open. |
 | External hosts | Deferred; local Linux container results do not qualify remote networking or other hardware. |
 
 ## Fault coverage

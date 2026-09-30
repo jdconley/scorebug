@@ -488,7 +488,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
     }
     func testThermalAndTransportClassifyOnlyOpenFreshEnclosingSamples() throws {
         for (state, expected) in [(PublishingThermalState.nominal, QualityController.Pressure.nominal),
-            (.fair, .unknown), (.serious, .elevated), (.critical, .elevated), (.unknown, .unknown)] {
+            (.fair, .nominal), (.serious, .elevated), (.critical, .elevated), (.unknown, .unknown)] {
             XCTAssertEqual(try window(fixture(thermalState: state)).thermalPressure, expected)
         }
         XCTAssertEqual(try window(fixture(buffer: 500, rtt: 500)).transportPressure, .nominal)

@@ -22,11 +22,7 @@ struct StreamingControlsView: View {
                     .accessibilityValue(Text(verbatim: "\(applied.profileID):\(applied.videoBitrate)"))
             }
             #if DEBUG
-            if let diagnostic = model.qualityDiagnostic {
-                Text("Adaptive quality checks").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("streaming.qualityDiagnostic")
-                    .accessibilityValue(Text(verbatim: diagnostic))
-            }
+            PublishingQualityDiagnosticView(display: model.qualityDiagnosticDisplay)
             #endif
             if let game = model.connectedGameID {
                 Text("Match: \(game)").font(.caption).foregroundStyle(.secondary)
@@ -114,3 +110,16 @@ struct StreamingControlsView: View {
         }
     }
 }
+
+#if DEBUG
+private struct PublishingQualityDiagnosticView: View {
+    @ObservedObject var display: PublishingQualityDiagnosticDisplay
+    var body: some View {
+        if let diagnostic = display.value {
+            Text("Adaptive quality checks").font(.caption).foregroundStyle(.secondary)
+                .accessibilityIdentifier("streaming.qualityDiagnostic")
+                .accessibilityValue(Text(verbatim: diagnostic))
+        }
+    }
+}
+#endif

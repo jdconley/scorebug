@@ -197,9 +197,11 @@ enum PublishingQualityTelemetry {
         guard history.freshSample(at: now) != nil, let sample = history.interval(from: start, to: end),
               minimumSampleStart.map({ sample.enclosingStart >= $0 }) ?? true else { return .unknown }
         switch sample.enclosingMaximumState {
-        case .nominal: return .nominal
+        // Fair is known, slightly elevated temperature, also permitted by the native
+        // candidate encoder. Real frame/queue pressure still prevents an increase.
+        case .nominal, .fair: return .nominal
         case .serious, .critical: return .elevated
-        case .fair, .unknown: return .unknown
+        case .unknown: return .unknown
         }
     }
     private static func transportPressure(_ history: PublishingTransportStatisticsSnapshot, generation: UInt64,

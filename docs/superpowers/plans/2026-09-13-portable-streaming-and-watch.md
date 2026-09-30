@@ -35,7 +35,7 @@ MP4 of the final overlaid stream.
 | Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI; physical Ultra2 companion setup and scoring while paired phone captures | Physical route handoffs, Series7 and sustained qualification |
 | Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults;1050s native4K archive; short physical1080p archive decodes with continuous encoded A/V | Physical adaptive recovery, fresh-motion/sync and full-match profiles |
 | Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; native congestion/loss and sustained4K pass | Simulator/backend limits, abrupt output tails and full-match profiles |
-| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K and complete saved media with software proxy | Physical360p trial rolls back on missing capacity/unknown thermal evidence; other backends and full-match qualification |
+| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K; physical240→1080p/6Mbps confirmed with software proxy | Physical sustained/fallback qualification, intermittent sender-retention warning, other backends and full-match profiles |
 | Deployment | Local Mac service; persistent Linux container stack and CPU/GPU runbooks | External networking/TLS and runtime/backend qualification |
 
 The [acceptance matrix](../../simulator-acceptance.md) owns retained results and
@@ -145,15 +145,21 @@ full capture. Physical testing has resumed with the supplied phone, Watch and TV
 
 Physical phone automation and the app-loopback control route work. A short TV
 volleyball capture produced a clean1080p archive and both overlaid MP4 outputs;
-all fully decode with continuous encoded video/audio. The360p trial rolled back
-before the controlled impairment, so adaptive recovery remains unqualified. Watch
+all fully decode with continuous encoded video/audio. Physical240→360→720→1080p
+now confirms at6Mbps after correcting fair-temperature classification and redundant UI updates. The receiver decoded
+1254 actual1080p frames at30fps. An earlier intermittent sender-retention warning
+needs longer-run diagnosis; physical adaptive recovery remains unqualified. Watch
 saved-setup inspection and normal expiry reconciliation pass, as does paired
 Watch scoring/undo/end during real camera capture. Both output recordings visibly
 carry the Watch score changes; archive/export and encoded A/V checks pass. See the current session
 log and acceptance matrix for evidence and limits.
 
-- [ ] Diagnose the physical360p thermal/capacity rollback without relaxing quality
-  gates; distinguish OS state from missing/stale samples in retained diagnostics.
+- [x] Fix fair-temperature misclassification and high-frequency telemetry redraws;
+  retain full-rate control checks and serious/critical thermal fallback.
+- [x] Confirm real physical1080p upload at6Mbps through the normal adaptive ladder.
+- [ ] Qualify sustained physical1080p and fallback/recovery with saved media; inspect
+  bounded sender-buffer gauges if the retention warning recurs. Keep measured
+  headroom/frame gates.
 - [x] Restore Watch automation readiness and reconcile only the identified test-owned pending
   Watch pairing. Preserve Keychain and uncertain commands until ownership is known.
 - [x] Short physical filming-phone/Ultra2 setup, takeover, point, undo, away point,

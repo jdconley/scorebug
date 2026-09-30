@@ -191,3 +191,13 @@ test('app loopback is explicit with a validated high port and no default transpo
   const missingPort = lab(); missingPort.setup.endpoint = 'http://192.168.1.130';
   assert.throws(() => physicalRecoveryEnvironment(missingPort, 'network-probe', options));
 });
+
+test('physical 1080 lane keeps normal camera control and opts into the full climb', () => {
+  const options = physicalRecoveryOptions([...args, '--lane', 'quality1080'], interfaces);
+  assert.equal(options.lane, 'quality1080');
+  assert.equal(options.publishPeerLatencyMs, 700);
+  const environment = physicalRecoveryEnvironment(lab(), options.lane);
+  assert.equal(environment.SCOREBUG_PHYSICAL_RECOVERY_720, '1');
+  assert.equal(environment.SCOREBUG_PHYSICAL_QUALITY_1080, '1');
+  assert.equal(environment.SCOREBUG_PHYSICAL_NETWORK_PROBE, undefined);
+});

@@ -15,39 +15,35 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
-Hardware work resumed on September29 after the user supplied the phone, Watch and
-TV volleyball footage. See [session](2026-09-29-physical-tv-capture.md).
+Physical local adaptive upload now reaches real1080p at6Mbps. See
+[adaptive phone debugging](2026-09-29-adaptive-phone-debug.md).
 
-Current simulator core vertical and targeted API/worker crash regression pass; reuse
-them unchanged. Physical phone app-loopback control probe passed. Short physical
-capture `physical-recovery-EcJuQu` produced a143s clean1080p archive and both overlaid
-MP4s, all fully decoding with continuous encoded A/V; phone point/export/independent
-archive continuation observed. Adaptive360p confirmation failed before impairment,
-resetting to240p on missing capacity/unknown thermal evidence. Do not call recovery
-accepted. New bounded raw thermal/freshness diagnostics are built for the next run;
-one focused native transition check and signed phone build passed.
+Two fixes: fair thermal state is known/non-elevated (matches candidate encoder),
+and internal100ms telemetry no longer redraws all SwiftUI tabs. Control/health
+cadence and pressure gates are unchanged. Focused checks:45telemetry,38driver,
+125capture-model,2transition tests and10runner checks. Matching25s CPU profiles
+show main-thread21.95→6.31CPU-seconds; total24.75→11.525.
 
-Actual Watch saved-setup inspection passed after the user kept it unlocked on-wrist.
-It confirmed the old owned test pairing; normal receipt-first expiry reconciliation
-passed against an owned backup at the original endpoint. Original database, Keychain
-and recordings preserved. Temporary recovery API stopped and joined.
+`physical-recovery-T2Pdtv` passes the consecutive240→360→720→1080 climb, native
+phone point, stream stop, independent archive continuation and native export.
+`1080-acceptance.json` includes full saved-media decode/encoded continuity: archive7555
+frames, both outputs7242frames, A/V ends≤44ms, visible score change. Receiver confirms
+1254 actual1920×1080 frames at30fps. Explicit700ms publishing
+peer latency; software proxy; screenshot-only XCTest capture. All owned phone/lab
+processes joined; cleanupFailures[]. Phone originals retained. No Watch rerun.
 
-First paired run failed because the phone still had the exact old test setup
-request. Identity delivery worked; normal guarded phone-request reset passed.
-Physical paired vertical `physical-paired-live-LlJlWn/vertical-acceptance.json` now
-passes: both phone/Ultra2 workflows, real companion setup, Watch takeover/point/undo/
-away/end, independent clean archive continuation/export, changing score in both
-recorded outputs. Archive3829frames/127.637s; live3283frames; all3fully decode with
-continuous encoded A/V and≤72ms track-end differences. All owned processes joined;
-no active test/lab jobs. Reuse this pass.
+Next focused physical work: sustained1080p, then fallback/recovery. An earlier
+run `physical-recovery-uusTBV` reduced720→240 on the extra growing-sender-retention
+warning (230ms buffer/700ms delay,12.193ms RTT, zero drops/retransmits). It did not
+recur in the accepted climb. Thresholds unchanged; bounded last12gauges now persist
+in pressure-transition journals to distinguish sustained buildup from bursts.
+Do not call full-match stability, radio handoffs or perceptual sync qualified.
 
-Next: physical adaptive qualification, not another unchanged paired-scoring test.
-The successful paired run stayed240p; one captured candidate failed capacityHeadroom.
-The first recovery run's360p rollback had unknown thermal evidence; do not conflate
-that with the failed paired run's70ms buffer versus60ms negotiated-delay limit.
-Raw thermal diagnostics are added, but no successful application in the latest run
-exercised them. Extend only the missing bounded evidence or reproduce one concrete
-cause; do not weaken health gates or restart broad suites. Saved originals remain.
+Reuse accepted paired physical workflow `physical-paired-live-LlJlWn`: real
+phone/Ultra2 companion setup/scoring, clean archive and changing overlaid outputs
+with continuous encoded A/V. It used240p upload. Saved setup was reconciled safely;
+do not repeat the old recovery actions or delete Keychain/recordings. Reuse simulator
+core vertical and native sustained4K results below; no unchanged broad test reruns.
 
 TeamB222J9J7B8 remains authorized. Xcode26.2 and LAN192.168.1.130. Watch automation
 works while on-wrist/unlocked; initial phone automation may need manual passcodes.

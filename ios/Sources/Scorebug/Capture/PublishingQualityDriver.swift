@@ -14,6 +14,7 @@ import ScorebugStreaming
     private var currentCandidateDiagnostic: [String: String] = [:]
     private var currentEvent = "starting", currentReason: String?, sourceRejection: String?
     private var currentDeliveryDiagnostic: [String: String] = [:]
+    private var currentHealthDiagnostic: [String: String] = [:]
     #endif
     /// Wake measurement scheduling after a source decision; this grants no admission.
     var sourceEvaluationDidComplete: (() -> Void)?
@@ -383,6 +384,7 @@ import ScorebugStreaming
         fields.merge(currentDeliveryDiagnostic) { _, newest in newest }
         fields.merge(candidateInputDiagnosticProvider?() ?? [:]) { _, newest in newest }
         fields.merge(currentCandidateDiagnostic) { _, newest in newest }
+        fields.merge(currentHealthDiagnostic) { _, newest in newest }
         fields["timingProfileID"] = timingProfile.rawValue
         fields["decoderBudgetMilliseconds"] = String(timingProfile.decoderBudgetMs)
         fields["reportMaximumAgeMilliseconds"] = String(timingProfile.maximumCadenceDeliveryReportAgeMs)
@@ -410,7 +412,7 @@ import ScorebugStreaming
                 "sessionClosed", "sessionBusy", "driverClosed", "diagnosticCompacted",
                 "timingProfileID", "decoderBudgetMilliseconds", "captureWindowMaximumAgeMilliseconds",
                 "cadenceRejectionTiming", "recoveryCoverageSeconds", "reportMaximumAgeMilliseconds"])
-            let removable = fields.keys.filter { !$0.hasPrefix("policy") && !protected.contains($0) }.sorted {
+            let removable = fields.keys.filter { !$0.hasPrefix("policy") && !$0.hasPrefix("health") && !protected.contains($0) }.sorted {
                 let lhsHistory = $0.hasPrefix("lastCandidate") || $0.hasPrefix("lastMeasurement")
                 let rhsHistory = $1.hasPrefix("lastCandidate") || $1.hasPrefix("lastMeasurement")
                 if lhsHistory != rhsHistory { return lhsHistory }
@@ -561,6 +563,21 @@ import ScorebugStreaming
         #if DEBUG
         currentEvent = kind; currentReason = reason
         if source != nil { sourceRejection = kind == "rejected" ? reason : (kind == "transition" ? "transition" : nil) }
+        // Latest raw health survives disabled historical export and minimum-quality
+        // decisions that produce no applied-transition journal entry.
+        if let diagnostics {
+            let history = diagnostics.thermal, now = uptime()
+            currentHealthDiagnostic["healthThermalFresh"] = String(history.freshSample(at: now) != nil)
+            currentHealthDiagnostic["healthThermalLatestState"] = history.samples.last.map { String(describing: $0.state) }
+            currentHealthDiagnostic["healthThermalLatestAt"] = history.samples.last.map { String($0.sampledAt) }
+            currentHealthDiagnostic["healthThermalOldestAt"] = history.samples.first.map { String($0.sampledAt) }
+            currentHealthDiagnostic["healthThermalQuarantined"] = String(history.isQuarantined)
+            currentHealthDiagnostic["healthObservedAt"] = String(now)
+        }
+        if source != nil, let decision {
+            currentHealthDiagnostic["healthSourceState"] = String(describing: decision.state)
+            currentHealthDiagnostic["healthSourceReasons"] = decision.reasons.map { String(describing: $0) }.joined(separator: ",")
+        }
         #endif
         guard retainsDiagnosticHistory else { return }
         let state = await owner.snapshot

@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Combine
 import ScorebugCore
 import ScorebugMedia
 @testable import ScorebugStreaming
@@ -7,6 +8,25 @@ import XCTest
 @testable import SRTHaishinKit
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testUnchangedStreamingPollsDoNotInvalidateUserInterface() async throws {
+        let model = makeModel(server: CaptureTestServer())
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await model.pollBackgroundControl(); await model.pollWorkerStatus(); model.pollLocalHealth()
+        XCTAssertEqual(model.localState, .publishing)
+        var notifications = 0
+        let subscription = model.objectWillChange.sink { notifications += 1 }
+        for _ in 0..<10 {
+            model.pollLocalHealth()
+            await model.pollBackgroundControl()
+            await model.pollWorkerStatus()
+        }
+        XCTAssertEqual(notifications, 0, "Internal 100ms telemetry must not redraw the whole capture UI")
+        XCTAssertNotNil(model.videoObservation, "Telemetry still updates without UI publication")
+        await model.stopStreaming()
+        XCTAssertGreaterThan(notifications, 0, "Visible state changes must still notify the UI")
+        withExtendedLifetime(subscription) {}
+    }
+
     func testUnavailableOrMismatchedBackendNeverStartsBroadcastOrStopsArchive() async throws {
         for failure in ["stale", "failed", "wrong-output", "expired", "unknown"] {
             let server = CaptureTestServer(), model = makeModel(server: server)
@@ -34,7 +54,13 @@ import XCTest
         })
         await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
         let active = try XCTUnwrap(driver), session = try XCTUnwrap(publishing)
+        var screenChanges = 0, diagnosticChanges = 0
+        let screen = model.objectWillChange.sink { screenChanges += 1 }
+        let diagnostic = model.qualityDiagnosticDisplay.objectWillChange.sink { diagnosticChanges += 1 }
         await active.tick(encoderReady: false, source: nil, diagnostics: .init(snapshot: session.snapshot))?.value
+        XCTAssertEqual(screenChanges, 0, "Debug telemetry must only update its isolated readout")
+        XCTAssertGreaterThan(diagnosticChanges, 0)
+        withExtendedLifetime((screen, diagnostic)) {}
         let text = try XCTUnwrap(model.qualityDiagnostic)
         let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
         XCTAssertEqual(fields["timingProfileID"], "broadcast-reliability3000-v3")

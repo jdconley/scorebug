@@ -25,7 +25,7 @@ export function physicalRecoveryOptions(args, interfaces) {
     values.set(key, value);
   }
   const lane = values.get('--lane') ?? 'recovery720';
-  assert(['recovery720', 'network-probe'].includes(lane), 'Invalid physical lane');
+  assert(['recovery720', 'quality1080', 'network-probe'].includes(lane), 'Invalid physical lane');
   const runnerTransport = values.get('--runner-transport') ?? 'direct';
   assert(['direct', 'app-loopback'].includes(runnerTransport), 'Invalid runner transport');
   const bridgePort = values.has('--bridge-port') ? Number(values.get('--bridge-port')) : undefined;
@@ -55,7 +55,7 @@ export function physicalRecoveryOptions(args, interfaces) {
   return { ...options, device, team, lane, runnerTransport, bridgePort };
 }
 export function physicalRecoveryEnvironment(lab, lane = 'recovery720', {runnerTransport = 'direct', bridgePort} = {}) {
-  assert(['recovery720', 'network-probe'].includes(lane), 'Invalid physical lane');
+  assert(['recovery720', 'quality1080', 'network-probe'].includes(lane), 'Invalid physical lane');
   assert(['direct', 'app-loopback'].includes(runnerTransport), 'Invalid runner transport');
   if (runnerTransport === 'app-loopback') assert(Number.isInteger(bridgePort) && bridgePort >= 49152 && bridgePort <= 65535, 'Invalid bridge port');
   else assert(bridgePort === undefined, 'Bridge port requires app-loopback');
@@ -106,6 +106,7 @@ export function physicalRecoveryEnvironment(lab, lane = 'recovery720', {runnerTr
   return {
     ...(runnerTransport === 'app-loopback' ? {SCOREBUG_RECOVERY_RUNNER_TRANSPORT: runnerTransport, SCOREBUG_RECOVERY_BRIDGE_PORT: String(bridgePort)} : {}),
     ...(lane === 'network-probe' ? {SCOREBUG_PHYSICAL_NETWORK_PROBE: '1'} : {SCOREBUG_PHYSICAL_RECOVERY_720: '1'}),
+    ...(lane === 'quality1080' ? {SCOREBUG_PHYSICAL_QUALITY_1080: '1'} : {}),
     SCOREBUG_DEVICE_API_URL: lab.setup.endpoint,
     SCOREBUG_DEVICE_TOKEN: lab.setup.installationToken,
     SCOREBUG_RECOVERY_CONTROL_URL: lab.recoveryControl.endpoint,
@@ -137,6 +138,9 @@ def configure(v):
  if isinstance(v,dict):
   if v.get('BlueprintName')==target:
    found.append(target);v.setdefault('EnvironmentVariables',{}).update(environment)
+   # Camera, archive, live encoder and candidate are the workloads under test.
+   # Avoid adding XCTest's continuous screen-video encoder to physical captures.
+   v['PreferredScreenCaptureFormat']='screenshots'
   for x in v.values():configure(x)
  elif isinstance(v,list):
   for x in v:configure(x)
@@ -340,7 +344,7 @@ async function main() {
       JSON.stringify(
         {
           formatVersion: 1,
-          lane: probe ? 'physical-network-probe' : 'physical-recovery720',
+          lane: probe ? 'physical-network-probe' : options.lane === 'quality1080' ? 'physical-quality1080' : 'physical-recovery720',
           sourceHead,
           runnerTransport: options.runnerTransport,
           device: options.device,

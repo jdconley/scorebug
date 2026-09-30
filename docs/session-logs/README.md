@@ -1,5 +1,7 @@
 # Session logs
 
+- [September 29 adaptive phone debugging](2026-09-29-adaptive-phone-debug.md) — thermal/UI fixes, measured CPU reduction and confirmed physical1080p upload; sustained qualification remains.
+
 - [September 29 physical TV capture](2026-09-29-physical-tv-capture.md) — real phone archive/stream/scoring outputs,360p rollback diagnosis and Watch readiness.
 
 The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns current goals, acceptance gates and all delivery checkboxes. [NEXT](NEXT.md) is the compact handoff.

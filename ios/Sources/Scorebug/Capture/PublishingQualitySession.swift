@@ -202,6 +202,16 @@ actor PublishingQualitySession {
             }
             if window.transportPressure == .elevated, let history = diagnostics?.transport, let limits = transportLimits,
                let interval = history.interval(from: window.start, to: window.end) {
+                // Journal-only recent gauges distinguish sustained retention from an
+                // isolated burst without expanding the UI diagnostic or policy input.
+                let recent = history.samples.filter { $0.sampledAt <= interval.enclosingEnd }.suffix(12)
+                let gauges: [[Double]] = recent.map {
+                    [$0.sampledAt, Double($0.senderBufferMilliseconds), Double($0.senderBufferedBytes),
+                     Double($0.sentBytes), Double($0.retransmittedBytes), $0.rttMilliseconds,
+                     $0.senderMaximumBandwidthMbps ?? -1, $0.packetSendPeriodMicroseconds ?? -1]
+                }
+                fields["transportRecentSamples"] = (try? JSONSerialization.data(withJSONObject: gauges))
+                    .flatMap { String(data: $0, encoding: .utf8) }
                 fields["transportStart"] = String(interval.enclosingStart)
                 fields["transportEnd"] = String(interval.enclosingEnd)
                 fields["drops"] = String(interval.enclosingDroppedPackets)
@@ -1299,7 +1309,9 @@ actor PublishingQualitySession {
             fields["rateGeneration"] = String(result.publishingGeneration)
             fields["nativeBitrate"] = String(result.configuration.bitRate)
             fields["ratePTS"] = exactPTS(result.lastSubmittedSourcePTS)
-            appliedTransition = (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
+            var uiFields = fields
+            uiFields.removeValue(forKey: "transportRecentSamples")
+            appliedTransition = (try? JSONSerialization.data(withJSONObject: uiFields, options: [.sortedKeys]))
                 .flatMap { String(data: $0, encoding: .utf8) }
             if appliedTransitionAudit != nil {
                 var auditFields = fields
