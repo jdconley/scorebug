@@ -33,9 +33,9 @@ MP4 of the final overlaid stream.
 | --- | --- | --- |
 | Native phone scoring | Create/discover/join, durable scoring/undo, takeover, end and restoration; separate scorer while filming | Sustained/physical qualification |
 | Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI; physical Ultra2 companion setup and scoring while paired phone captures | Physical route handoffs, Series7 and sustained qualification |
-| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults; physical60m26s4K/audio recovered with continuous encoded A/V; long-archive memory fix | Confirm fixed phone stop/recovery/export; fresh-motion/sync and full-match profiles |
-| Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; hour physical outputs fully decode and meet encoded cadence | Distinguish cap omissions from overload; simulator/backend limits, abrupt tails and full-match profiles |
-| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K; physical240→1080p/6Mbps; hour decoded1080 input14m20s total | Receiver-proof resets, cap-omission false pressure, serious phone heat; sustained/fallback qualification and other backends |
+| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults; physical60m26s4K/audio recovered with continuous encoded A/V; long-archive memory fix; saved phone recovery/export/playback/relaunch | Confirm fresh phone Stop; fresh-motion/sync and full-match profiles |
+| Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; timestamp jitter/cap attribution fixed; saved output cadence passes | simulator/backend limits, abrupt tails and full-match profiles |
+| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K; physical240→1080p/6Mbps; hour decoded1080 input14m20s total | Receiver-proof resets, serious phone heat; sustained/fallback qualification and other backends |
 | Deployment | Local Mac service; persistent Linux container stack and CPU/GPU runbooks | External networking/TLS and runtime/backend qualification |
 
 The [acceptance matrix](../../simulator-acceptance.md) owns retained results and
@@ -119,11 +119,12 @@ order; reuse saved recordings and focused checks before another long capture.
 - [x] Bound archive recovery/assembly memory independently of payload size; retain
   checksum, path and corruption guarantees. Focused regressions and real-hour Mac
   replay pass; current signed iPhone build installed.
-- [ ] Confirm fixed phone recovery/export of the preserved hour recording, then a
-  short stop check. Preserve originals and interrupted status; no new hour required.
+- [x] Confirm fixed phone recovery/export/playback/relaunch of the preserved hour
+  recording, keeping originals and interrupted status.
+- [ ] Pass a short fresh4K/audio Stop check; phone automation authentication is pending.
 - [ ] Persist bounded transition causes and exact receiver-proof rejection reasons
   during capture, with joined source/worker/transport/thermal evidence.
-- [ ] Separate intentional proxy timestamp-cap omissions from resource overload.
+- [x] Separate intentional proxy timestamp-cap omissions from resource overload.
   Replay the single-omission healthy window against the stated frame-loss target;
   preserve meaningful capture/delivery/processing pressure checks.
 - [ ] Resolve the reproduced receiver-proof reset cause while preserving real
@@ -131,7 +132,7 @@ order; reuse saved recordings and focused checks before another long capture.
 - [ ] Isolate phone thermal load after adaptation faults are addressed; measure
   capture/encoding/probe load and charging conditions, then reduce the measured
   dominant cost. Keep serious/critical fallback.
-- [ ] Add repeatable saved-export and combined-duration physical harness modes
+- [x] Add repeatable saved-export and combined-duration physical harness modes
   with actual-input geometry gates and safe finite finalization/cleanup.
 - [ ] Pass one30-minute combined checkpoint, then one60-minute confirmed1080p
   hold with4K/audio recording and phone stop/export/playback/relaunch. Fully
@@ -172,10 +173,10 @@ order; reuse saved recordings and focused checks before another long capture.
 
 ## Hardware and external acceptance
 
-Current hour qualification failed sustained1080 and physical stop/export. The
+The original hour failed sustained1080 and physical Stop. Saved phone recovery/export now passes; fresh Stop and the new combined holds remain open. The
 preserved60m26s4K/audio recording recovered on Mac and both final overlaid outputs
 fully decode; encoded cadence meets the24fps rolling-window target. The archive
-memory defect is fixed and installed, with device recheck pending. Reuse this saved
+memory fix is installed and saved phone recovery/export passes; fresh Stop remains pending. Reuse this saved
 recording and focused evidence before another soak. Current fault tracking is above;
 exact results belong in the acceptance matrix and session log.
 

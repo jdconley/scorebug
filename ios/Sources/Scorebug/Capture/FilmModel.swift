@@ -94,6 +94,9 @@ struct CurrentCapture: Sendable {
         #endif
     }()
     private var fileFixtureSource: FileFixtureCameraSource?
+    #if os(iOS) && !targetEnvironment(simulator)
+    private var physicalResourceAudit: PhysicalCaptureResourceAudit?
+    #endif
     #endif
 
     convenience init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
@@ -137,6 +140,11 @@ struct CurrentCapture: Sendable {
                 // Do not construct a source after cancellation during archive setup.
                 guard state == .starting else { throw RecordingSessionError.cancelled }
                 source = try sourceFactory(profile)
+                #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+                if let camera = source as? IOSCameraCaptureSource {
+                    physicalResourceAudit = PhysicalCaptureResourceAudit(source: camera, recordingID: created.id, profile: profile)
+                }
+                #endif
             } catch {
                 // No RecordingSession has taken ownership of this sink yet.
                 created.sink.cancel()
@@ -184,6 +192,9 @@ struct CurrentCapture: Sendable {
         guard canStop else { return }
         let wasStarting = state == .starting
         state = .stopping
+        #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+        physicalResourceAudit?.sample(phase: "stopRequested", force: true)
+        #endif
         let endedCapture = currentCapture
         currentCapture = nil
         onCaptureChanged?(nil)
@@ -206,11 +217,18 @@ struct CurrentCapture: Sendable {
                 closedFileStatistics = fileFixtureSource?.statistics
                 #endif
                 await updateCounters(recorder)
+                #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+                physicalResourceAudit?.sample(phase: "captureStopped", force: true)
+                #endif
             }
             if let draft {
                 do { try await library.finish(id: draft.id, failure: failure) }
                 catch { failure = error.localizedDescription }
             }
+            #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+            await physicalResourceAudit?.finish()
+            physicalResourceAudit = nil
+            #endif
             #if DEBUG
             if let closedDiagnostics, closedDiagnostics.recordingID == draft?.id,
                let writer = archivePressureWriter {
@@ -276,6 +294,9 @@ struct CurrentCapture: Sendable {
         guard recorder === recording else { return }
         // Session/mailbox counters use only short locks; they do not access disk.
         let snapshot = recording.snapshot
+        #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+        physicalResourceAudit?.sample()
+        #endif
         queueItems = snapshot.queue.currentItems
         queueBytes = snapshot.queue.currentBytes
         writtenSamples = snapshot.writtenSamples

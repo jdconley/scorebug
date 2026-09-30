@@ -132,6 +132,7 @@ actor PublishingQualitySession {
     private var invalidationCause: (revision: UInt64, fields: [String: String], auditFields: [String: String])?
     private var appliedTransition: String?
     private var appliedTransitionAudit: PublishingAppliedTransitionAudit?
+    private var appliedTransitionCheckpointWriter: PublishingTransitionCheckpointWriter?
     private let appliedTransitionExport: (@Sendable (Data) async -> Void)?
 
     private func recordDecision(_ decision: QualityController.Decision, input: String, at now: Double,
@@ -175,6 +176,8 @@ actor PublishingQualitySession {
             fields["worker"] = String(describing: window.workerPressure)
             if window.workerPressure == .elevated, let processing, let limits = workerLimits {
                 fields["workerOmitted"] = String(processing.interval.omittedBeforeEncoderFrames)
+                fields["workerIntentionalCapOmitted"] = processing.interval.intentionalFrameCapOmissions.map { String($0) }
+                fields["workerUnexpectedOmitted"] = String(processing.interval.omittedBeforeEncoderFrames - (processing.interval.intentionalFrameCapOmissions ?? 0))
                 fields["workerFilterMs"] = processing.interval.filterDuration.map { String($0.maximumMs) }
                 fields["workerProcessingMs"] = processing.interval.processingDuration.map { String($0.maximumMs) }
                 fields["maxFilterMs"] = String(limits.maximumFilterMs)
@@ -261,9 +264,9 @@ actor PublishingQualitySession {
     /// Preserve the exact first invalidation that latched this trial's rollback.
     /// The same policy invalidation executes in Release, with no retained witness.
     private func invalidateTelemetry(_ current: inout QualityController, input: String,
-                                     error: Error? = nil, start: Double? = nil, end: Double? = nil) {
+                                     error: Error? = nil, start: Double? = nil, end: Double? = nil, auditFields: [String: String] = [:]) {
         #if DEBUG
-        latchInvalidationCause(current, input: input, error: error, start: start, end: end)
+        latchInvalidationCause(current, input: input, error: error, start: start, end: end, auditFields: auditFields)
         #endif
         current.invalidateTelemetry()
     }
@@ -519,6 +522,7 @@ actor PublishingQualitySession {
         #if DEBUG
         self.appliedTransitionExport = appliedTransitionExport
         self.appliedTransitionAudit = appliedTransitionExport == nil ? nil : .init(attemptID: attemptID, timingProfile: timingProfile)
+        self.appliedTransitionCheckpointWriter = appliedTransitionExport == nil ? nil : .init(attemptID: attemptID)
         #endif
     }
     var snapshot: Snapshot { .init(attemptID: attemptID, applied: policy?.applied, revision: policy?.appliedRevision,
@@ -1092,7 +1096,11 @@ actor PublishingQualitySession {
                   now - observation.observedAtLowerBound <= timingProfile.maximumCadenceDeliveryReportAge,
                   now - source.windowEnd <= timingProfile.maximumCaptureWindowEvaluationAge else { throw PublishingQualityTelemetry.Failure.freshness }
             if deliveryAuthority !== authority || deliveryRevision != policy.appliedRevision {
-                if deliveryAuthority != nil { invalidateTelemetry(&policy, input: "deliveryAuthorityChanged"); candidateHealthSource = nil; pending = nil }
+                if let deliveryAuthority {
+                    invalidateTelemetry(&policy, input: "deliveryAuthorityChanged",
+                        auditFields: ["receiverProofReason": deliveryAuthority.revocationReason ?? "deliveryContextChanged"])
+                    candidateHealthSource = nil; pending = nil
+                }
                 deliveryAuthority = authority; deliveryRevision = policy.appliedRevision; deliveryEnds = [:]
             }
             deliveryEnds[lane] = source.windowEnd
@@ -1321,6 +1329,10 @@ actor PublishingQualitySession {
                 auditFields["profileRequestedAt"] = profileRequestedAt.map { String($0) }
                 auditFields["rateRequestedAt"] = rateRequestedAt.map { String($0) }
                 appliedTransitionAudit?.append(auditFields)
+                if let data = try? appliedTransitionAudit?.checkpoint(), let writer = appliedTransitionCheckpointWriter {
+                    let revision = current.appliedRevision
+                    Task { _ = await writer.persist(data, revision: revision) }
+                }
             }
             transitionCause = nil; invalidationCause = nil
             #endif

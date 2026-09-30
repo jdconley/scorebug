@@ -96,6 +96,14 @@ struct OrdinaryRecoverySample {
         (sequence ?? -1) > (probation.sequence ?? .max) &&
         (windowEnd ?? -1) > (probation.windowEnd ?? .infinity)
     }
+    func sustains1080(_ baseline: Self) -> Bool {
+        owner != nil && owner == baseline.owner && attempt == baseline.attempt && scope == baseline.scope &&
+        revision == baseline.revision && acknowledgedAt == baseline.acknowledgedAt &&
+        unencumbered && diagnostic["policyTrialActive"] == "false" &&
+        diagnostic["policyAppliedProfile"] == "1080p30" && diagnostic["policyAppliedBitrate"] == "6000000" &&
+        baseline.diagnostic["policyAppliedProfile"] == "1080p30" && baseline.diagnostic["policyAppliedBitrate"] == "6000000" &&
+        (sequence ?? -1) >= (baseline.sequence ?? .max) && (windowEnd ?? -1) >= (baseline.windowEnd ?? .infinity)
+    }
 }
 // END RECOVERY GUARDS
 
@@ -440,6 +448,11 @@ final class PhysicalStreamingTests: XCTestCase {
     private var physicalHour: Bool {
         physicalRecovery && quality1080 && ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_HOUR_4K1080"] == "1"
     }
+    private var combinedHoldSeconds: Int? {
+        guard physicalHour, let text = ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_COMBINED_HOLD_SECONDS"],
+              let value = Int(text), String(value) == text, [600, 1800, 3600].contains(value) else { return nil }
+        return value
+    }
     private var preparePhysicalHour: Bool {
         physicalHour && ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_HOUR_PREPARE_ONLY"] == "1"
     }
@@ -472,6 +485,10 @@ final class PhysicalStreamingTests: XCTestCase {
         if recovery720 { report["contract"] = physicalRecovery ? "physical-recovery720-v1" : "recovery720" }
         if quality1080 { report["contract"] = quality2160 ? "quality2160-v1" : "quality1080-v1" }
         if physicalHour { report["contract"] = preparePhysicalHour ? "physical-hour4k1080-prepare-v1" : "physical-hour4k1080-audio-v1" }
+        if let combinedHoldSeconds {
+            report["contract"] = "physical-combined4k1080-v1"
+            report["confirmed1080HoldSeconds"] = combinedHoldSeconds
+        }
         if physicalRecovery {
             report["captureSource"] = "physical-camera"
             report["localPublishingObservedUptimeSeconds"] = physicalLocalPublishingObserved
@@ -489,7 +506,7 @@ final class PhysicalStreamingTests: XCTestCase {
     @MainActor private func recoverySample(_ app: XCUIApplication, phase: String) throws -> OrdinaryRecoverySample? {
         let started = ProcessInfo.processInfo.systemUptime
         if started - recoveryLastSampleStart < 2 { return nil }
-        try require(recoverySamples.count < 270, "Recovery evidence sample limit exceeded.")
+        try require(recoverySamples.count < (combinedHoldSeconds == nil ? 270 : 512), "Recovery evidence sample limit exceeded.")
         recoveryLastSampleStart = started
         let encoded = value(app, "streaming.qualityDiagnostic")
         let ended = ProcessInfo.processInfo.systemUptime
@@ -1205,6 +1222,9 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         recovery720 = true; physicalRecovery = true
         quality1080 = ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_QUALITY_1080"] == "1"
+        if let raw = ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_COMBINED_HOLD_SECONDS"] {
+            try require(combinedHoldSeconds.map(String.init) == raw, "Invalid combined qualification hold; capture remains off.")
+        }
         evidencePrefix = quality1080 ? "Physical1080Streaming" : "PhysicalRecovery720Streaming"
         defer { attachRecoveryEvidence() }
         do {
@@ -1213,6 +1233,106 @@ final class PhysicalStreamingTests: XCTestCase {
             try runVertical(watchScoring: false, recovery: true)
         } catch { recoveryFailure = recoveryFailure ?? String(describing: error); throw error }
         #endif
+    }
+
+    @MainActor func testPhysicalSavedArchiveRecoveryExportAndRelaunch() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Saved physical archive requires the original phone.")
+        #else
+        guard let id = ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_SAVED_ARCHIVE_ID"],
+              UUID(uuidString: id)?.uuidString == id else {
+            throw XCTSkip("Select the exact preserved recording ID explicitly.")
+        }
+        executionTimeAllowance = 1800; deadline = Date().addingTimeInterval(1700)
+        evidencePrefix = "PhysicalSavedArchive"; completedRecordingID = id
+        let app = XCUIApplication(); app.activate()
+        try requireIdleArchiveApp(app)
+        try selectTab("Recordings", app)
+        let recover = app.buttons["recordings.recover.\(id)"]
+        try wait("Exact interrupted recording is not recoverable.", seconds: 90) { recover.exists && recover.isEnabled }
+        evidence(app, phase: "recoverable-before-export", screenshot: true)
+        try tap(recover, in: app)
+        try verifyArchivePlayback(app, exportTimeout: 1200)
+        try tap(app.buttons["recordings.closePlayer"], in: app)
+        app.terminate(); app.launch()
+        try selectTab("Recordings", app)
+        try wait("Recovery export changed interrupted completion status or relaunch failed.", seconds: 90) {
+            recover.exists && recover.isEnabled && !app.buttons["recordings.export.\(id)"].exists
+        }
+        evidence(app, phase: "recoverable-after-relaunch", screenshot: true)
+        #endif
+    }
+
+    @MainActor func testPhysicalShort4KArchiveStopExportAndRelaunch() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Physical archive requires the phone camera.")
+        #else
+        guard ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_SHORT_ARCHIVE"] == "1" else {
+            throw XCTSkip("Opt into the short camera archive check explicitly.")
+        }
+        executionTimeAllowance = 420; deadline = Date().addingTimeInterval(390)
+        evidencePrefix = "PhysicalShort4KArchive"
+        let app = XCUIApplication(); app.activate()
+        try requireIdleArchiveApp(app)
+        XCUIDevice.shared.orientation = .portrait
+        try wait("Archive check did not settle in portrait.", seconds: 10) { app.frame.height > app.frame.width }
+        try selectTab("Recordings", app)
+        let exports = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recordings.export."))
+        let previous = exports.allElementsBoundByIndex.map(\.identifier)
+        try selectTab("Film", app)
+        try tap(app.buttons["4K"], in: app)
+        try require(app.buttons["4K"].isSelected && app.staticTexts["4K · 30 fps · Audio included"].exists,
+                    "The fresh archive must use the real 4K/audio profile.")
+        var recordingRequested = false
+        defer { cleanup(app, recordingRequested: recordingRequested, streamingRequested: false) }
+        recordingRequested = true
+        try tap(app.buttons["film.start"], in: app)
+        try wait("New 4K/audio recording did not advance.", seconds: 30) {
+            self.allowExpectedPermissions()
+            return app.buttons["film.stop"].exists && self.elapsed(app) >= 8
+        }
+        evidence(app, phase: "recording-before-stop", screenshot: true)
+        try tap(app.buttons["film.stop"], in: app)
+        try wait("Fresh Stop failed to finish saving.", seconds: 90) { app.buttons["film.start"].isEnabled }
+        recordingRequested = false
+        try selectTab("Recordings", app)
+        try wait("Fresh recording was not durably completed.", seconds: 30) {
+            exports.allElementsBoundByIndex.contains { !previous.contains($0.identifier) }
+        }
+        let button = try XCTUnwrap(exports.allElementsBoundByIndex.first { !previous.contains($0.identifier) })
+        let id = String(button.identifier.dropFirst("recordings.export.".count))
+        try require(UUID(uuidString: id)?.uuidString == id, "Completed recording identity is invalid.")
+        completedRecordingID = id
+        try tap(button, in: app)
+        try verifyArchivePlayback(app, exportTimeout: 120)
+        try tap(app.buttons["recordings.closePlayer"], in: app)
+        app.terminate(); app.launch()
+        try selectTab("Recordings", app)
+        try wait("Completed status did not survive relaunch.", seconds: 90) {
+            app.buttons["recordings.export.\(id)"].isEnabled && !app.buttons["recordings.recover.\(id)"].exists
+        }
+        evidence(app, phase: "completed-after-relaunch", screenshot: true)
+        #endif
+    }
+
+    @MainActor private func requireIdleArchiveApp(_ app: XCUIApplication) throws {
+        if app.buttons["recordings.closePlayer"].exists { try tap(app.buttons["recordings.closePlayer"], in: app) }
+        if app.buttons["streaming.closeSetup"].exists { try tap(app.buttons["streaming.closeSetup"], in: app) }
+        try selectTab("Film", app)
+        try wait("Film state is unavailable.", seconds: 15) { app.buttons["film.start"].exists || app.buttons["film.stop"].exists }
+        try require(!app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists,
+                    "An existing capture must be preserved.")
+        try wait("Saved archive scan did not finish.", seconds: 90) { app.buttons["film.start"].isEnabled }
+    }
+
+    @MainActor private func verifyArchivePlayback(_ app: XCUIApplication, exportTimeout: Double) throws {
+        try wait("Native export did not finish.", seconds: exportTimeout) { app.staticTexts["recordings.exportReady"].exists }
+        evidence(app, phase: "export-ready", screenshot: true)
+        try tap(app.buttons["recordings.play"], in: app)
+        try wait("Exported video playback did not advance.", seconds: 20) {
+            (Double(self.value(app, "recordings.playbackTime")) ?? 0) >= 2
+        }
+        evidence(app, phase: "playback-advanced", screenshot: true)
     }
 
     @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false, recovery: Bool = false, separateScorer: Bool = false, directWatch: Bool = false) throws {
@@ -1237,10 +1357,10 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
         try require(allowedEndpoint, "Device smoke requires its explicit private LAN or direct-simulator loopback endpoint.")
         continueAfterFailure = true // Thrown failures still run the stop cleanup below.
-        executionTimeAllowance = physicalHour && !preparePhysicalHour ? 5400 : recovery ? 780 : (watchScoring ? 600 : ((ordinarySimulator || separateScorer) ? 480 : 240))
+        executionTimeAllowance = physicalHour && !preparePhysicalHour ? TimeInterval((combinedHoldSeconds ?? 3600) + 2400) : recovery ? 780 : (watchScoring ? 600 : ((ordinarySimulator || separateScorer) ? 480 : 240))
         // Reserve 35 seconds for independent stream and recording cleanup,
         // plus a little headroom for final evidence within the 240-second test.
-        deadline = Date().addingTimeInterval(physicalHour && !preparePhysicalHour ? 5300 : recovery ? 735 : (watchScoring ? 550 : ((ordinarySimulator || separateScorer) ? 430 : 200)))
+        deadline = Date().addingTimeInterval(physicalHour && !preparePhysicalHour ? TimeInterval((combinedHoldSeconds ?? 3600) + 2200) : recovery ? 735 : (watchScoring ? 550 : ((ordinarySimulator || separateScorer) ? 430 : 200)))
         if ordinarySimulator { try prepareOrdinarySimulator() }
         let app = XCUIApplication()
         // Physical runs preserve an existing process so the prior-capture guard
@@ -1364,8 +1484,9 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         if recovery {
             recoveryRecordingStarted = ProcessInfo.processInfo.systemUptime
-            recoveryRecordingDeadline = recoveryRecordingStarted + (physicalHour ? 4500 : 540)
-            deadline = Date().addingTimeInterval(physicalHour ? 4500 : 540)
+            let recordingAllowance = physicalHour ? TimeInterval((combinedHoldSeconds ?? 3600) + 900) : 540
+            recoveryRecordingDeadline = recoveryRecordingStarted + recordingAllowance
+            deadline = Date().addingTimeInterval(recordingAllowance)
             recoveryMilestone("recording-requested")
         }
         recordingRequested = true
@@ -1405,7 +1526,10 @@ final class PhysicalStreamingTests: XCTestCase {
             }
         }
         // Observe physical startup before screenshots or scoring can miss the fresh 240p window.
-        if physicalRecovery && adaptiveFailure == nil { try adaptiveGate() }
+        if physicalRecovery && adaptiveFailure == nil {
+            do { try adaptiveGate() }
+            catch { adaptiveFailure = error; recoveryFailure = String(describing: error) }
+        }
         evidence(app, phase: ordinarySimulator ? "ordinary-publishing" : "hardware-publishing", screenshot: true)
         if ordinarySimulator && !recovery {
             try wait("Ordinary startup did not acknowledge 240p30 at 350000 bps.", seconds: 10) {
@@ -1429,7 +1553,7 @@ final class PhysicalStreamingTests: XCTestCase {
             }
             // Terminal actions need time even when the recording budget failed.
             // This does not change the monotonic adaptive or recording limits.
-            deadline = Date().addingTimeInterval(physicalHour ? 1100 : quality2160 ? 240 : 90)
+            deadline = Date().addingTimeInterval(physicalHour ? 1800 : quality2160 ? 240 : 90)
             recoveryMilestone("terminal-started")
         }
         func adaptiveGate() throws {
@@ -1617,25 +1741,53 @@ final class PhysicalStreamingTests: XCTestCase {
                 if recovery { recoveryMilestone("live-hold-started") }
                 if physicalHour {
                     let publishingStarted = try XCTUnwrap(physicalLocalPublishingObserved)
-                    let holdEnd = publishingStarted + 3600
+                    var baseline: OrdinaryRecoverySample?
+                    if combinedHoldSeconds != nil {
+                        try require(adaptiveFailure == nil, "Cannot start sustained hold after a failed progressive ramp.")
+                        let sample = try XCTUnwrap(recoverySample(app, phase: "confirmed1080-hold-started"))
+                        try require(sample.sustains1080(sample), "1080p trial did not settle with fresh delivery proof.")
+                        baseline = sample
+                        recoveryMilestone("confirmed1080-hold-started", sample: true)
+                    }
+                    let holdStarted = baseline == nil ? publishingStarted : ProcessInfo.processInfo.systemUptime
+                    let requestedHold = TimeInterval(combinedHoldSeconds ?? 3600)
+                    let holdEnd = holdStarted + requestedHold
+                    var holdObservationIndex = 0
                     while ProcessInfo.processInfo.systemUptime < holdEnd {
                         try require(Date() < deadline && app.buttons["film.stop"].exists &&
                                     value(app, "streaming.localStatus") == "publishing",
                                     "Hour capture or publisher stopped before its deadline.")
                         let now = ProcessInfo.processInfo.systemUptime
+                        if let baseline, holdObservationIndex > 0 {
+                            guard let current = try recoverySample(app, phase: "confirmed1080-hold"), current.sustains1080(baseline),
+                                  value(app, "streaming.workerStatus") == "producing_output" else {
+                                throw SmokeFailure.failed("Confirmed1080 hold lost quality, freshness or publication ownership.")
+                            }
+                        }
                         let encoded = value(app, "streaming.qualityDiagnostic")
                         let fields = encoded.data(using: .utf8).flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: String] } ?? [:]
-                        recoverySamples.append(["phase": "hour-hold", "diagnostic": fields,
+                        // Combined proof reads already append one bounded sample. Do not
+                        // duplicate them or re-read inside the two-second read throttle.
+                        if baseline == nil { recoverySamples.append(["phase": "hour-hold", "diagnostic": fields,
                             "uptimeSeconds": now, "recordingDurationSeconds": elapsed(app),
                             "appliedQuality": value(app, "streaming.appliedQuality"),
-                            "workerStatus": value(app, "streaming.workerStatus")])
-                        print("SCOREBUG_HOUR_PROGRESS seconds=\(Int(now - publishingStarted)) quality=\(value(app, "streaming.appliedQuality"))")
-                        let next = min(holdEnd, now + 30)
+                            "workerStatus": value(app, "streaming.workerStatus")]) }
+                        holdObservationIndex += 1
+                        print("SCOREBUG_HOUR_PROGRESS seconds=\(Int(now - holdStarted)) quality=\(value(app, "streaming.appliedQuality"))")
+                        // Fixed targets avoid accumulating UI-read overhead over an hour.
+                        let next = min(holdEnd, holdStarted + Double(holdObservationIndex) * 30)
                         while ProcessInfo.processInfo.systemUptime < next {
                             RunLoop.current.run(until: Date().addingTimeInterval(min(1, next - ProcessInfo.processInfo.systemUptime)))
                         }
                     }
-                    try require(elapsed(app) >= 3600, "Archive duration did not reach one hour.")
+                    try require(elapsed(app) >= requestedHold, "Archive duration did not cover the sustained hold.")
+                    if let baseline {
+                        guard let final = try recoverySample(app, phase: "confirmed1080-hold-complete"), final.sustains1080(baseline),
+                              value(app, "streaming.workerStatus") == "producing_output" else {
+                            throw SmokeFailure.failed("Confirmed1080 hold lost proof at its final boundary.")
+                        }
+                        recoveryMilestone("confirmed1080-hold-complete", sample: true)
+                    }
                     recoveryMilestone("hour-hold-complete")
                 }
                 let holdStarted = Date()
@@ -1681,7 +1833,7 @@ final class PhysicalStreamingTests: XCTestCase {
                 try require(ProcessInfo.processInfo.systemUptime <= recoveryRecordingDeadline, "Recovery recording exceeded its 540-second deadline.")
             }
         }
-        try wait("Recording did not finish saving.", seconds: 20) {
+        try wait("Recording did not finish saving.", seconds: physicalHour ? 120 : 20) {
             app.buttons["film.start"].exists && app.buttons["film.start"].isEnabled
         }
         try selectTab("Recordings", app)
@@ -1700,11 +1852,22 @@ final class PhysicalStreamingTests: XCTestCase {
         // earlier recording or infer identity from a timestamp or export order.
         completedRecordingID = recordingID
         try tap(app.buttons[exportIdentifier], in: app)
-        try wait("The new recording could not be exported to MP4.", seconds: physicalHour ? 900 : quality2160 ? 180 : 35) {
+        try wait("The new recording could not be exported to MP4.", seconds: physicalHour ? 1500 : quality2160 ? 180 : 35) {
             app.staticTexts["recordings.exportReady"].exists
         }
         evidence(app, phase: ordinarySimulator ? "new-ordinary-recording-export-ready" : "new-hardware-recording-export-ready", screenshot: true)
         if recovery { recoveryMilestone("export-ready") }
+        if physicalHour {
+            try verifyArchivePlayback(app, exportTimeout: 10)
+            try tap(app.buttons["recordings.closePlayer"], in: app)
+            recordingRequested = false; streamingRequested = false
+            app.terminate(); app.launch()
+            try selectTab("Recordings", app)
+            try wait("Combined recording did not remain completed after relaunch.", seconds: 90) {
+                app.buttons["recordings.export.\(recordingID)"].isEnabled && !app.buttons["recordings.recover.\(recordingID)"].exists
+            }
+            evidence(app, phase: "completed-after-relaunch", screenshot: true)
+        }
         // Expired gates stay failed even if score or quality changes while
         // completing the independent stop, archive-continuation and export gates.
         let failures = [scoreFailure, adaptiveFailure].compactMap { $0 }
@@ -2143,11 +2306,11 @@ final class PhysicalStreamingTests: XCTestCase {
         // A failed navigation/stream stop cannot consume the recording budget.
         // Retry Film navigation using that separate budget before locating stop.
         if recordingRequested {
-            deadline = Date().addingTimeInterval(20)
+            deadline = Date().addingTimeInterval(physicalHour ? 120 : 20)
             try? selectTab("Film", app)
             if app.buttons["film.stop"].exists {
                 try? tap(app.buttons["film.stop"], in: app)
-                try? wait("Cleanup recording save timed out.", seconds: 8) { !app.buttons["film.stop"].exists }
+                try? wait("Cleanup recording save timed out.", seconds: physicalHour ? 90 : 8) { !app.buttons["film.stop"].exists }
             }
         }
         evidence(app, phase: "cleanup", screenshot: false)

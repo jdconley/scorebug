@@ -6,7 +6,7 @@
 
 **Tech stack:** Swift/AVFoundation/VideoToolbox, H.264/AAC, SRT/MPEG-TS, TypeScript/FFmpeg, RTMP and native MP4 export.
 
-**Execution:** Work inline in `codex/local-validation` at `/Users/jd/.codex/worktrees/scorebug-local-validation`; no agents. This is the focused implementation sequence under the [delivery plan](2026-09-13-portable-streaming-and-watch.md). That plan owns delivery milestones; the steps below track their execution. This planning session does not start implementation or capture.
+**Execution:** Work inline in `codex/local-validation` at `/Users/jd/.codex/worktrees/scorebug-local-validation`; no agents. This is the focused implementation sequence under the [delivery plan](2026-09-13-portable-streaming-and-watch.md). That plan owns delivery milestones; the steps below track their execution.
 
 ## Target configuration and acceptance
 
@@ -27,24 +27,25 @@ Case-off and battery-powered comparisons can identify heat contributors; they do
 
 ## Evidence and unresolved questions
 
-The [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. There are no live jobs.
+The [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
 
 | Issue | Established evidence | Question to resolve |
 | --- | --- | --- |
-| Stop/finalization exit | Archive verification retained autoreleased buffers; same-hour Mac recovery used about 13.8 GB before the fix and 35 MB afterward. Fix is installed. | Does the fixed phone complete saved recovery/export and a fresh Stop? Exact OS termination reason was not captured; memory pressure is strongly implicated, not confirmed jetsam. |
+| Stop/finalization exit | Archive verification retained autoreleased buffers; same-hour Mac recovery used about 13.8 GB before the fix and 35 MB afterward. Fix is installed. | Saved phone recovery/export/playback/relaunch passes; does a fresh Stop complete? Exact OS termination reason was not captured; memory pressure is strongly implicated, not confirmed jetsam. |
 | First 1080p reset | Receiver proof invalidated; backend publication/pipeline stayed unchanged. | Which local freshness, packet-validation or authority event caused invalidation? Was proof actually stale, or did local handling lose valid proof? |
-| Later 1080p decrease | One proxy omission in a 151-frame window was classified as elevated worker pressure; filter/processing were about 4.35/7.17 ms and transport nominal. | Can timestamp-cap cadence jitter reproduce that omission, and can deliberate selection be distinguished from actual overload? |
+| Later 1080p decrease | One proxy omission in a 151-frame window was classified as elevated worker pressure; filter/processing were about 4.35/7.17 ms and transport nominal. | Jitter-induced cap loss is reproduced and corrected; attributed cap omissions are separated from overload. The original single omission is not individually replayable from retained aggregates. |
 | Final low quality | Fresh serious phone temperature forced 720→360→240. | Which capture, archive, live encoder, candidate-probe, UI or charging workload drove heat? Charging and case effects have not been isolated. |
 
-The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B2011`, also copied to `artifacts/qa/physical-hour-preparation-20260930/phone-original-recording`. Mac native recovery passed; physical stop/export remains open. Actual 1080p lasted about 14m20s total. Successful encoded cadence does not qualify sustained 1080p or fresh motion.
+The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B2011`, also copied to `artifacts/qa/physical-hour-preparation-20260930/phone-original-recording`. Mac and phone native recovery/export pass; fresh physical Stop remains open. Actual 1080p lasted about 14m20s total. Successful encoded cadence does not qualify sustained 1080p or fresh motion.
 
 ## 1. Close the stop/recovery crash first
 
 **Files:** `ios/Packages/ScorebugMedia/Sources/ScorebugMedia/{ArchiveSegmentStore,ArchiveExporter,RecordingSession}.swift`; `ios/Sources/Scorebug/Capture/{RecordingLibrary,FilmModel}.swift`; `ios/FilmModelTests/{RecordingLibraryTests,FilmModelTests}.swift`; `ios/AppUITests/PhysicalStreamingTests.swift`.
 
 - [x] Bound archive verification/copy buffers per chunk, preserve checksum/path/corruption guarantees, and reproduce duration-independent memory on the saved hour. Implemented in `978d27d`; 20 focused archive-store tests pass. Do not redo that fix or synthetic stress run unchanged.
-- [ ] Add a narrowly selected physical saved-recording recovery/export workflow. It must accept this interrupted/recoverable recording without manufacturing `completedAt`; the existing completed-only export diagnostic cannot be reused unchanged. Preflight the exporter's free-space requirement, export to a new destination and preserve original segments.
-- [ ] Run the workflow on the installed fixed phone; capture memory over recovery/assembly/export, lifecycle phase markers and any OS termination report. Verify complete 4K/audio decode, playback and relaunch. A saved export pass closes recovery only.
+- [x] Add a narrowly selected physical saved-recording recovery/export workflow. It must accept this interrupted/recoverable recording without manufacturing `completedAt`; the existing completed-only export diagnostic cannot be reused unchanged. Preflight the exporter's free-space requirement, export to a new destination and preserve original segments.
+- [x] Verify saved phone recovery/export with complete native4K/audio decode, playback and relaunch; interrupted status and originals remain intact.
+- [ ] Measure device export/Stop memory and capture an OS termination report if another exit occurs. The attempted profiler attach after saved export did not collect a usable trace.
 - [ ] Make one short new 4K/audio recording and stop it normally. Assert completed status is written only after successful durable finalization, export succeeds, and the app stays responsive/alive through relaunch.
 - [ ] If either operation fails, reproduce its exact phase with the saved recording before another capture. Fix retained buffers, actor/main-thread blocking or finalization races only where evidence identifies them. Add the affected lifecycle regression: concurrent/repeated Stop, failure during finalization, or interrupted export, as applicable. Set a device memory budget from measured baseline/headroom; the isolated store's 32 MiB regression allowance is not a whole-app budget.
 - [ ] Review the affected diff, run its focused regression once, and commit the crash/lifecycle checkpoint. Do not declare the crash fixed on device until both saved recovery and fresh Stop pass.
@@ -53,22 +54,26 @@ The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B
 
 **Files:** `ios/Packages/ScorebugCore/Sources/ScorebugCore/WorkerDecoderDelivery.swift`; `ios/Sources/Scorebug/Capture/{CaptureStreamingModel,PublishingQualitySession,PublishingQualityDriver,PublishingAppliedTransitionAudit,QualityEvidenceDictionary}.swift`; their existing Core/FilmModel tests.
 
-- [ ] Add bounded structured receiver-proof outcomes: expired receipt, unavailable status, rejected packet/order/age, scope/publication/worker change and explicit revocation. Include monotonic age, polling latency, identifiers and the last valid window. Distinguish an HTTP/poll failure from an invalid proof packet.
+- [x] Add bounded named receiver-proof outcomes and preserve the first authority-revocation cause, distinguishing HTTP/poll failure from packet/context/age rejection.
+- [ ] Complete attempted-proof scalar details where current journals lack the rejected sample age, poll duration, packet identity or last valid window.
 - [ ] Join every transition to captured/encoded/received/submitted/omitted counts, PTS window, worker timing/queue limits, transport backlog/loss, thermal age and candidate campaign ownership. Correlate source capture sequence/PTS with unique received frame timestamps in bounded windows; retain representative motion samples to detect freezes that encoded counts miss. Preserve unknown evidence as unknown.
-- [ ] Checkpoint transitions and phase markers during capture, using bounded background persistence, so an app exit cannot erase the cause journal. Do not restore high-frequency `@Published` redraws or perform file hashing on the UI actor. Exclude credentials.
+- [x] Checkpoint successful quality transitions using bounded background persistence; retain immutable closed reports and reject stale checkpoint writes. No published-state churn, hashing on the UI actor or credentials.
+- [ ] Complete and verify phase/candidate/resource correlation on the instrumented physical trace.
 - [ ] Add focused tests for each rejection reason, bounded retention, expiry and crash-surviving transition persistence; replay the existing hour journal as a baseline without relabeling its results.
 
 ## 3. Correct proxy cadence/pressure attribution
 
 **Files:** `apps/home-daemon/src/{pipeline,worker-processing,worker-processing-windows}.ts`; corresponding `apps/home-daemon/test/*.test.ts`; `ios/Sources/Scorebug/Capture/PublishingQualityTelemetry.swift` and `ios/FilmModelTests/PublishingQualityTelemetryTests.swift`.
 
-- [ ] Build a short deterministic FFmpeg reproduction around the existing timestamp selector: ordinary 30 fps with phase/jitter near bucket boundaries, genuinely faster input, duplicate timestamps and actual omitted/delayed output. Preserve source PTS. Establish whether selection accounts for the observed single omission before changing pressure logic.
-- [ ] If the selector wrongly removes ordinary 30 fps frames, correct that boundary behavior and demonstrate that above-target input still has a finite cap. Do not duplicate frames or rewrite timestamps to make cadence look healthy.
-- [ ] If deliberate cap removal remains necessary, report verifiable selected-versus-unexpected omission accounting. Change the cross-language contract only when existing counters cannot distinguish them. Then update `packages/protocol/src/worker-processing.ts`, `apps/control-plane/src/worker-processing.ts`, `ios/Packages/ScorebugCore/Sources/ScorebugCore/WorkerProcessingReport.swift` and their affected tests together. Legacy/unattributed omissions must not silently become healthy.
-- [ ] Replay the healthy 151-frame/one-omission window and true-overload controls. Avoid treating a proven cap removal as immediate resource overload, while retaining actual delivery/cadence loss, queue growth, excessive processing time and incomplete-evidence guards. A classified omission remains visible in media loss accounting against the target cadence.
-- [ ] Run the affected worker and native telemetry tests once, inspect the short reproduction's saved frames, review and commit. No hardware soak to validate this deterministic fix.
+- [x] Build a short deterministic FFmpeg reproduction around the existing timestamp selector: ordinary 30 fps with phase/jitter near bucket boundaries, genuinely faster input, duplicate timestamps and actual omitted/delayed output. Preserve source PTS. The old selector loses ordinary jittered30fps frames. Exact original-hour PTS were not retained; do not claim an individual-event replay.
+- [x] If the selector wrongly removes ordinary 30 fps frames, correct that boundary behavior and demonstrate that above-target input still has a finite cap. Do not duplicate frames or rewrite timestamps to make cadence look healthy.
+- [x] If deliberate cap removal remains necessary, report verifiable selected-versus-unexpected omission accounting. Change the cross-language contract only when existing counters cannot distinguish them. Then update `packages/protocol/src/worker-processing.ts`, `apps/control-plane/src/worker-processing.ts`, `ios/Packages/ScorebugCore/Sources/ScorebugCore/WorkerProcessingReport.swift` and their affected tests together. Legacy/unattributed omissions must not silently become healthy.
+- [x] Recreate151decoded/150submitted with the reported4.35/7.17ms durations, and verify cap/unknown/unexpected-loss/overload controls. The original PTS history is unavailable. Avoid treating a proven cap removal as immediate resource overload, while retaining actual delivery/cadence loss, queue growth, excessive processing time and incomplete-evidence guards. A classified omission remains visible in media loss accounting against the target cadence.
+- [x] Run the affected worker and native telemetry tests once, inspect the short reproduction's saved frames, review and commit. No hardware soak to validate this deterministic fix.
 
 ## 4. Diagnose and correct receiver-proof resets
+
+Rejection reasons and first-revocation causes are persisted without changing authority/freshness rules. The original physical reset is still unresolved; the current short simulator climb has no reset.
 
 **Files:** `ios/Packages/ScorebugCore/Sources/ScorebugCore/WorkerDecoderDelivery.swift`; `ios/Sources/Scorebug/Capture/{CaptureStreamingModel,PublishingDeliveryAuthority,PublishingQualitySession}.swift`; `ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/WorkerDecoderDeliveryTests.swift`; `ios/FilmModelTests/{CaptureStreamingModelTests,PublishingQualitySessionTests}.swift`.
 
@@ -78,6 +83,8 @@ The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B
 - [ ] Run the affected Core/model tests once, review and commit. Claim this issue closed only with a reproduced cause and corrected behavior, not merely a journal with no new reset.
 
 ## 5. Measure and reduce phone thermal load
+
+Current instrumentation: camera drop reasons/pressure and bounded CPU, memory, battery and thermal rows are implemented. Encoder/probe lifetime correlation and matched hardware profiling remain open.
 
 **Files:** `ios/Packages/ScorebugMedia/Sources/ScorebugMedia/{IOSCameraCaptureSource,SegmentedArchiveWriter,PublishingThermalObservation}.swift`; `ios/Packages/ScorebugStreaming/Sources/ScorebugStreaming/{SRTPublisher,PublishingCandidateEncoder,PublishingCandidateMeasurement,PublishingCandidateCampaignOwner,PublishingVideoCost}.swift`; `ios/Sources/Scorebug/Capture/{NativeOwnedCandidatePublisher,NativeCandidateAttempt,PublishingQualitySession}.swift`.
 
@@ -89,13 +96,16 @@ The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B
 
 ## 6. Add a repeatable combined qualification lane
 
+Saved-export, short Stop and600/1800/3600-second combined modes are implemented and signed. One affected simulator1080 vertical and complete source-identity/A/V checks pass. Physical combined collection is implemented but awaits a device run; final motion, visible-score, sync and environment review remain separate gates.
+
 **Files:** `scripts/test-physical-recovery.mjs`; `scripts/test/{physical-recovery,physical-startup-evidence}.test.mjs`; `ios/AppUITests/PhysicalStreamingTests.swift`; `scripts/{ordinary-geometry-evidence,media-sync,media-tools}.mjs`; `docs/device-testing.md`. Reuse the full-decode/gap accounting in `artifacts/qa/physical-hour-preparation-20260930/verify-hour-media.py`; promote reusable checks into tracked runner code rather than relying on that artifact path for future runs.
 
-- [ ] Add explicit saved-export and combined-duration modes to the current harness. Its existing lanes do not expose an hour mode. Validate independent archive quality/upload ceiling, destination paths, finite startup/finalization deadlines and an owned stop/cleanup sequence; do not publish unsupported command flags as working instructions.
-- [ ] Start the sustained-hold timer only after fresh receiver evidence confirms actual 1080p and the production trial has settled. Persist geometry spans, quality transitions, memory/thermal phases and score changes. Distinguish startup timeout, downgrade, stale proof, app exit, export failure and media-validation failure in the final result.
+- [x] Add explicit saved-export and combined-duration modes to the current harness. Its existing lanes do not expose an hour mode. Validate independent archive quality/upload ceiling, destination paths, finite startup/finalization deadlines and an owned stop/cleanup sequence; do not publish unsupported command flags as working instructions.
+- [x] Start the sustained-hold timer only after fresh receiver evidence confirms actual 1080p and the production trial has settled. Persist geometry spans, quality transitions, memory/thermal phases and score changes. Distinguish startup timeout, downgrade, stale proof, app exit, export failure and media-validation failure in the final result.
 - [ ] Record both overlaid outputs and the clean archive; use moving footage and a few native phone score changes. Reuse accepted Watch scoring/companion evidence unless scoring contracts change. Avoid a continuous test screen recorder that adds an unrelated encoder workload.
-- [ ] Preserve artifacts and close/join app workflow, worker, receiver and lab even on timeout. Automatic downgrade/crash should end the attempted qualification, finalize what is safe and report the first failing gate rather than run out an uninformative hour.
-- [ ] Run the two affected Node runner test files once. Reuse installed builds for unchanged code; batch signed phone builds. If a shared telemetry contract changed, run one affected full simulator vertical before hardware qualification; otherwise reuse the accepted vertical.
+- [x] Implement bounded artifact collection and owned workflow/backend shutdown. A failed hold ends the attempt and safely finalizes recording before reporting the first failing gate.
+- [ ] Verify fresh combined success/failure, cancellation and timeout cleanup on hardware; interrupted completion must remain recoverable if native Stop cannot finish.
+- [x] Run the two affected Node runner test files once. Reuse installed builds for unchanged code; batch signed phone builds. If a shared telemetry contract changed, run one affected full simulator vertical before hardware qualification; otherwise reuse the accepted vertical.
 
 ## 7. Staged physical acceptance and handoff
 

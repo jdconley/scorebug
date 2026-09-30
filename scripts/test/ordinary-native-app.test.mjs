@@ -429,6 +429,14 @@ for (key,value) in [("policyAppliedRevision","1"),("policyAppliedProfile","360p3
 for (key,value) in [("policyAppliedRevision","2"),("policyAcknowledgedAtUptimeSeconds","96"),("policyAttemptID","replacement"),("policyTrialActive","true"),("sessionBusy","true"),("policyTrialRollbackRequired","true")] {
  var bad=owned; bad[key]=value; let rejected=try sample(bad); assert(!rejected.isInitialSourceReady(matching:encoderACK),key)
 }
+var sustained = settled
+sustained["policyAppliedProfile"]="1080p30"; sustained["policyAppliedBitrate"]="6000000"
+let baseline1080 = try sample(sustained)
+assert(baseline1080.sustains1080(baseline1080))
+for (key,value) in [("policyAppliedProfile","720p30"),("policyAppliedBitrate","2000000"),("policyAppliedRevision","2"),("policyAttemptID","new"),("policyOwnerKey",String(repeating:"c",count:64)),("policySourceScopeKey",String(repeating:"c",count:64)),("policyTrialActive","true"),("sessionBusy","true"),("policyMinimumResetRequired","true"),("policyRecommendationPending","true")] {
+ var bad=sustained; bad[key]=value
+ let rejected=try sample(bad); assert(!rejected.sustains1080(baseline1080),key)
+}
 print("native guards passed")
 `,
       );

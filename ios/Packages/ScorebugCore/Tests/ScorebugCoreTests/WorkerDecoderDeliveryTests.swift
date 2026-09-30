@@ -23,6 +23,36 @@ final class WorkerDecoderDeliveryTests: XCTestCase {
         XCTAssertEqual(next.snapshot.arrivals.count, 6); XCTAssertEqual(tracker.cursor?.lastOrdinal, 6)
         tracker.expire(at: now + .seconds(6)); XCTAssertNil(tracker.latest)
     }
+    func testUnavailableProofKeepsItsExactCauseUntilAValidRefresh() throws {
+        var tracker = WorkerDecoderDeliveryTracker(); let now = ContinuousClock.now
+        XCTAssertNotNil(tracker.observe(response: try fixture(), expectedPublishingAttemptID: expected,
+            receivedAt: now, requestDuration: .zero))
+        tracker.expire(at: now + .seconds(6))
+        XCTAssertNil(tracker.latest)
+        XCTAssertEqual(tracker.unavailabilityReason, .sampleExpired)
+        tracker.expire(at: now + .seconds(7))
+        XCTAssertEqual(tracker.unavailabilityReason, .sampleExpired, "Maintenance must not erase the original rejection")
+        var missing = try fixture(6); missing.status.observation?.decoderDelivery = nil
+        XCTAssertNil(tracker.observe(response: missing, expectedPublishingAttemptID: expected,
+            receivedAt: now + .seconds(7), requestDuration: .zero))
+        XCTAssertEqual(tracker.unavailabilityReason, .packetMissing)
+        XCTAssertNotNil(tracker.observe(response: try fixture(6), expectedPublishingAttemptID: expected,
+            receivedAt: now + .seconds(7), requestDuration: .zero))
+        XCTAssertNil(tracker.unavailabilityReason)
+    }
+
+    func testFullBaseAndFrozenPacketFailuresAreDistinguishable() throws {
+        var tracker = WorkerDecoderDeliveryTracker(); let now = ContinuousClock.now
+        XCTAssertNil(tracker.observe(response: try fixture(6, after: 3), expectedPublishingAttemptID: expected,
+            receivedAt: now, requestDuration: .zero))
+        XCTAssertEqual(tracker.unavailabilityReason, .fullBaseRequired)
+        XCTAssertNotNil(tracker.observe(response: try fixture(6), expectedPublishingAttemptID: expected,
+            receivedAt: now, requestDuration: .zero))
+        tracker.unavailable()
+        XCTAssertNil(tracker.observe(response: try fixture(6), expectedPublishingAttemptID: expected,
+            receivedAt: now, requestDuration: .zero))
+        XCTAssertEqual(tracker.unavailabilityReason, .frozenSampleWithoutProof)
+    }
     func testFrozenSamplesCannotBeRejuvenatedAndOmissionRequiresFullResynchronization() throws {
         var tracker = WorkerDecoderDeliveryTracker(); let now = ContinuousClock.now
         XCTAssertNotNil(tracker.observe(response: try fixture(), expectedPublishingAttemptID: expected, receivedAt: now, requestDuration: .zero))

@@ -1642,6 +1642,17 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
             await f.owner.stop()
         }
     }
+    func testRevocationKeepsFirstCauseForQueuedActorDiagnostics() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let observation = try await f.delivery(start: 113)
+        let authority = try XCTUnwrap(observation.authority)
+        XCTAssertTrue(authority.permits(observation.delivery))
+        authority.revoke(reason: "sampleExpired")
+        authority.revoke(reason: "laterShutdown")
+        XCTAssertFalse(authority.permits(observation.delivery))
+        XCTAssertEqual(authority.revocationReason, "sampleExpired")
+        await f.owner.stop()
+    }
 
     func testAppliedTransportRollbackRetainsSelectedIntervalAndActualDelayLimit() async throws {
         let exported = AppliedTransitionExportCapture()

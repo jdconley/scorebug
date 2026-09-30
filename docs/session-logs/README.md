@@ -1,5 +1,7 @@
 # Session logs
 
+- [September30 sustained4K/1080 implementation](2026-09-30-sustained-4k1080-implementation.md) — phone saved-hour recovery passes; cap jitter/pressure fix, cause/resource diagnostics, combined harness and short simulator1080 media pass; fresh Stop and thermal qualification remain open.
+
 - [September 30 sustained 4K/1080p plan](2026-09-30-sustained-4k1080-plan.md) — scoped crash recovery, adaptation attribution, phone workload and staged physical qualification; planning only.
 
 - [September 30 hour-stream setup](2026-09-30-hour-stream-setup.md) — one-hour4K/audio recovered; sustained1080 and phone stop fail; archive memory fix, saved-media results and adaptation causes.

@@ -1,7 +1,7 @@
 import test from 'node:test';
-import {mkdtemp, mkdir, writeFile, rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join,dirname} from 'node:path';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 import assert from 'node:assert/strict';
 import {
   physicalRecoveryOptions,
@@ -14,6 +14,49 @@ import {
 const device = '00008140-001474110C13001C';
 const interfaces = { en0: [{ address: '192.168.1.130', family: 'IPv4', internal: false }] };
 const args = ['--device', device, '--host', '192.168.1.130'];
+test('combined qualification has an explicit bounded hold independent of startup and export', () => {
+  for (const hold of [600, 1800, 3600]) {
+    const o = physicalRecoveryOptions(
+      [...args, '--lane', 'combined1080', '--hold-seconds', String(hold)],
+      interfaces,
+    );
+    assert.equal(o.holdSeconds, hold);
+    assert(o.duration >= hold + 1800);
+  }
+  for (const value of ['0', '59', '0600', '1801', '3601', 'NaN'])
+    assert.throws(() =>
+      physicalRecoveryOptions(
+        [...args, '--lane', 'combined1080', '--hold-seconds', value],
+        interfaces,
+      ),
+    );
+  assert.throws(() => physicalRecoveryOptions([...args, '--lane', 'combined1080'], interfaces));
+  assert.throws(() => physicalRecoveryOptions([...args, '--hold-seconds', '1800'], interfaces));
+});
+test('saved export selects one canonical recording and cannot opt into a new camera capture', () => {
+  const id = '33D2FF99-7918-42EA-8D41-9A5C076B2011';
+  const o = physicalRecoveryOptions(
+    [...args, '--lane', 'saved-export', '--recording-id', id],
+    interfaces,
+  );
+  assert.equal(o.recordingID, id);
+  assert.equal(o.lane, 'saved-export');
+  for (const value of ['../recording', id.toLowerCase(), 'no-recording'])
+    assert.throws(() =>
+      physicalRecoveryOptions(
+        [...args, '--lane', 'saved-export', '--recording-id', value],
+        interfaces,
+      ),
+    );
+  assert.throws(() => physicalRecoveryOptions([...args, '--lane', 'saved-export'], interfaces));
+  assert.throws(() => physicalRecoveryOptions([...args, '--recording-id', id], interfaces));
+});
+test('short archive stop is an independent lane without scoring or streaming setup', () => {
+  const o = physicalRecoveryOptions([...args, '--lane', 'archive-stop'], interfaces);
+  assert.equal(o.lane, 'archive-stop');
+  assert.equal(o.holdSeconds, undefined);
+  assert.equal(o.recordingID, undefined);
+});
 test('physical recovery requires explicit hardware device and assigned private host', () => {
   const o = physicalRecoveryOptions(args, interfaces);
   assert.equal(o.device, device);
@@ -145,21 +188,29 @@ test('rejects normalized or encoded host spellings in physical environment', () 
   }
 });
 
-test('binds the actual Debug implementation image and rejects changes after execution', async t => {
+test('binds the actual Debug implementation image and rejects changes after execution', async (t) => {
   const products = await mkdtemp(join(tmpdir(), 'scorebug-physical-products-'));
-  t.after(() => rm(products,{recursive:true,force:true}));
-  const names = ['Debug-iphoneos/Scorebug.app/Scorebug', 'Debug-iphoneos/Scorebug.app/Scorebug.debug.dylib',
+  t.after(() => rm(products, { recursive: true, force: true }));
+  const names = [
+    'Debug-iphoneos/Scorebug.app/Scorebug',
+    'Debug-iphoneos/Scorebug.app/Scorebug.debug.dylib',
     'Debug-iphoneos/ScorebugAppUITests-Runner.app/ScorebugAppUITests-Runner',
     'Debug-iphoneos/ScorebugAppUITests-Runner.app/PlugIns/ScorebugAppUITests.xctest/ScorebugAppUITests',
-    'Scorebug_iphoneos26.2-arm64.xctestrun'];
-  for (const name of names) { const path=join(products,name); await mkdir(dirname(path),{recursive:true});await writeFile(path,name); }
-  const extra=join(products,'private.xctestrun');await writeFile(extra,'configured private run');
-  const inputs=await readPhysicalRecoveryInputs(products,[extra]);
-  assert(inputs.some(i=>i.path.endsWith('/Scorebug.debug.dylib')));
-  assert(inputs.some(i=>i.path===extra));
+    'Scorebug_iphoneos26.2-arm64.xctestrun',
+  ];
+  for (const name of names) {
+    const path = join(products, name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, name);
+  }
+  const extra = join(products, 'private.xctestrun');
+  await writeFile(extra, 'configured private run');
+  const inputs = await readPhysicalRecoveryInputs(products, [extra]);
+  assert(inputs.some((i) => i.path.endsWith('/Scorebug.debug.dylib')));
+  assert(inputs.some((i) => i.path === extra));
   await verifyPhysicalRecoveryInputs(inputs);
-  await writeFile(join(products,names[1]),'changed implementation');
-  await assert.rejects(verifyPhysicalRecoveryInputs(inputs),/changed/);
+  await writeFile(join(products, names[1]), 'changed implementation');
+  await assert.rejects(verifyPhysicalRecoveryInputs(inputs), /changed/);
 });
 
 test('network probe is explicit, selects no camera recovery flag and has a short lab budget', () => {
@@ -176,19 +227,35 @@ test('network probe is explicit, selects no camera recovery flag and has a short
 
 test('app loopback is explicit with a validated high port and no default transport changes', () => {
   assert.equal(physicalRecoveryOptions(args, interfaces).runnerTransport, 'direct');
-  const options = physicalRecoveryOptions([...args, '--runner-transport', 'app-loopback', '--bridge-port', '49173'], interfaces);
+  const options = physicalRecoveryOptions(
+    [...args, '--runner-transport', 'app-loopback', '--bridge-port', '49173'],
+    interfaces,
+  );
   assert.equal(options.runnerTransport, 'app-loopback');
   assert.equal(options.bridgePort, 49173);
-  for (const suffix of [ ['--runner-transport', 'other'], ['--runner-transport', 'app-loopback'], ['--bridge-port', '49173'], ['--runner-transport', 'app-loopback', '--bridge-port', '80'], ['--runner-transport', 'app-loopback', '--bridge-port', '049173'] ])
+  for (const suffix of [
+    ['--runner-transport', 'other'],
+    ['--runner-transport', 'app-loopback'],
+    ['--bridge-port', '49173'],
+    ['--runner-transport', 'app-loopback', '--bridge-port', '80'],
+    ['--runner-transport', 'app-loopback', '--bridge-port', '049173'],
+  ])
     assert.throws(() => physicalRecoveryOptions([...args, ...suffix], interfaces));
   const environment = physicalRecoveryEnvironment(lab(), 'network-probe', options);
   assert.equal(environment.SCOREBUG_RECOVERY_RUNNER_TRANSPORT, 'app-loopback');
   assert.equal(environment.SCOREBUG_RECOVERY_BRIDGE_PORT, '49173');
   assert.equal(environment.SCOREBUG_RECOVERY_CONTROL_URL, lab().recoveryControl.endpoint);
   assert.equal(environment.SCOREBUG_RECOVERY_CONTROL_TOKEN, lab().recoveryControl.token);
-  assert(!Object.keys(environment).some(key => key.includes('FIXTURE') || key.includes('FILE_CAPTURE')));
-  assert.throws(() => physicalRecoveryEnvironment(lab(), 'network-probe', {...options, bridgePort: 0}));
-  const missingPort = lab(); missingPort.setup.endpoint = 'http://192.168.1.130';
+  assert(
+    !Object.keys(environment).some(
+      (key) => key.includes('FIXTURE') || key.includes('FILE_CAPTURE'),
+    ),
+  );
+  assert.throws(() =>
+    physicalRecoveryEnvironment(lab(), 'network-probe', { ...options, bridgePort: 0 }),
+  );
+  const missingPort = lab();
+  missingPort.setup.endpoint = 'http://192.168.1.130';
   assert.throws(() => physicalRecoveryEnvironment(missingPort, 'network-probe', options));
 });
 

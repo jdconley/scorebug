@@ -30,6 +30,9 @@ struct PublishingAppliedTransitionAudit {
     }
     mutating func close() throws -> Data {
         closed = true
+        return try checkpoint()
+    }
+    func checkpoint() throws -> Data {
         let timing: [String: Any] = ["formatVersion": 1, "scope": "ordinary-successful-applications",
             "profileId": timingProfile.rawValue, "decoderBudgetMs": timingProfile.decoderBudgetMs,
             "maximumCaptureWindowEvaluationAgeMs": timingProfile.maximumCaptureWindowEvaluationAgeMs,
@@ -51,6 +54,30 @@ struct PublishingAppliedTransitionAudit {
             try data.write(to: directory.appendingPathComponent("quality-transitions-\(attemptID.uuidString.lowercased()).json"),
                            options: .withoutOverwriting)
         } catch { /* Missing evidence is rejected by the offline verifier. */ }
+    }
+}
+
+actor PublishingTransitionCheckpointWriter {
+    let attemptID: UUID
+    let directory: URL
+    private var latestRevision: UInt64?
+    private var latestData: Data?
+    init(attemptID: UUID, directory: URL? = nil) {
+        self.attemptID = attemptID
+        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Scorebug/QA", isDirectory: true)
+    }
+    func persist(_ data: Data, revision: UInt64) -> Bool {
+        guard latestRevision.map({ revision > $0 }) ?? true,
+              data.count <= PublishingAppliedTransitionAudit.maximumRecords * PublishingAppliedTransitionAudit.maximumRecordBytes + 4096 else { return false }
+        // Actor jobs can arrive after a newer snapshot; never replace its prefix.
+        if latestData == data { latestRevision = revision; return false }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: directory.appendingPathComponent("quality-transitions-\(attemptID.uuidString.lowercased())-checkpoint.json"), options: .atomic)
+            latestRevision = revision; latestData = data
+            return true
+        } catch { return false } // A missing checkpoint is evidence failure, never a policy input.
     }
 }
 #endif

@@ -127,3 +127,55 @@ A workflow pass is distinct from decoded-media acceptance. Verify the actual cle
 export, proxy MP4 and mock-destination MP4, including audio, source-frame continuity
 and visible score changes. Keep strict failures recorded separately rather than
 rerunning unrelated suites or treating a UI pass as full media qualification.
+
+## Sustained 4K archive and1080 upload
+
+The physical runner now supports exact saved recovery, an8-second fresh4K/audio
+Stop check, and600/1800/3600-second combined holds. Use the assigned private LAN
+address and the physical device UDID; sign with Conley Chaos LLC `B222J9J7B8`.
+Approve the first-session automation prompt on the phone before expecting the
+workflow to start. Existing captures and saved recordings are preserved.
+
+```sh
+node scripts/test-physical-recovery.mjs --host YOUR_PRIVATE_LAN_IP \
+  --device YOUR_PHONE_UDID --lane archive-stop
+node scripts/test-physical-recovery.mjs --host YOUR_PRIVATE_LAN_IP \
+  --device YOUR_PHONE_UDID --lane saved-export --recording-id EXACT_UPPERCASE_RECORDING_UUID
+node scripts/test-physical-recovery.mjs --host YOUR_PRIVATE_LAN_IP \
+  --device YOUR_PHONE_UDID --lane combined1080 --hold-seconds 1800 \
+  --runner-transport app-loopback --bridge-port 61422
+```
+
+The600-second lane is for an attributed short trace;1800 is the thermal checkpoint.
+Use3600 only after the preceding gates pass. Position the phone at moving volleyball
+footage, with audible TV audio, the clear case and USB charging, before starting a
+combined run. Keep sufficient phone space for the new archive plus assembly/export
+intermediates; the native exporter enforces its actual free-space requirement.
+
+Archive-only modes start no lab. Combined mode uses production progressive adaptation,
+native phone scoring, clean4K/audio capture and the software proxy's overlaid MP4 plus
+mock RTMP recorder. Hold time begins after settled, fresh1080p proof. A downgrade,
+stale proof or changed owner fails the hold and proceeds through safe Stop/export.
+Playback and relaunch are included. Screenshot-only XCTest avoids another video encoder.
+
+The runner preserves bounded scalar QA files, selects the exact new export by recording
+UUID and immutable filename, and copies only its final MP4. It joins the backend before
+checking source geometry, transition history, resources and saved media. Native full-decode
+export evidence is correlated with packet counts/timestamps, avoiding a second4K decode;
+both proxy outputs are fully decoded. Mac transfer capacity is checked first.
+`encoded1080HoldQualified` distinguishes these machine gates from final qualification:
+representative motion, visible score phases, perceptual sync and the actual case/charging/
+LAN configuration still require review. A UI pass or a1080p output canvas is insufficient.
+
+The saved-media checker is independently reusable:
+
+```sh
+python3 scripts/qualify-physical-media.py --artifact /absolute/new-validation-directory \
+  --archive /absolute/clean4k.mp4 --proxy /absolute/overlay.mp4 \
+  --mock /absolute/mock-output.mp4 --native-validation /absolute/export-validation.json \
+  --minimum-duration 1800
+```
+
+Omit `--native-validation` to fully decode the archive as well. The checker never
+concatenates raw archive fragments, overwrites a validation directory or promotes
+an interrupted recording's completion status. Missing proof remains unqualified.

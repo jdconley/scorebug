@@ -104,7 +104,25 @@ actor RecordingLibrary {
         let exports = rootDirectory.appendingPathComponent("Exports", isDirectory: true)
         try createSafeDirectory(exports)
         let destination = exports.appendingPathComponent("\(id)-\(UUID().uuidString).mp4")
-        return try await exporter.export(archive, to: destination).url
+        let result = try await exporter.export(archive, to: destination)
+        #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+        // Persist only scalars after the production exporter has decoded the entire
+        // published MP4. This avoids a second 4K decode or copying the raw archive
+        // during qualification. Missing diagnostics never change successful export.
+        if let bytes = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size]) as? NSNumber {
+            let report: [String: Any] = ["contract": "scorebug-native-export-v1", "recordingID": id,
+                "fileName": destination.lastPathComponent, "bytes": bytes.int64Value,
+                "videoFrames": result.videoFrames, "audioSamples": result.audioSamples,
+                "duration": result.duration, "fullDecodeCompleted": true,
+                "completedUptimeSeconds": ProcessInfo.processInfo.systemUptime]
+            let qa = rootDirectory.deletingLastPathComponent().appendingPathComponent("QA", isDirectory: true)
+            if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+                try? FileManager.default.createDirectory(at: qa, withIntermediateDirectories: true)
+                try? data.write(to: qa.appendingPathComponent("export-validation-\(id).json"), options: .atomic)
+            }
+        }
+        #endif
+        return result.url
     }
 
     func availableBytes() -> Int64? {

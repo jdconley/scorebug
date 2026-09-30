@@ -15,6 +15,7 @@ public final class IOSCameraCaptureSource: CaptureSource, Sendable {
     public init(profile: ArchiveProfile = ArchiveProfile()) { core = CameraCaptureCore(profile: profile) }
     deinit { core.requestStop() }
     public var previewSession: AVCaptureSession { core.session }
+    public var diagnosticSnapshot: CaptureSourceDiagnostics { core.diagnosticSnapshot }
 
     public func prepare(callbacks: CaptureSourceCallbacks) async throws -> CMTime {
         guard await AVCaptureDevice.requestAccess(for: .video),
@@ -47,6 +48,9 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
     private var callbacks: CaptureSourceCallbacks?
     private var deliveryEnabled = false
     private var origin = CMTime.invalid
+    private var diagnostics = CaptureSourceDiagnostics()
+    private var pressureObservation: NSKeyValueObservation?
+    var diagnosticSnapshot: CaptureSourceDiagnostics { gate.withLock { diagnostics } }
 
     func prepare(callbacks: CaptureSourceCallbacks) async throws -> CMTime {
         try await withCheckedThrowingContinuation { continuation in
@@ -126,6 +130,14 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
         camera.automaticallyAdjustsVideoHDREnabled = false
         if format.isVideoHDRSupported { camera.isVideoHDREnabled = false }
         camera.unlockForConfiguration()
+        pressureObservation = camera.observe(\.systemPressureState, options: [.initial, .new]) { [weak self] camera, _ in
+            guard let self else { return }
+            let level = camera.systemPressureState.level
+            let name = level == .nominal ? "nominal" : level == .fair ? "fair" :
+                level == .serious ? "serious" : level == .critical ? "critical" :
+                level == .shutdown ? "shutdown" : "unknown"
+            self.gate.withLock { self.diagnostics.cameraPressureLevel = name }
+        }
         guard video.availableVideoPixelFormatTypes.contains(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
               session.canAddOutput(video), session.canAddOutput(audio) else { throw CameraCaptureError.unsupportedOutput }
         video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
@@ -175,6 +187,7 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
         gate.withLock { deliveryEnabled = false }
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
+        pressureObservation = nil
         video.setSampleBufferDelegate(nil, queue: nil)
         audio.setSampleBufferDelegate(nil, queue: nil)
         if session.isRunning { session.stopRunning() }
@@ -198,6 +211,7 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
             guard timestamp >= origin else { return }
             do {
                 let sample = try CapturedMediaSample(sampleBuffer: sampleBuffer, kind: output === video ? .video : .audio)
+                diagnostics.delivered(video: output === video)
                 callbacks.sample(sample)
             } catch { callbacks.event(.failed) }
         }
@@ -207,6 +221,13 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
             guard deliveryEnabled, let callbacks else { return }
             let timestamp = sampleBuffer.presentationTimeStamp
             if timestamp.isNumeric, timestamp < origin { return }
+            let reason = CMGetAttachment(sampleBuffer, key: kCMSampleBufferAttachmentKey_DroppedFrameReason, attachmentModeOut: nil) as? String
+            let classified: CaptureVideoDropReason
+            if reason == (kCMSampleBufferDroppedFrameReason_FrameWasLate as String) { classified = .frameWasLate }
+            else if reason == (kCMSampleBufferDroppedFrameReason_OutOfBuffers as String) { classified = .outOfBuffers }
+            else if reason == (kCMSampleBufferDroppedFrameReason_Discontinuity as String) { classified = .discontinuity }
+            else { classified = .unknown }
+            diagnostics.dropped(classified)
             callbacks.event(.droppedSample)
         }
     }

@@ -19,11 +19,29 @@ Follow the [focused remediation plan](../superpowers/plans/2026-09-30-sustained-
 Target: iPhone16Pro, clear case and USB charging, home LAN/software proxy;
 progressive startup followed by60continuous minutes of actual1080p30/6Mbps input
 while recording clean4K30/audio, then successful stop/export/playback/relaunch.
-Planning only this session; no new capture, builds or runtime checks.
+Implementation checkpoint: saved phone hour recovery/export/playback/relaunch passes;
+original interrupted status retained. Cap jitter loss is reproduced/fixed; only
+corroborated deliberate cap omissions are excluded from resource overload, with
+legacy/unknown loss and time/pressure guards retained. Cause checkpoints and
+camera/CPU/memory/thermal/battery diagnostics are implemented. Signed phone build
+and focused checks pass.
 
-Order: saved phone recovery/export and short Stop; bounded cause diagnostics;
-proxy cap/pressure attribution; reproduced receiver-proof reset; measured phone
-thermal optimization; repeatable qualification harness;30-minute checkpoint then
+One affected simulator1080 vertical and all three full saved-media/source-ID checks
+pass: `ordinary-native-nncHUb/media-source-validation/result.json`, actual1080 input
+1065frames/35.5s, archive7795/live7493consecutive IDs, gap-free audio, ends≤45ms.
+Saved-export, archive-stop and600/1800/3600-second combined modes are implemented;
+new combined collection/hold gates have not yet run on hardware.
+
+Current blocker: short physical runner failed before starting with “Authentication
+canceled. Canceled by user.” A fresh read-only readiness check reports the phone locked. The pending async
+request asks the user to unlock it, approve the automation/passcode prompt and report readiness. Do not silently retry
+or repeat the14-minute saved export. No physical capture/lab is active. Latest
+build is prepared; do not claim the new Stop or sustained target qualified.
+See [implementation session](2026-09-30-sustained-4k1080-implementation.md).
+Next: short fresh Stop, then an instrumented combined600-second trace for the
+remaining receiver-proof cause and measured phone thermal workload. Cap attribution
+and the qualification harness are implemented; physical resource/collection checks
+remain open. After an attributed fix,30-minute checkpoint then
 one final60-minute confirmed1080p hold. Keep real safety guards. No unchanged Watch
 suite or blind hour retries. Case-off/battery comparisons are diagnostic only.
 
@@ -32,7 +50,7 @@ Hour capture finished; no live jobs. See [hour result](2026-09-30-hour-stream-se
 Clean4K/audio archive recovered on Mac:60m26s,108796decodedframes, continuous
 encoded A/V. Both overlaid outputs fully decode, rolling5s minimum29fps; seven
 short video gaps, audio continuous. Actual1080 input lasted14m20s total; sustained
-1080 and physical stop/export remain failed/unqualified.
+1080 and fresh physical Stop remain failed/unqualified; saved phone recovery/export passes.
 
 Phone exited during stop/finalization; exact original recording
 33D2FF99-7918-42EA-8D41-9A5C076B2011 preserved on phone and copied to
@@ -42,15 +60,14 @@ completion status or manually concatenate segments.
 
 Fixed archive verification/copy buffer retention: isolated real-hour recovery
 RSS13.8GB→35MB.20focused archive-store tests pass; signed iPhone build passes and
-updated app installed. No new capture or physical export confirmation afterward.
-Next, reuse this exact saved recording to check fixed phone recovery/export, then
-a short stop check; do not start another hour until its unresolved questions warrant it.
+updated app installed. Saved phone native recovery/export is now confirmed; fresh Stop remains open.
+Next, run only the short fresh Stop check after the readiness reply; do not start another hour until its unresolved questions warrant it.
 
 Adaptive causes: initial receiver-proof invalidation resets1080→240; single
 proxy timestamp-cap omission/151frames classified as worker pressure drops1080→720;
 phone serious temperature then drops720→360→240. Transport nominal, worker timings
-4.35/7.17ms. Distinguish deliberate cap removal from actual overload and log local
-receiver-proof rejection reasons before altering policy. Retain authority/thermal
+4.35/7.17ms. Cap attribution and local receiver-proof rejection reasons are now implemented.
+Resolve the remaining physical reset with one short instrumented trace; do not alter freshness merely to hold quality. Retain authority/thermal
 safety gates. USB charging+clear case initially; user unplugged~44min; no quality
 recovery through finish. Isolate thermal workload after algorithm fixes.
 

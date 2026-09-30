@@ -72,5 +72,32 @@ final class PublishingAppliedTransitionAuditTests: XCTestCase {
         XCTAssertEqual(value["overflow"] as? Bool, false)
         XCTAssertEqual(value["records"] as? [[String: String]], [])
     }
+    func testCheckpointRemainsOpenAndDoesNotPreventLaterApplications() throws {
+        var audit = PublishingAppliedTransitionAudit(attemptID: attempt, timingProfile: .strict1500)
+        audit.append(["revision": "1", "receiverProofReason": "packetMissing"])
+        let checkpoint = try object(audit.checkpoint())
+        XCTAssertEqual(checkpoint["closed"] as? Bool, false, "Crash evidence must not claim joined finalization")
+        XCTAssertEqual((checkpoint["records"] as? [[String: String]])?.count, 1)
+        audit.append(["revision": "2"])
+        let closed = try object(audit.close())
+        XCTAssertEqual(closed["closed"] as? Bool, true)
+        XCTAssertEqual((closed["records"] as? [[String: String]])?.count, 2)
+    }
+    func testCheckpointWriterPreservesNewestRevisionAgainstDelayedOlderWrites() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var audit = PublishingAppliedTransitionAudit(attemptID: attempt, timingProfile: .strict1500)
+        audit.append(["revision": "1"]); let old = try audit.checkpoint()
+        audit.append(["revision": "2"]); let newest = try audit.checkpoint()
+        let writer = PublishingTransitionCheckpointWriter(attemptID: attempt, directory: directory)
+        let written = await writer.persist(newest, revision: 2)
+        XCTAssertTrue(written)
+        let stale = await writer.persist(old, revision: 1)
+        XCTAssertFalse(stale)
+        let path = directory.appendingPathComponent("quality-transitions-\(attempt.uuidString.lowercased())-checkpoint.json")
+        guard FileManager.default.fileExists(atPath: path.path) else { XCTFail("Checkpoint must survive process exit"); return }
+        XCTAssertEqual(try Data(contentsOf: path), newest)
+        XCTAssertEqual(try object(newest)["closed"] as? Bool, false)
+    }
 }
 #endif

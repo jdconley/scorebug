@@ -48,7 +48,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     private(set) var workerDecoderDeliveryFreshness: WorkerDecoderDeliveryFreshness? {
         didSet {
             if let delivery = workerDecoderDeliveryFreshness, deliveryAuthority?.permits(delivery) == true { return }
-            deliveryAuthority?.revoke()
+            deliveryAuthority?.revoke(reason: workerDeliveryTracker.unavailabilityReason?.rawValue ?? "deliveryContextChanged")
             deliveryAuthority = workerDecoderDeliveryFreshness.map(PublishingDeliveryAuthority.init)
         }
     }
@@ -940,7 +940,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                     let responseReceivedAtUptime = ProcessInfo.processInfo.systemUptime
                     guard ownsRequest() else { return false }
                     guard response.status.gameId == credential.gameId, response.status.generation == commandState?.snapshot?.broadcast.generation,
-                          response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(); return false }
+                          response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(reason: .contextMismatch); return false }
                     let requestDuration = requestStart.duration(to: received)
                     // Read sender acceptance after the receiver response; earlier local
                     // counts could legitimately lag bytes already observed by the relay.
@@ -966,7 +966,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                             workerDecoderDeliveryFreshness = workerDeliveryTracker.observe(response: response,
                                 expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration, requestTiming: timing)
                         } else {
-                            workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
+                            workerDeliveryTracker.unavailable(reason: .invalidRequestTiming); workerDecoderDeliveryFreshness = nil
                         }
                         workerDecoderCadenceFreshness = WorkerDecoderCadenceFreshness(response: response,
                             expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
@@ -977,7 +977,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                         } else { workerSourceTracker.clear(); workerSourceInterval = nil }
                     } else {
                         workerDecoderCadenceFreshness = nil
-                        workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
+                        workerDeliveryTracker.unavailable(reason: .publicationUnavailable); workerDecoderDeliveryFreshness = nil
                         workerSourceTracker.clear()
                         workerSourceInterval = nil
                     }
@@ -1031,7 +1031,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                     // Maintenance may still be suspended with a queued button tap.
                     // End that intent now; its later completion cannot revive it.
                     requestedStart = nil
-                    clearWorker()
+                    clearWorker(reason: .statusRequestFailed)
                     // Teardown joins this request; this request must never await teardown.
                     handlePollingFailure(error)
                     return true
@@ -1424,13 +1424,13 @@ struct PublishingClockObservation: Equatable, Sendable {
         }
         publishing = nil; localState = .idle; sentSamples = 0; clearWorker()
     }
-    private func clearWorker() {
+    private func clearWorker(reason: WorkerDecoderDeliveryTracker.UnavailabilityReason = .statusUnavailable) {
         workerStatusRequest?.task.cancel()
         candidateAuthority?.revoke(); candidateAuthority = nil
         acceptedProbeReadSequence = nextProbeReadSequence()
         workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
         workerSourceTracker.clear(); workerSourceInterval = nil
-        if publishing == nil { workerDeliveryTracker.reset() } else { workerDeliveryTracker.unavailable() }
+        if publishing == nil { workerDeliveryTracker.reset() } else { workerDeliveryTracker.unavailable(reason: reason) }
         workerDecoderDeliveryFreshness = nil
         if publishing == nil { receiverProbeTracker.reset() }
         else { receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false) }

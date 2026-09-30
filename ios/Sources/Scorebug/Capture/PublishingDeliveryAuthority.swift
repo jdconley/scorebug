@@ -9,11 +9,18 @@ final class PublishingDeliveryAuthority: @unchecked Sendable {
     private let scopeID: String
     private let lock = NSLock()
     private var revoked = false
+    private var reason: String?
     init(delivery: WorkerDecoderDeliveryFreshness) {
         context = delivery.context; scopeID = delivery.snapshot.scopeID
     }
     func permits(_ delivery: WorkerDecoderDeliveryFreshness) -> Bool {
         lock.withLock { !revoked && context == delivery.context && scopeID == delivery.snapshot.scopeID }
     }
-    func revoke() { lock.withLock { revoked = true } }
+    var revocationReason: String? { lock.withLock { reason } }
+    func revoke(reason: String? = nil) {
+        lock.withLock {
+            guard !revoked else { return }
+            self.reason = reason; revoked = true
+        }
+    }
 }

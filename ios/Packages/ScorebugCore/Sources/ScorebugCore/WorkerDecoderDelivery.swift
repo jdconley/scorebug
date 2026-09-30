@@ -31,7 +31,15 @@ public struct WorkerDecoderDeliveryFreshness: Sendable {
 /// One local publishing attempt owns this tracker. Scope changes require a full
 /// base. Omission clears availability, but retains history for replay validation.
 public struct WorkerDecoderDeliveryTracker: Sendable {
+    public enum UnavailabilityReason: String, Sendable {
+        case statusUnavailable, statusRequestFailed, contextMismatch, sampleExpired, statusStale, invalidRequestDuration, receiptRegressed
+        case workerNotProducing, publicationUnavailable, publishingAttemptMismatch, decoderClockMismatch
+        case workerIdentityMissing, packetMissing, packetMalformed, invalidRequestTiming, requestTimingRegressed
+        case retiredContext, retiredContextLimit, fullBaseRequired, historyRejected, receiverInvalidated, receiverEnded
+        case sampleAgeInvalid, requestTooOld, frozenSampleWithoutProof
+    }
     public private(set) var latest: WorkerDecoderDeliveryFreshness?
+    public private(set) var unavailabilityReason: UnavailabilityReason?
     private var history = DecoderDeliveryHistory()
     private var context: WorkerDecoderDeliveryFreshness.Context?
     private var retired: [WorkerDecoderDeliveryFreshness.Context] = []
@@ -46,9 +54,14 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
         return .init(scopeID: packet.scopeID, lastOrdinal: packet.lastOrdinal)
     }
     public mutating func reset() { self = .init() }
-    public mutating func unavailable() { latest = nil; needsFull = true }
+    public mutating func unavailable(reason: UnavailabilityReason = .statusUnavailable) {
+        latest = nil; needsFull = true; unavailabilityReason = reason
+    }
+    private mutating func reject(_ reason: UnavailabilityReason) -> WorkerDecoderDeliveryFreshness? {
+        unavailable(reason: reason); return nil
+    }
     public mutating func expire(at instant: ContinuousClock.Instant = .now) {
-        if latest?.sampleAgeUpperBound(at: instant) == nil { unavailable() }
+        if let latest, latest.sampleAgeUpperBound(at: instant) == nil { unavailable(reason: .sampleExpired) }
     }
     @discardableResult public mutating func observe(response: WorkerMediaStatusResponse,
         expectedPublishingAttemptID: UUID, receivedAt: ContinuousClock.Instant,
@@ -58,13 +71,17 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
         latest = nil
         let status = response.status
         let freshness = WorkerStatusFreshness(response: response, receivedAt: receivedAt, requestDuration: requestDuration)
-        guard !exhausted, requestDuration >= .zero, freshness.isFresh(at: receivedAt),
-              lastReceivedAt.map({ receivedAt >= $0 }) ?? true,
-              status.state == .producingOutput, let publication = status.validatedPublication,
-              publication.publishingAttemptId == expectedPublishingAttemptID.uuidString.lowercased(),
-              let observation = status.observation, observation.decodedVideo?.clock == "mpegts-pts-90k-v1",
-              let workerId = status.workerId, let workerEpoch = status.workerEpoch,
-              let packet = observation.decoderDelivery, packet.isValid else { unavailable(); return nil }
+        guard !exhausted else { return reject(.retiredContextLimit) }
+        guard requestDuration >= .zero else { return reject(.invalidRequestDuration) }
+        guard freshness.isFresh(at: receivedAt) else { return reject(.statusStale) }
+        guard lastReceivedAt.map({ receivedAt >= $0 }) ?? true else { return reject(.receiptRegressed) }
+        guard status.state == .producingOutput else { return reject(.workerNotProducing) }
+        guard let publication = status.validatedPublication else { return reject(.publicationUnavailable) }
+        guard publication.publishingAttemptId == expectedPublishingAttemptID.uuidString.lowercased() else { return reject(.publishingAttemptMismatch) }
+        guard let observation = status.observation, observation.decodedVideo?.clock == "mpegts-pts-90k-v1" else { return reject(.decoderClockMismatch) }
+        guard let workerId = status.workerId, let workerEpoch = status.workerEpoch else { return reject(.workerIdentityMissing) }
+        guard let packet = observation.decoderDelivery else { return reject(.packetMissing) }
+        guard packet.isValid else { return reject(.packetMalformed) }
         if let requestTiming {
             let duration = requestDuration.components
             let durationSeconds = Double(duration.seconds) + Double(duration.attoseconds) / 1e18
@@ -72,41 +89,42 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
             // floating-point subtraction roundoff when comparing their spans.
             let roundoff = 2 * Double.ulpOfOne * max(1, requestTiming.receivedAt)
             guard durationSeconds <= requestTiming.receivedAt - requestTiming.startedAt + roundoff else {
-                unavailable(); return nil
+                return reject(.invalidRequestTiming)
             }
             if let previousTiming = lastRequestTiming {
                 guard requestTiming.startedAt >= previousTiming.startedAt,
-                      requestTiming.receivedAt >= previousTiming.receivedAt else { unavailable(); return nil }
+                      requestTiming.receivedAt >= previousTiming.receivedAt else { return reject(.requestTimingRegressed) }
             }
         }
         lastReceivedAt = receivedAt
         let binding = WorkerDecoderDeliveryFreshness.Context(gameId: status.gameId, generation: status.generation,
             workerId: workerId, workerEpoch: workerEpoch, attempt: observation.attempt, publication: publication)
         if context != binding {
-            guard !retired.contains(binding) else { unavailable(); return nil }
-            guard retired.count < 64 else { exhausted = true; unavailable(); return nil }
+            guard !retired.contains(binding) else { return reject(.retiredContext) }
+            guard retired.count < 64 else { exhausted = true; return reject(.retiredContextLimit) }
             if let context { retired.append(context) }
             context = binding; history = .init(); needsFull = true
         }
         let previousSample = history.packet?.sampledAtMs
         do {
-            if needsFull && !packet.isFull { throw DecoderDeliveryHistory.Failure.incomplete }
+            if needsFull && !packet.isFull { return reject(.fullBaseRequired) }
             try history.accept(packet)
-        } catch { unavailable(); return nil }
-        guard packet.invalidReason == nil, !packet.ended,
-              let snapshot = history.snapshot,
+        } catch { return reject(.historyRejected) }
+        guard packet.invalidReason == nil else { return reject(.receiverInvalidated) }
+        guard !packet.ended else { return reject(.receiverEnded) }
+        guard let snapshot = history.snapshot,
               let serverAge = status.decoderDeliveryAgeUpperBoundMs,
               serverAge.isFinite, serverAge >= 0, serverAge <= Double(DecoderDeliveryPacket.maximum),
-              serverAge.rounded(.down) == serverAge else { unavailable(); return nil }
+              serverAge.rounded(.down) == serverAge else { return reject(.sampleAgeInvalid) }
         let base = Duration.milliseconds(Int64(serverAge)), maximum = WorkerDecoderDeliveryFreshness.maximumAge
-        guard requestDuration <= maximum - base else { unavailable(); return nil }
+        guard requestDuration <= maximum - base else { return reject(.requestTooOld) }
         var age = base + requestDuration
         var sampleTimeBounds = requestTiming.flatMap {
             DeliverySampleTimeBounds(lower: max(0, $0.startedAt - serverAge / 1000), upper: $0.receivedAt)
         }
         if previousSample == packet.sampledAtMs {
             guard let priorProof, priorProof.context == binding, priorProof.snapshot.scopeID == snapshot.scopeID,
-                  let previousAge = priorProof.sampleAgeUpperBound(at: receivedAt) else { unavailable(); return nil }
+                  let previousAge = priorProof.sampleAgeUpperBound(at: receivedAt) else { return reject(.frozenSampleWithoutProof) }
             age = max(age, previousAge)
             // A frozen sample cannot acquire or widen an anchor on a later receipt.
             sampleTimeBounds = priorProof.sampleTimeBounds
@@ -115,7 +133,7 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
             sampledAtMs: packet.sampledAtMs, sampleTimeBounds: sampleTimeBounds,
             receivedAt: receivedAt, ageAtReceipt: age, statusFreshness: freshness)
         if let requestTiming { lastRequestTiming = requestTiming }
-        latest = value; needsFull = false
+        latest = value; needsFull = false; unavailabilityReason = nil
         return value
     }
 }
