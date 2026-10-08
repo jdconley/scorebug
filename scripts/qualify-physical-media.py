@@ -56,8 +56,32 @@ def native_packets(data, report, path):
     assert path.name.startswith(report['recordingID']+'-') and path.suffix == '.mp4', 'Native recording identity mismatch'
     streams = {s['codec_type']: s for s in data['streams']}
     rate = int(streams['audio']['sample_rate'])
-    frames = [{'media_type': p['codec_type'], 'best_effort_timestamp_time': p['pts_time'],
-               'nb_samples': round(float(p['duration_time'])*rate)} for p in data['packets']]
+    frames, pending_skip = [], 0
+    for packet in data['packets']:
+        if packet['codec_type'] != 'audio':
+            frames.append({'media_type': packet['codec_type'], 'best_effort_timestamp_time': packet['pts_time']})
+            continue
+        samples = round(float(packet['duration_time'])*rate)
+        assert samples > 0, 'Invalid encoded audio duration'
+        discard = 0
+        # AV_PKT_DATA_SKIP_SAMPLES describes codec priming/padding, not lost
+        # playable audio. Priming can span several AAC packets (2,112 samples
+        # on the phone); retain all other timestamp gaps and count checks.
+        for side in packet.get('side_data_list', []):
+            if side.get('side_data_type') != 'Skip Samples': continue
+            skip, tail = side.get('skip_samples', 0), side.get('discard_padding', 0)
+            assert type(skip) is int and type(tail) is int and skip >= 0 and tail >= 0, 'Invalid audio padding metadata'
+            pending_skip += skip
+            discard += tail
+        skipped = min(samples, pending_skip)
+        pending_skip -= skipped
+        assert discard <= samples-skipped, 'Audio padding exceeds its packet'
+        kept = samples-skipped-discard
+        if kept:
+            frames.append({'media_type': 'audio',
+                           'best_effort_timestamp_time': float(packet['pts_time'])+skipped/rate,
+                           'nb_samples': kept})
+    assert pending_skip == 0, 'Audio priming exceeds available packets'
     assert sum(f['media_type'] == 'video' for f in frames) == report['videoFrames'], 'Native decoded video count differs from packets'
     assert abs(sum(f['nb_samples'] for f in frames if f['media_type'] == 'audio')-report['audioSamples']) <= 1024, 'Native decoded audio count differs from packets'
     return {**data, 'frames': frames}

@@ -1303,13 +1303,21 @@ final class PhysicalStreamingTests: XCTestCase {
         let id = String(button.identifier.dropFirst("recordings.export.".count))
         try require(UUID(uuidString: id)?.uuidString == id, "Completed recording identity is invalid.")
         completedRecordingID = id
+        // Entering Recordings starts another integrity scan, including any
+        // historical archives restored to a replacement phone. The cached
+        // completed row can exist while that scan still disables export.
+        try wait("Fresh recording export stayed disabled after the saved archive scan.", seconds: 90) {
+            let export = app.buttons["recordings.export.\(id)"]
+            return export.exists && export.isEnabled
+        }
         try tap(button, in: app)
         try verifyArchivePlayback(app, exportTimeout: 120)
         try tap(app.buttons["recordings.closePlayer"], in: app)
         app.terminate(); app.launch()
         try selectTab("Recordings", app)
         try wait("Completed status did not survive relaunch.", seconds: 90) {
-            app.buttons["recordings.export.\(id)"].isEnabled && !app.buttons["recordings.recover.\(id)"].exists
+            let export = app.buttons["recordings.export.\(id)"]
+            return export.exists && export.isEnabled && !app.buttons["recordings.recover.\(id)"].exists
         }
         evidence(app, phase: "completed-after-relaunch", screenshot: true)
         #endif
@@ -1851,6 +1859,12 @@ final class PhysicalStreamingTests: XCTestCase {
         // Preserve the actual folder spelling; collection must not select an
         // earlier recording or infer identity from a timestamp or export order.
         completedRecordingID = recordingID
+        if physicalHour {
+            try wait("Combined export stayed disabled after the saved archive scan.", seconds: 90) {
+                let export = app.buttons[exportIdentifier]
+                return export.exists && export.isEnabled
+            }
+        }
         try tap(app.buttons[exportIdentifier], in: app)
         try wait("The new recording could not be exported to MP4.", seconds: physicalHour ? 1500 : quality2160 ? 180 : 35) {
             app.staticTexts["recordings.exportReady"].exists
@@ -1864,7 +1878,8 @@ final class PhysicalStreamingTests: XCTestCase {
             app.terminate(); app.launch()
             try selectTab("Recordings", app)
             try wait("Combined recording did not remain completed after relaunch.", seconds: 90) {
-                app.buttons["recordings.export.\(recordingID)"].isEnabled && !app.buttons["recordings.recover.\(recordingID)"].exists
+                let export = app.buttons["recordings.export.\(recordingID)"]
+                return export.exists && export.isEnabled && !app.buttons["recordings.recover.\(recordingID)"].exists
             }
             evidence(app, phase: "completed-after-relaunch", screenshot: true)
         }

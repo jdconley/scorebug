@@ -858,7 +858,7 @@ async function collectPhysicalQualification({ artifact, labArtifact, options, ru
         'representative motion and fresh content',
         'visible score phases',
         'perceptual A/V synchronization',
-        'clear case, USB charging and intended LAN route',
+        'confirmed phone case configuration, USB charging and intended LAN route',
       ];
     }
   } catch (error) {

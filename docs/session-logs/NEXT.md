@@ -16,7 +16,7 @@ Preserve originals, recordings and unrelated simulators. The
 ## Current readiness and next work
 
 Follow the [focused remediation plan](../superpowers/plans/2026-09-30-sustained-4k-recording-1080-streaming.md).
-Target: new iPhone18Pro (iOS27.0.1), USB charging and normal case (confirm current case), home LAN/software proxy;
+Target: new iPhone18Pro (iOS27.0.1), USB charging and no case (confirmed by user), home LAN/software proxy;
 progressive startup followed by60continuous minutes of actual1080p30/6Mbps input
 while recording clean4K30/audio, then successful stop/export/playback/relaunch.
 Implementation checkpoint: saved phone hour recovery/export/playback/relaunch passes;
@@ -37,17 +37,21 @@ Xcode `/Applications/Xcode.app/Contents/Developer`27.0/SDK27.0 builds current ap
 Developer Mode is enabled, DDI usable. User signed in; selected-device Xcode27
 build now succeeds and both app/runner profiles include the new UDID with team
 B222J9J7B8. Stale cached Watch profile reference was cleared using this project's
-Xcode clean only. Current blocker: Developer App Certificate is not trusted on the
-new phone. Current signed app and runner are installed; `physical-recovery-C6gI2y` workflow65 exits before test initialization.
-Pending question asks user to trust General → VPN & Device Management → Developer
-App, follow restart prompts and unlock. After readiness, retry only archive-stop;
-watch for first-session automation/passcode prompt. No capture/lab is active.
-Representative motion/TV sound and current case question is pending for combined
-capture; do not start combined without that reply. Old hour remains on old phone/Mac.
-Mac77GiB free; no task media or unrelated cleanup. SDK/toolchain forwarding fix
-committed f15fb11; unchanged simulator/Watch passes reused.
+Xcode clean only. Phone verification gate recovered after user restart/unlock and developer-service
+reconnection. Actual app launch succeeds (`post-restart-logged-launch.json`). No
+certificate changes, cellular test or security bypass. Exact attestation-recovery
+mechanism is unproven; focused observations preserved. Console streaming paused.
+Fresh short4K/audio workflow passes on new phone: `physical-recovery-6GJcoi`,
+joined0, exact38C4425C recording native full decode/export/playback/relaunch.
+Transferred exact-file `short-saved-media-aac/result.json`: all7gates pass,
+2884Kframes/9.6s,460736audio samples, ends1.333ms. Two earlier failed checks
+exposed restored-history scan-readiness races in automation; bounded wait and
+existence guards corrected, originals preserved. Validator now accounts for
+explicit AAC Skip Samples (2112sample priming);5focused Python tests pass.
+User confirms moving volleyball/TV audio ready, USB connected, no case.
+No live job; next one600-second combined trace, then attributed diagnosis.
 See [new-phone session](2026-10-08-new-phone-setup.md).
-Next: short fresh Stop, then an instrumented combined600-second trace for the
+Next: an instrumented combined600-second trace for the
 remaining receiver-proof cause and measured phone thermal workload. Cap attribution
 and the qualification harness are implemented; physical resource/collection checks
 remain open. After an attributed fix,30-minute checkpoint then
@@ -59,7 +63,7 @@ Hour capture finished; no live jobs. See [hour result](2026-09-30-hour-stream-se
 Clean4K/audio archive recovered on Mac:60m26s,108796decodedframes, continuous
 encoded A/V. Both overlaid outputs fully decode, rolling5s minimum29fps; seven
 short video gaps, audio continuous. Actual1080 input lasted14m20s total; sustained
-1080 and fresh physical Stop remain failed/unqualified; saved phone recovery/export passes.
+1080 and old-phone fresh physical Stop remains unqualified; new-phone short Stop and saved phone recovery/export pass.
 
 Phone exited during stop/finalization; exact original recording
 33D2FF99-7918-42EA-8D41-9A5C076B2011 preserved on phone and copied to
@@ -69,8 +73,8 @@ completion status or manually concatenate segments.
 
 Fixed archive verification/copy buffer retention: isolated real-hour recovery
 RSS13.8GB→35MB.20focused archive-store tests pass; signed iPhone build passes and
-updated app installed. Saved phone native recovery/export is now confirmed; fresh Stop remains open.
-Next, run only the short fresh Stop check on the new phone after setup/readiness; do not start another hour until its unresolved questions warrant it.
+updated app installed. Saved phone native recovery/export and new-phone short Stop are now confirmed; long combined Stop remains open.
+Next, run one600-second combined trace on the new phone; do not start another hour until its unresolved questions warrant it.
 
 Adaptive causes: initial receiver-proof invalidation resets1080→240; single
 proxy timestamp-cap omission/151frames classified as worker pressure drops1080→720;

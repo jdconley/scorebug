@@ -10,7 +10,7 @@
 
 ## Target configuration and acceptance
 
-Use the iPhone 18 Pro with USB charging, its normal case (confirm the current case before thermal comparisons), a lit moving volleyball scene, home LAN and this Mac's software proxy. Record 3840×2160 at 30 fps with the existing H.264 30 Mbps archive profile and audio; stream through the normal ladder to 1920×1080 at 30 fps and 6 Mbps with audio. Recording quality and streaming ceiling are independent settings. Log actual connection, battery and charging state; verify that media takes the intended LAN route rather than an unintended USB route.
+Use the iPhone 18 Pro with USB charging, no case (the user’s confirmed current configuration), a lit moving volleyball scene, home LAN and this Mac's software proxy. Record 3840×2160 at 30 fps with the existing H.264 30 Mbps archive profile and audio; stream through the normal ladder to 1920×1080 at 30 fps and 6 Mbps with audio. Recording quality and streaming ceiling are independent settings. Log actual connection, battery and charging state; verify that media takes the intended LAN route rather than an unintended USB route.
 
 The final acceptance capture includes normal minimum-quality startup, ramp and trial confirmation, followed by **60 continuous minutes of confirmed actual 1080p input**. Record 4K throughout, including startup and a short continuation after streaming stops. The proxy scaling a low-resolution input to a 1080p output does not satisfy this goal.
 
@@ -27,16 +27,16 @@ Case-off and battery-powered comparisons can identify heat contributors; they do
 
 ## Evidence and unresolved questions
 
-The previous iPhone16Pro [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. New phone trust/pairing, Developer Mode and DDI are ready; Conley device-specific provisioning is complete; the phone must trust the developer certificate before testing. Xcode27 build passes. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
+The previous iPhone16Pro [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. New phone trust/pairing, Developer Mode and DDI are ready; Conley device-specific provisioning is complete; phone developer verification recovered after restart/unlock and reconnection; actual app launch and short fresh4K/audio Stop/export/playback/relaunch pass. Xcode27 build passes. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
 
 | Issue | Established evidence | Question to resolve |
 | --- | --- | --- |
-| Stop/finalization exit | Archive verification retained autoreleased buffers; same-hour Mac recovery used about 13.8 GB before the fix and 35 MB afterward. Fix is installed. | Saved phone recovery/export/playback/relaunch passes; does a fresh Stop complete? Exact OS termination reason was not captured; memory pressure is strongly implicated, not confirmed jetsam. |
+| Stop/finalization exit | Archive verification retained autoreleased buffers; same-hour Mac recovery used about 13.8 GB before the fix and 35 MB afterward. Fix is installed. | Saved phone recovery/export/playback/relaunch and new-phone short Stop pass; does long combined Stop complete? Exact OS termination reason was not captured; memory pressure is strongly implicated, not confirmed jetsam. |
 | First 1080p reset | Receiver proof invalidated; backend publication/pipeline stayed unchanged. | Which local freshness, packet-validation or authority event caused invalidation? Was proof actually stale, or did local handling lose valid proof? |
 | Later 1080p decrease | One proxy omission in a 151-frame window was classified as elevated worker pressure; filter/processing were about 4.35/7.17 ms and transport nominal. | Jitter-induced cap loss is reproduced and corrected; attributed cap omissions are separated from overload. The original single omission is not individually replayable from retained aggregates. |
 | Final low quality | Fresh serious phone temperature forced 720→360→240. | Which capture, archive, live encoder, candidate-probe, UI or charging workload drove heat? Charging and case effects have not been isolated. |
 
-The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B2011`, also copied to `artifacts/qa/physical-hour-preparation-20260930/phone-original-recording`. Mac and phone native recovery/export pass; fresh physical Stop remains open. Actual 1080p lasted about 14m20s total. Successful encoded cadence does not qualify sustained 1080p or fresh motion.
+The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B2011`, also copied to `artifacts/qa/physical-hour-preparation-20260930/phone-original-recording`. Mac and phone native recovery/export pass; fresh short Stop passes on the new phone; combined Stop remains open. Actual 1080p lasted about 14m20s total. Successful encoded cadence does not qualify sustained 1080p or fresh motion.
 
 ## 1. Close the stop/recovery crash first
 
@@ -46,7 +46,7 @@ The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B
 - [x] Add a narrowly selected physical saved-recording recovery/export workflow. It must accept this interrupted/recoverable recording without manufacturing `completedAt`; the existing completed-only export diagnostic cannot be reused unchanged. Preflight the exporter's free-space requirement, export to a new destination and preserve original segments.
 - [x] Verify saved phone recovery/export with complete native4K/audio decode, playback and relaunch; interrupted status and originals remain intact.
 - [ ] Measure device export/Stop memory and capture an OS termination report if another exit occurs. The attempted profiler attach after saved export did not collect a usable trace.
-- [ ] Make one short new 4K/audio recording and stop it normally. Assert completed status is written only after successful durable finalization, export succeeds, and the app stays responsive/alive through relaunch.
+- [x] Make one short new 4K/audio recording and stop it normally. Assert completed status is written only after successful durable finalization, export succeeds, and the app stays responsive/alive through relaunch.
 - [ ] If either operation fails, reproduce its exact phase with the saved recording before another capture. Fix retained buffers, actor/main-thread blocking or finalization races only where evidence identifies them. Add the affected lifecycle regression: concurrent/repeated Stop, failure during finalization, or interrupted export, as applicable. Set a device memory budget from measured baseline/headroom; the isolated store's 32 MiB regression allowance is not a whole-app budget.
 - [ ] Review the affected diff, run its focused regression once, and commit the crash/lifecycle checkpoint. Do not declare the crash fixed on device until both saved recovery and fresh Stop pass.
 
