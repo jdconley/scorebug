@@ -40,3 +40,13 @@ First archive-stop attempt `physical-recovery-lWplvW` joined1 before camera/test
 Direct Xcode27 device build `enabled-signing-build.log` also exits65: No Account for Team B222J9J7B8; profiles omit new UDID. This confirms a separate signing account blocker. Refreshed Xcode's manual profiles through the account UI; UI shows Conley Chaos LLC/Admin and two provisioned devices. Corrected harness retry `physical-recovery-QTioXe` records SDK27.0, but still joins1/build65 with the same account/profile error. Neither attempt starts capture.
 
 Read-only team metadata confirms B222J9J7B8 is Conley Chaos LLC; do not substitute another developer team. Xcode account sign-in sheet is open, and user was asked to complete Conley account authentication. No password or authentication token inspected/entered. After credentials are usable, run the selected-device build to register/provision the new phone, verify both embedded profiles contain its UDID, then only the short archive-stop test. Expect first-session phone automation prompt. No capture/lab/test process is active now; all build/test attempts joined. Preserve these failures.
+
+## Account authenticated; device profiles ready; certificate trust pending
+
+User confirmed signing in. Archive-stop `physical-recovery-FD2Twd` no longer reports No Account, but build65 stops on a stale cached missing Watch profile path. Cleaned only this project's `ios/DerivedData/PhysicalPhone` build output with Xcode clean (`clean-signing-cache.log`,0); no recordings, original media, results or unrelated simulator data removed.
+
+`physical-recovery-C6gI2y` then builds successfully with Xcode27. App and runner embedded profiles both verify teamB222J9J7B8 and the new UDID. Workflow65 exits before test initialization: Developer App Certificate is not trusted. iOS explicitly directs General → VPN & Device Management → Developer App. User has been asked to trust that certificate, follow any restart prompt and unlock. No fresh camera recording started; runner joined1. Retain both failed onboarding artifacts unchanged.
+
+The next combined test setup question is also pending: moving volleyball/TV sound, USB charging, and which case is on the replacement phone. Short Stop needs only certificate/automation readiness; combined capture must wait for representative scene readiness. No broad simulator, model or Watch test rerun.
+
+Read-only app inventory after the failed runner launch showed only the UI runner installed. Installed the current signed `live.scorebug.app` directly using devicectl (`install-app.log`,0), then verified its installed bundle/version. Both app and runner are now present; no launch or camera capture attempted while certificate trust is pending.

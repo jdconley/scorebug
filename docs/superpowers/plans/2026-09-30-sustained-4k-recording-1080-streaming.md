@@ -27,7 +27,7 @@ Case-off and battery-powered comparisons can identify heat contributors; they do
 
 ## Evidence and unresolved questions
 
-The previous iPhone16Pro [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. New phone trust/pairing, Developer Mode and DDI are ready; Conley account authentication and device-specific provisioning must finish before testing. Xcode27 build passes. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
+The previous iPhone16Pro [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. New phone trust/pairing, Developer Mode and DDI are ready; Conley device-specific provisioning is complete; the phone must trust the developer certificate before testing. Xcode27 build passes. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
 
 | Issue | Established evidence | Question to resolve |
 | --- | --- | --- |

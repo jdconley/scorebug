@@ -34,17 +34,18 @@ new combined collection/hold gates have not yet run on hardware.
 
 Current device: `00008160-000C5CAE20434036`, iPhone18Pro, wired/trusted/paired.
 Xcode `/Applications/Xcode.app/Contents/Developer`27.0/SDK27.0 builds current app/tests.
-Developer Mode is enabled, DDI usable and phone unlocked. No capture/test has
-started. Current blocker: Xcode27 device build reports No Account for TeamB222J9J7B8;
-app/runner profiles omit the new UDID. Conley team is visible in Xcode UI but profile
-refresh did not resolve CLI authentication. The account sign-in sheet is open for
-the user; pending async question asks them to finish Conley authentication.
-Harness now selects actual SDK and explicitly forwards selected Xcode to shared
-commands;3focused environment/process checks pass. Legacy simulator defaults remain.
-After auth, verify selected-device registration/signing profiles, then run short
-archive-stop; do not repeat failed builds without new account-state evidence.
-Old hour is retained on old phone/Mac; no recovery attempt on this new phone.
-Mac space is now78GiB, sufficient headroom for staged tests; no task cleanup done.
+Developer Mode is enabled, DDI usable. User signed in; selected-device Xcode27
+build now succeeds and both app/runner profiles include the new UDID with team
+B222J9J7B8. Stale cached Watch profile reference was cleared using this project's
+Xcode clean only. Current blocker: Developer App Certificate is not trusted on the
+new phone. Current signed app and runner are installed; `physical-recovery-C6gI2y` workflow65 exits before test initialization.
+Pending question asks user to trust General → VPN & Device Management → Developer
+App, follow restart prompts and unlock. After readiness, retry only archive-stop;
+watch for first-session automation/passcode prompt. No capture/lab is active.
+Representative motion/TV sound and current case question is pending for combined
+capture; do not start combined without that reply. Old hour remains on old phone/Mac.
+Mac77GiB free; no task media or unrelated cleanup. SDK/toolchain forwarding fix
+committed f15fb11; unchanged simulator/Watch passes reused.
 See [new-phone session](2026-10-08-new-phone-setup.md).
 Next: short fresh Stop, then an instrumented combined600-second trace for the
 remaining receiver-proof cause and measured phone thermal workload. Cap attribution

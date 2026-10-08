@@ -1,6 +1,6 @@
 # Session logs
 
-- [October8 new phone setup](2026-10-08-new-phone-setup.md) — iPhone18Pro trust/pairing/Developer Mode/DDI ready; Xcode27 build and selected-toolchain harness checks pass; Conley signing authentication and fresh Stop pending.
+- [October8 new phone setup](2026-10-08-new-phone-setup.md) — iPhone18Pro trust/pairing/Developer Mode/DDI ready; Xcode27 build and selected-toolchain harness checks pass; Conley signing/profiles ready; phone developer-certificate trust and fresh Stop pending.
 
 - [September30 sustained4K/1080 implementation](2026-09-30-sustained-4k1080-implementation.md) — phone saved-hour recovery passes; cap jitter/pressure fix, cause/resource diagnostics, combined harness and short simulator1080 media pass; fresh Stop and thermal qualification remain open.
 
