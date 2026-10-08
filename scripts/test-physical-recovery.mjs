@@ -376,6 +376,18 @@ async function main() {
       false,
       'Unlock the phone before starting the camera recovery test',
     );
+    // Explicitly install the current debug dylib as well as the launch stub.
+    // Reinstalling the bundle preserves this device's recording/data container.
+    await run(
+      'xcrun',
+      [
+        'devicectl', 'device', 'install', 'app', '--device', options.device,
+        join(products, 'Debug-iphoneos/Scorebug.app'), '--timeout', '60',
+        '--json-output', join(artifact, 'install-current-app.json'),
+      ],
+      'install-current-app',
+      90000,
+    );
     const inputs = await readPhysicalRecoveryInputs(
       products,
       [

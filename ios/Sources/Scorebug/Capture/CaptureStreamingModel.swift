@@ -108,6 +108,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var appliedPublishingSettings: QualityController.Settings?
     #if DEBUG
     var nativeFixedUHDForDiagnostics = false
+    private var controlFailureAuditCount = 0
     var nativeUHDTransitionForDiagnostics = false
     var nativeOwnedUHDTransitionForDiagnostics = false
     var nativeWarmUHDCandidateForDiagnostics = false
@@ -558,6 +559,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         localState = .starting; message = nil; clearWorker()
         let task = Task { [self] in
             defer { if actionID == attempt { action = nil; actionID = nil; busy = false } }
+            var startupStage = "restore"
             do {
                 await restore()
                 try check(context, attempt)
@@ -577,8 +579,10 @@ struct PublishingClockObservation: Equatable, Sendable {
                 }
                 try reserveStopOwnership(context.id)
                 queueReport(context, status: .recording)
+                startupStage = "recordingReport"
                 try await flushReports()
                 try check(context, attempt)
+                startupStage = "broadcastRecovery"
                 var state = try await coordinator.recover(activeRecordingId: context.id)
                 try check(context, attempt)
                 commandState = state
@@ -593,6 +597,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 let needsStart = state.snapshot?.broadcast.desired != .running || state.snapshot?.broadcast.selection != selection
                 var allowsUHD = false
                 if needsStart || context.profile.isUHDRecording {
+                    startupStage = "workerCapabilities"
                     let checkStarted = ContinuousClock.now
                     let capabilities = try await clientFactory(ScoringEndpoint(setup.endpoint)).workerCapabilities(workerId: setup.workerId, credential: credential)
                     try check(context, attempt)
@@ -603,6 +608,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                         requestDuration: checkStarted.duration(to: .now))
                 }
                 if needsStart {
+                    startupStage = "broadcastStart"
                     state = try await coordinator.submit(.start(selection: selection), activeRecordingId: context.id)
                     try check(context, attempt)
                     commandState = state
@@ -610,6 +616,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 }
                 guard let broadcast = state.snapshot?.broadcast, broadcast.desired == .running, broadcast.selection == selection else { throw CaptureControlError.selectionChanged }
                 let client = try clientForSetup()
+                startupStage = "publishAccess"
                 let access = try await client.publishAccess(recordingId: context.id, generation: broadcast.generation, publishingAttemptId: attempt, credential: credential)
                 try check(context, attempt)
                 // Measurement starts after the earlier control-plane requests, but
@@ -622,6 +629,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 videoObservation = observations?.snapshot
                 let session: PublishingSession
                 let publisher: any MediaPublisher
+                startupStage = "publisherConstruction"
                 do {
                     #if DEBUG
                     if nativeFixedUHDForDiagnostics {
@@ -657,6 +665,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 #endif
                 publishing = (context, session, broadcast.generation, attempt, observations, publisher as? any PublishingProbeObserving)
                 guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
+                startupStage = "publisherStart"
                 try await session.start()
                 try check(context, attempt)
                 #if DEBUG
@@ -760,6 +769,9 @@ struct PublishingClockObservation: Equatable, Sendable {
                 shouldStopOwnedBroadcast = false
                 message = "Sending camera media. Worker output is reported separately."
             } catch {
+                #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+                Self.persistStartupFailure(error, stage: startupStage, attemptID: attempt)
+                #endif
                 if epoch == attempt {
                     detachPublisher(); localState = .failed
                     if let reconnecting, nativeReconnect?.id == reconnecting.id,
@@ -1531,6 +1543,12 @@ struct PublishingClockObservation: Equatable, Sendable {
     private func fail(_ error: Error) {
         candidateAuthority?.revoke()
         if error is CancellationError || error as? CaptureControlError == .recordingStopped { return }
+        #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+        if controlFailureAuditCount < 16 {
+            controlFailureAuditCount += 1
+            Self.persistStartupFailure(error, stage: "controlFailure", attemptID: UUID())
+        }
+        #endif
         if localState == .starting { localState = .failed }
         if error as? CaptureControlError == .storage || error as? BroadcastCoordinatorError == .storageFailure {
             needsStorageRetry = true
@@ -1547,6 +1565,30 @@ struct PublishingClockObservation: Equatable, Sendable {
             message = "Streaming control failed. Check the server connection and retry. Local recording is independent."
         }
     }
+
+    #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+    private static func persistStartupFailure(_ error: Error, stage: String, attemptID: UUID) {
+        let scalar = error as NSError
+        var record: [String: Any] = ["formatVersion": 1, "attemptID": attemptID.uuidString.lowercased(),
+            "stage": stage, "uptimeSeconds": ProcessInfo.processInfo.systemUptime,
+            "errorType": String(reflecting: type(of: error)), "domain": scalar.domain, "code": scalar.code]
+        if case let MatchClientError.http(status, code) = error {
+            record["httpStatus"] = status
+            if let code, code.range(of: "^[a-zA-Z0-9_]{1,64}$", options: .regularExpression) != nil {
+                record["httpErrorCode"] = code
+            }
+        }
+        if let underlying = scalar.userInfo[NSUnderlyingErrorKey] as? NSError {
+            record["underlyingDomain"] = underlying.domain; record["underlyingCode"] = underlying.code
+        }
+        // No localized text, userInfo, server response, URL or credential is retained.
+        guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) else { return }
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Scorebug/QA", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: directory.appendingPathComponent("streaming-failure-\(attemptID.uuidString.lowercased()).json"), options: .withoutOverwriting)
+    }
+    #endif
     private func validIdentifier(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 128 && value.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }
     }

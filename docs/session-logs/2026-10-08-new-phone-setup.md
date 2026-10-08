@@ -88,3 +88,79 @@ Third affected-only attempt `physical-recovery-6GJcoi` joins0: workflow passes r
 Additional exact-file packet correlation initially fails because the validator includes2,112declared AAC priming samples:452packets contain462,848samples, while AVFoundation returns460,736playable samples, matching stream duration460,736ticks. First packet explicitly declares Skip Samples=2112. Added two focused regressions for multi-packet priming and declared tail padding; both fail before the fix. Validator now applies only explicit FFmpeg Skip Samples metadata, carries start priming across packets and preserves other gaps/sample-count checks. Source: https://ffmpeg.org/doxygen/7.0/group__lavc__packet__side__data.html. Five focused Python tests pass, including omitted packets and a timestamp-gap control. Saved probe failure directory retained; corrected exact-file `short-saved-media-aac/result.json` passes all7gates:3840×2160 H.264/AAC,288frames, continuous audio, normal30fps cadence, A/V ends1.333ms. No second full native decode needed.
 
 User confirms phone pointed at moving volleyball/TV sound, USB connected, and the replacement phone has no case. This is the intended new-phone qualification configuration; earlier iPhone16Pro clear-case baseline is separate. Next: one600-second combined trace after current checkpoint commit, then diagnose its first failing gate before longer tests.
+
+## Combined setup blocked by missing relay image
+
+Checkpoint committed8d7e138. First600-second combined setup `physical-recovery-i1M67t` joins1 before UI workflow/capture: selected phone build passes, but Docker has no local `scorebug/ingest:drain-v1` image. Docker Desktop context is desktop-linux/server29.2.1; image inventory is empty. Lab `device-lab-ICC4GN` startup cannot pull the private/local tag; cleanupFailures empty. Attachment collection64 is secondary because no workflow result exists. No recording/streaming started.
+
+Rebuilding the documented maintained relay via `docker compose -f docker-compose.dev.yml build ingest`, session2114, log `new-phone-20261008/rebuild-ingest.log`. Uses pinned upstream/source checksums and cumulative patches; no historical image overwritten because tag absent. LAN remains192.168.1.130. Next: retry same combined setup after image build completes; no app rebuild/unchanged tests beyond harness incremental build.
+
+
+## Relay rebuilt; password-saving offer blocks setup before capture
+
+Relay build session2114 joins0; maintained `scorebug/ingest:drain-v1` is available. Combined retry `physical-recovery-1MwykU`/session14447 joins1 after backend readiness but before any capture. After native Score joins HOME/AWAY and takes control, Film Setup is blocked by the observed 1Password Save Password? sheet with Not Now/Save actions. Screenshot `new-phone-20261008/combined-setup-failure.png` proves capture off. Lab `device-lab-1N9IFX` cleans up without failures; no live jobs or capture remain. This is setup interference, not a failed 1080p hold.
+
+Added a physical-test-only helper to decline precisely the observed password-save offer: exact title/body plus Save and hittable Not Now controls. Checks app and SpringBoard accessibility surfaces, never accepts saving or enters credentials. Called before reveal scrolling, avoiding attempts to scroll behind this sheet. Existing failed combined workflow supplies reproduction; next affected-only run verifies the change. User asked to dismiss the current offer manually as well. User reconfirmed no case; USB charging/moving volleyball/audio remain the qualification setup.
+
+
+Combined retry `physical-recovery-gPzChR`/session30554 joins1 before capture; cleanupFailures empty. No password-save dismissal attachment was emitted, so that helper is compiled but not yet exercised. Film connection and controller preflight completed. Failure screenshot `new-phone-20261008/combined-second-setup-failure.png` shows Checking saved recordings and disabled recording/quality controls; the 4K selector was unavailable. Added the same bounded90-second scan-ready wait before combined 4K selection. No integrity check removed or archive deleted. Next affected-only retry verifies this known readiness race, not an adaptive policy change.
+
+Scan-ready attempt `physical-recovery-wAIojJ`/session71044 joins1 before UI: Docker relay binding127.0.0.1:56587 fails with address already in use. Subsequent read-only lsof finds no listener; cleanupFailures empty. No capture or app workflow ran. Retrying once with newly allocated ports; no unrelated process killed.
+
+Fresh-port retry `physical-recovery-QXrIHg`/session53051 joins1 before capture; cleanup[]. Film start is reported enabled transiently after app activation, but screenshot still shows integrity scan and disabled quality selector. XCTest logs also report an invalid activation point for the 4K segment. Require the explicit scan text to disappear and recording readiness to remain stable for1second, then tap the bounded observed selector center (existing physical tab pattern), and await selected4K/audio description. Preserve all scans/media; no production change.
+
+Retry `physical-recovery-oUR0C0`/session98050 starts successfully: selected4K/audio and recording-requested milestone. Stable scan disappearance/observed-center correction gets past the previously failed setup. Combined ramp/hold/media gates pending.
+
+Combined `physical-recovery-oUR0C0` joins1: actual4K recording advances34.67s, streaming never reaches local publishing, failure Camera did not publish to the LAN worker. Worker transitions waiting_source→idle and reports reporting_unavailable at22:46:57Z. Uplink has six packets outside diagnostic capture window, no established receiver session. Failure cleanup stops recording and joins lab without failures. No ramp/hold samples collected. Existing harness discarded relay logs and API runtime errors; added private per-lab control-plane.log and relay.log before cleanup to locate this startup failure on the next focused attempt. Node syntax checks pass; no production policy change.
+
+Instrumented backend retry `physical-recovery-7bb9KA`/session81234 joins1 at the same Camera did not publish gate; cleanup[]. API remains up, only retained relay error path configuration not found (provisioning GET404 can be expected), no worker-report-unavailable warning in this retry. Therefore backend logs do not prove a server outage. Added debug physical startup-stage/error-type/domain/code diagnostic, with bounded server code only and no localized text/URLs/credentials/bodies, to identify the exact failing phone operation. Recording and transport behavior unchanged. Next focused retry collects the scalar.
+
+Startup-stage attempt `physical-recovery-NTQziR`/34953 and common-error attempt `physical-recovery-C193sP`/3048 both join1 at prepublication gate; cleanup[]. Neither newly instrumented JSON appears in device QA inventory. Built Scorebug.debug.dylib contains new controlFailure/streaming-failure strings, Debug/iOS flags correct and xctestrun target path correct. Explicit `devicectl device install app` of current build succeeds (session54011 joined0) without uninstalling/purging data. Stale test target install is a hypothesis pending the next controlled retry; do not claim it as root cause yet.
+
+
+## Startup localized to Docker LAN UDP path
+
+Explicit-install retry `physical-recovery-0NbnOK`/session3232 joins1, cleanup[]. Newly added diagnostics now appear: publisherStart raises PublishingSessionError.startFailed; earlier control requests time out (NSURLErrorDomain/-1001). Actual4K recordingEB85D657 runs~36s, thermal nominal throughout. Native UDP forwarding snapshot receives/forwards3handshakes/276bytes, zero reverse packets and no injected/overflow/oversize loss. No receiver session or media-quality downgrade exists in this attempt.
+
+Isolated Mac-only relay probe with the maintained image reproduces LAN-bound Docker UDP failure: FFmpeg caller to192.168.1.130:60995 fails after3s; debug relay sees no connection. Rebinding the same relay/image/config to127.0.0.1:60995 permits the same FFmpeg caller (exit0; relay opened/EOF). Temporary owned probe container removed. Evidence: `relay-transport-lan.log`, `relay-transport-loopback.log`, `relay-transport-loopback-relay.log`. This local comparison proves the failing path on this machine; no claim about Docker-wide cause or phone networking.
+
+Physical recovery/native-worker lane now binds the Docker relay to loopback, advertises loopback to the local worker, and forwards from the existing LAN Node proxy to loopback. The phone still receives the LAN proxy endpoint. Other device-lab lanes/container workers unchanged. Physical harness explicitly installs the current built app before running tests, preserving its data container; explicit reinstall was required to obtain current diagnostics, exact XCTest caching mechanism unproven. Node syntax checks and diff check pass. Next single combined retry verifies actual stream/ramp and hold; no adaptive safety guard changed.
+
+Loopback retry `physical-recovery-UXBE2L`/17450 joins1 before capture: Streaming setup is correctly locked pending reconciliation with the previous temporary backend (failure screenshot saved-connection-block.png). Restored prior owned API from `device-lab-1S4bCE` SQLite and original phone installation credential at its saved endpoint, session23504. No relay/camera started, no Keychain clearing or media deletion. New combined retry proceeds while this API permits ordinary pending-stop/report reconciliation; stop restored API after the new connection is established.
+
+Reconciled retry `physical-recovery-psymmJ`/33476 reaches recording-requested, local-publishing-observed and initial-encoder-ack. Loopback correction removes the previously reproduced startup failure. Prior API restoration session23504 stopped after this fresh Film connection; preserves its SQLite state. Progressive ramp/hold/output evidence pending.
+
+
+## Native 1080 ramp passes; combined hold sampling boundary corrected
+
+Reconciled `physical-recovery-psymmJ`/33476 joins1, cleanup[]. Actual app publishes, worker produces output; normal360/720/1080 increases each acknowledge/probate/confirm. Native score changes run. Before any confirmed1080 hold starts, direct XCTUnwrap of recoverySample gets nil because the preceding proof read was inside the existing2-second throttle; this is a test boundary bug, not an observed downgrade. Cleanup completes stream Stop, archive continuation and recording Stop. Exact3E9CEA02-92F2-4A6A-ABA5-3879E108AE28 native full export passes (`nativeExport:true`); sustained hold remains failed/unqualified.
+
+Changed only initial combined hold sampling to await the first available sample with the existing bounded recoveryWait (15seconds), then immediately require its original sustains1080 proof. It does not wait for invalid proof to recover and changes no freshness/ownership/resource guard. Next affected-only600-second retry verifies this boundary and the hold. All preceding failed artifacts retained.
+
+Completed short native ramp resources from3E9CEA02:216.8s capture, thermal0/nominal throughout, maximum footprint108.3MiB, average0.413CPU cores, zero late/out-of-buffers/discontinuity/unknown capture drops. Camera pressure nominal during capture; initial/terminal unknown retained. Native full decode6468video frames and10349504audio samples. This is short-run evidence only. Corrected retry `physical-recovery-3CIIBa`/session38419 reaches capture/local publication/worker output; ramp/hold pending.
+
+Corrected `physical-recovery-3CIIBa` reaches confirmed1080-hold-started and first SCOREBUG_HOUR_PROGRESS seconds=0 quality=1080p30:6000000 after normal360/720/1080 acknowledgment/probation/confirmation. Initial throttled sampling boundary is now exercised successfully.600-second hold is running; final resource/geometry/native export/three-output media gates pending.
+
+`physical-recovery-3CIIBa` reports every30-second hold observation at1080p30:6000000 through570s, then confirmed1080-hold-complete/hour-hold-complete. Stream Stop and archive continuation finish, recording Stop requested. One live bounded resource snapshot shows active charging (batteryState2), thermal fair1, nominal camera pressure, footprint~134–141MiB. Final closed resource, geometry, native export and saved-media checks pending; no overall pass claim yet.
+
+
+## Laptop-move stopping checkpoint
+
+User requests a stopping point. `physical-recovery-3CIIBa`/38419 joins1 with
+workflowPassed:true, mediaQualified:false, nativeExport:true, cleanupFailures[].
+Native600-second1080p30/6Mbps hold, scoring, stream Stop, archive continuation,
+recording Stop, full native export/decode, playback and relaunch pass. Exact
+recording00D593CC-FED7-4B08-A13A-5771ADF72BAF/export remain preserved on phone.
+Labdevice-lab-kHStcT closes receiver/worker without shutdown failures; current
+Docker/process inventory confirms no owned capture/test services remain.
+
+Offline qualifier fails before geometry/resource/saved-MP4 qualification: it picks
+a pre-hold polling sample labeled confirmed1080-hold-started instead of the
+accepted milestone.sampleIndex. First read3983.135–3983.209; accepted baseline
+3985.230–3985.320. Preserve rejection evidence; fix index-range selection with a
+regression next session and reuse this capture, without weakening proof guards.
+No native MP4 transfer occurred yet; proxy/mock files and QA/xcresult are local.
+Closed resource trace reports charging throughout, thermal states0/1 only and
+maximum141.3MiB footprint. These observed scalars do not replace final resource
+qualification. Full saved-media and30/60-minute endurance remain pending.
+No new capture, transfer or extended debugging started after the stop request.

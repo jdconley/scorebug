@@ -27,16 +27,17 @@ Case-off and battery-powered comparisons can identify heat contributors; they do
 
 ## Evidence and unresolved questions
 
-The previous iPhone16Pro [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. New phone trust/pairing, Developer Mode and DDI are ready; Conley device-specific provisioning is complete; phone developer verification recovered after restart/unlock and reconnection; actual app launch and short fresh4K/audio Stop/export/playback/relaunch pass. Xcode27 build passes. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
+The previous iPhone16Pro [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. New-phone600-second native1080p hold and combined Stop/export/playback/relaunch pass; full offline saved-media qualification remains pending. New phone trust/pairing, Developer Mode and DDI are ready; Conley device-specific provisioning is complete; phone developer verification recovered after restart/unlock and reconnection; actual app launch and short fresh4K/audio Stop/export/playback/relaunch pass. Xcode27 build passes. Current implementation results are in the [new-phone session log](../../session-logs/2026-10-08-new-phone-setup.md).
 
 | Issue | Established evidence | Question to resolve |
 | --- | --- | --- |
-| Stop/finalization exit | Archive verification retained autoreleased buffers; same-hour Mac recovery used about 13.8 GB before the fix and 35 MB afterward. Fix is installed. | Saved phone recovery/export/playback/relaunch and new-phone short Stop pass; does long combined Stop complete? Exact OS termination reason was not captured; memory pressure is strongly implicated, not confirmed jetsam. |
+| New-phone stream startup | Handshakes reach the Mac forwarder but receive no Docker relay replies. Mac-only comparison fails on the LAN-bound relay and connects over loopback. Physical harness now installs the current app explicitly and routes its local relay through loopback. | Native startup/ramp/10-minute1080 hold pass. Fix offline milestone-index selection and qualify preserved media before longer tests. |
+| Stop/finalization exit | Archive verification retained autoreleased buffers; same-hour Mac recovery used about 13.8 GB before the fix and 35 MB afterward. Fix is installed. | Saved phone recovery/export/playback/relaunch, short Stop and new-phone10-minute combined Stop pass; verify30/60-minute Stop. Exact OS termination reason was not captured; memory pressure is strongly implicated, not confirmed jetsam. |
 | First 1080p reset | Receiver proof invalidated; backend publication/pipeline stayed unchanged. | Which local freshness, packet-validation or authority event caused invalidation? Was proof actually stale, or did local handling lose valid proof? |
 | Later 1080p decrease | One proxy omission in a 151-frame window was classified as elevated worker pressure; filter/processing were about 4.35/7.17 ms and transport nominal. | Jitter-induced cap loss is reproduced and corrected; attributed cap omissions are separated from overload. The original single omission is not individually replayable from retained aggregates. |
 | Final low quality | Fresh serious phone temperature forced 720→360→240. | Which capture, archive, live encoder, candidate-probe, UI or charging workload drove heat? Charging and case effects have not been isolated. |
 
-The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B2011`, also copied to `artifacts/qa/physical-hour-preparation-20260930/phone-original-recording`. Mac and phone native recovery/export pass; fresh short Stop passes on the new phone; combined Stop remains open. Actual 1080p lasted about 14m20s total. Successful encoded cadence does not qualify sustained 1080p or fresh motion.
+The clean hour recording is preserved under ID `33D2FF99-7918-42EA-8D41-9A5C076B2011`, also copied to `artifacts/qa/physical-hour-preparation-20260930/phone-original-recording`. Mac and phone native recovery/export pass; fresh short and10-minute combined Stop pass on the new phone; longer Stop remains open. Actual 1080p lasted about 14m20s total. Successful encoded cadence does not qualify sustained 1080p or fresh motion.
 
 ## 1. Close the stop/recovery crash first
 
@@ -96,7 +97,7 @@ Current instrumentation: camera drop reasons/pressure and bounded CPU, memory, b
 
 ## 6. Add a repeatable combined qualification lane
 
-Saved-export, short Stop and600/1800/3600-second combined modes are implemented and signed. One affected simulator1080 vertical and complete source-identity/A/V checks pass. Physical combined collection is implemented but awaits a device run; final motion, visible-score, sync and environment review remain separate gates.
+Saved-export, short Stop and600/1800/3600-second combined modes are implemented and signed. One affected simulator1080 vertical and complete source-identity/A/V checks pass. Physical600-second native workflow passes; offline sample-index correction and full saved-media qualification remain pending; final motion, visible-score, sync and environment review remain separate gates.
 
 **Files:** `scripts/test-physical-recovery.mjs`; `scripts/test/{physical-recovery,physical-startup-evidence}.test.mjs`; `ios/AppUITests/PhysicalStreamingTests.swift`; `scripts/{ordinary-geometry-evidence,media-sync,media-tools}.mjs`; `docs/device-testing.md`. Reuse the full-decode/gap accounting in `artifacts/qa/physical-hour-preparation-20260930/verify-hour-media.py`; promote reusable checks into tracked runner code rather than relying on that artifact path for future runs.
 

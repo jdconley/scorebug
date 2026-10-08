@@ -30,7 +30,7 @@ One affected simulator1080 vertical and all three full saved-media/source-ID che
 pass: `ordinary-native-nncHUb/media-source-validation/result.json`, actual1080 input
 1065frames/35.5s, archive7795/live7493consecutive IDs, gap-free audio, ends≤45ms.
 Saved-export, archive-stop and600/1800/3600-second combined modes are implemented;
-new combined collection/hold gates have not yet run on hardware.
+new-phone600-second native hold workflow passes; offline qualification remains pending.
 
 Current device: `00008160-000C5CAE20434036`, iPhone18Pro, wired/trusted/paired.
 Xcode `/Applications/Xcode.app/Contents/Developer`27.0/SDK27.0 builds current app/tests.
@@ -48,15 +48,32 @@ Transferred exact-file `short-saved-media-aac/result.json`: all7gates pass,
 exposed restored-history scan-readiness races in automation; bounded wait and
 existence guards corrected, originals preserved. Validator now accounts for
 explicit AAC Skip Samples (2112sample priming);5focused Python tests pass.
-User confirms moving volleyball/TV audio ready, USB connected, no case.
-No live job; next one600-second combined trace, then attributed diagnosis.
-See [new-phone session](2026-10-08-new-phone-setup.md).
-Next: an instrumented combined600-second trace for the
-remaining receiver-proof cause and measured phone thermal workload. Cap attribution
-and the qualification harness are implemented; physical resource/collection checks
-remain open. After an attributed fix,30-minute checkpoint then
-one final60-minute confirmed1080p hold. Keep real safety guards. No unchanged Watch
-suite or blind hour retries. Case-off/battery comparisons are diagnostic only.
+Paused at user request for laptop closure. **Capture and all owned test services are stopped.**
+Latest `physical-recovery-3CIIBa`/session38419 joined1 only because offline
+qualification failed; native workflowPassed is true, cleanupFailures empty.
+Lab `device-lab-kHStcT` has shutdown failures[]; Docker has no running containers.
+Normal360→720→1080 ramp and native scoring pass, followed by600seconds at
+1080p30/6Mbps with4K/audio recording. Stream Stop, archive continuation, recording
+Stop, native full export/decode, playback and relaunch all pass. Recording
+`00D593CC-FED7-4B08-A13A-5771ADF72BAF` and its export remain on the phone;
+proxy/mock MP4s and diagnostic evidence are preserved locally. Closed resource
+trace: charging throughout, thermal nominal/fair, maximum141.3MiB footprint.
+
+**Next: reuse this capture; do not rerun hardware for the validator failure.**
+`scripts/physical-qualification-evidence.mjs` selects all phase-labeled hold-start
+samples, including a pre-hold polling read, instead of honoring the accepted
+milestone sampleIndex. Add a focused regression and select the milestone-indexed
+hold range without weakening freshness/authority/loss guards. Requalify saved
+native proof, geometry and closed resources; when USB is available copy the exact
+native export and fully validate all three saved MP4s. Current mediaQualified is
+false because that early assertion prevented later gates and native-file transfer.
+Full saved-media qualification and30/60-minute endurance remain pending.
+
+Physical harness explicitly installs the current app and uses a loopback Docker
+relay behind the LAN Node proxy. Actual startup/ramp/600-second workflow verifies
+this local transport correction. Private bounded failure/API/relay logs remain.
+See [new-phone session](2026-10-08-new-phone-setup.md) for exact experiments.
+No unchanged Watch suite or blind hour retries. Keep real safety guards.
 
 Hour capture finished; no live jobs. See [hour result](2026-09-30-hour-stream-setup.md).
 `physical-hour-preparation-20260930/hour-acceptance.json` is the current result.
@@ -73,8 +90,8 @@ completion status or manually concatenate segments.
 
 Fixed archive verification/copy buffer retention: isolated real-hour recovery
 RSS13.8GB→35MB.20focused archive-store tests pass; signed iPhone build passes and
-updated app installed. Saved phone native recovery/export and new-phone short Stop are now confirmed; long combined Stop remains open.
-Next, run one600-second combined trace on the new phone; do not start another hour until its unresolved questions warrant it.
+updated app installed. Saved phone native recovery/export and new-phone short Stop are now confirmed; new-phone600-second combined Stop/export/playback/relaunch also pass.
+Next, complete offline qualification of that capture before a longer checkpoint.
 
 Adaptive causes: initial receiver-proof invalidation resets1080→240; single
 proxy timestamp-cap omission/151frames classified as worker pressure drops1080→720;

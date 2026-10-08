@@ -1474,9 +1474,31 @@ final class PhysicalStreamingTests: XCTestCase {
             }
         }
         if physicalHour {
-            try tap(app.buttons["4K"], in: app)
-            try require(app.buttons["4K"].isSelected, "4K archive selection was not applied.")
-            try require(app.staticTexts["4K · 30 fps · Audio included"].exists, "4K/audio recording description missing.")
+            // Visiting Recordings or returning from controller preflight may
+            // start an integrity scan of restored archives. Quality controls
+            // remain disabled until that scan finishes; preserve the library.
+            var readySince: TimeInterval?
+            try wait("Saved recording scan did not finish before 4K selection.", seconds: 90) {
+                let now = ProcessInfo.processInfo.systemUptime
+                guard !app.staticTexts["Checking saved recordings…"].exists,
+                      app.buttons["film.start"].exists && app.buttons["film.start"].isEnabled else {
+                    readySince = nil
+                    return false
+                }
+                if readySince == nil { readySince = now }
+                return now - (readySince ?? now) >= 1
+            }
+            let quality = app.buttons["4K"]
+            try reveal(quality, in: app)
+            try require(quality.exists && quality.isEnabled && quality.isHittable &&
+                        !quality.frame.isEmpty && app.frame.contains(quality.frame),
+                        "4K archive selector is not ready or visible.")
+            // Xcode27 reports an invalid activation point for the visible
+            // physical segmented control. Use its observed center, as for tabs.
+            quality.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            try wait("4K archive selection was not applied.", seconds: 5) {
+                quality.isSelected && app.staticTexts["4K · 30 fps · Audio included"].exists
+            }
             if preparePhysicalHour {
                 let available = app.staticTexts.allElementsBoundByIndex.map { $0.label }.filter { $0.hasSuffix(" available") }
                 let report: [String: Any] = ["prepared": true, "recordingQuality": "3840x2160@30",
@@ -1752,7 +1774,11 @@ final class PhysicalStreamingTests: XCTestCase {
                     var baseline: OrdinaryRecoverySample?
                     if combinedHoldSeconds != nil {
                         try require(adaptiveFailure == nil, "Cannot start sustained hold after a failed progressive ramp.")
-                        let sample = try XCTUnwrap(recoverySample(app, phase: "confirmed1080-hold-started"))
+                        // The final ramp/score proof can have sampled within the
+                        // reader's two-second throttle. Await the next available
+                        // sample, then require its proof immediately; do not
+                        // retry invalid proof until it happens to recover.
+                        let sample = try recoveryWait(app, phase: "confirmed1080-hold-started", seconds: 15) { _ in true }
                         try require(sample.sustains1080(sample), "1080p trial did not settle with fresh delivery proof.")
                         baseline = sample
                         recoveryMilestone("confirmed1080-hold-started", sample: true)
@@ -2098,6 +2124,7 @@ final class PhysicalStreamingTests: XCTestCase {
         for direction in [true, false] {
             for _ in 0..<4 {
                 try enforceScorerPermissionPolicy()
+                dismissPhysicalPasswordSaveOffer(app)
                 if element.exists && element.isHittable { return }
                 try require(Date() < deadline, "Device UI smoke exceeded its time budget.")
                 allowExpectedPermissions()
@@ -2106,6 +2133,26 @@ final class PhysicalStreamingTests: XCTestCase {
                 if direction { container.swipeUp(velocity: .slow) }
                 else { container.swipeDown(velocity: .slow) }
             }
+        }
+    }
+
+    @MainActor private func dismissPhysicalPasswordSaveOffer(_ app: XCUIApplication) {
+        guard physicalRecovery && !runnerNetworkSettingReadOnly else { return }
+        // A real device's password provider can offer to save the disposable
+        // lab token after Connect. Decline only the observed save offer; never
+        // interact with password entry, autofill, or an authentication prompt.
+        for surface in [app, XCUIApplication(bundleIdentifier: "com.apple.springboard")] {
+            guard surface.staticTexts["Save Password?"].exists,
+                  surface.staticTexts["Securely store your password so it’s filled automatically the next time you need it."].exists,
+                  surface.buttons["Save"].exists else { continue }
+            let decline = surface.buttons["Not Now"]
+            guard decline.exists && decline.isEnabled && decline.isHittable else { continue }
+            decline.tap()
+            let attachment = XCTAttachment(string: "Declined the known password-saving offer for the disposable physical lab token.")
+            attachment.name = "PhysicalPasswordSaveOfferDeclined"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            return
         }
     }
 

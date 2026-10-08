@@ -249,6 +249,12 @@ export function deviceLabSeedsMatch(value) {
 }
 
 export async function startDeviceLab(options, { signal, workerFactory } = {}) {
+  // The physical recovery lane already exposes a Node UDP forwarder on the
+  // LAN. Its native Mac worker and forwarder can use the Docker loopback port,
+  // avoiding Docker Desktop's failing LAN-bound UDP path on this machine.
+  const relayHost = options.physicalRecovery && options.publisherRecovery && !options.workerImage
+    ? '127.0.0.1'
+    : options.host;
   if (options.workerImage !== undefined) {
     validateWorkerImage(options.workerImage);
     assert.equal(options.encoder, 'software');
@@ -397,7 +403,14 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
         [
           'relay',
           async () => {
-            if (relayStarted) await execute('docker', ['rm', '-f', relayName], { timeout: 20000 });
+            if (relayStarted) {
+              try {
+                const { stdout, stderr } = await execute('docker', ['logs', relayName], { timeout: 20000 });
+                await writeFile(join(artifact, 'relay.log'), stdout + stderr, { flag: 'wx', mode: 0o600 });
+              } finally {
+                await execute('docker', ['rm', '-f', relayName], { timeout: 20000 });
+              }
+            }
           },
         ],
       ]) {
@@ -416,7 +429,7 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
     })());
   }
   try {
-    const ingestPort = await port(options.host, true),
+    const ingestPort = await port(relayHost, true),
       relayPort = await port('127.0.0.1');
     const relayConfig = join(artifact, 'ingest.yml');
     await writeFile(
@@ -431,7 +444,7 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
       deviceLabRelayArgs({
         uhd: options.uhd,
         name: relayName,
-        host: options.host,
+        host: relayHost,
         ingestPort,
         relayPort,
         configPath: relayConfig,
@@ -498,7 +511,7 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
     if (options.publisherRecovery) {
       const uplink = await createUDPImpairmentProxy({
         bindHost: recoveryBind,
-        receiverHost: options.host,
+        receiverHost: relayHost,
         receiverPort: ingestPort,
         forward: { recordTimeline: true, recordRateLedger: true },
         reverse: { recordTimeline: true },
@@ -555,7 +568,7 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
       PHONE_TOKEN: phoneToken,
       HOME_TOKEN: homeToken,
       INTERNAL_TOKEN: internalToken,
-      INGEST_HOST: options.host,
+      INGEST_HOST: relayHost,
       INGEST_PORT: String(ingestPort),
       ...publisherEnvironment,
       ...publishEnvironment,
@@ -563,7 +576,9 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
       RELAY_API_USERNAME: 'lab-admin',
       RELAY_API_PASSWORD: relayPassword,
     };
-    api = await startScoringTestServer(join(artifact, 'scorebug.sqlite'), apiEnvironment);
+    api = await startScoringTestServer(join(artifact, 'scorebug.sqlite'), apiEnvironment, {
+      logPath: join(artifact, 'control-plane.log'),
+    });
     apiEnvironment.PORT = new URL(api.baseURL).port;
     signal?.throwIfAborted();
     const endpoint = new URL(api.baseURL);

@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const scoringTestToken = 'qa-phone-token-not-production';
 const root = fileURLToPath(new URL('..', import.meta.url));
 
 /** Starts a real API on an OS-selected loopback port; owns only this child. */
-export async function startScoringTestServer(databasePath, environment = {}) {
+export async function startScoringTestServer(databasePath, environment = {}, { logPath } = {}) {
   const child = spawn(
     process.execPath,
     [
@@ -37,10 +38,23 @@ export async function startScoringTestServer(databasePath, environment = {}) {
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
+  const diagnosticLog = logPath
+    ? createWriteStream(logPath, { flags: 'wx', mode: 0o600 })
+    : undefined;
+  if (diagnosticLog) {
+    child.stdout.pipe(diagnosticLog, { end: false });
+    child.stderr.pipe(diagnosticLog, { end: false });
+  }
   const exited = new Promise((resolve) => child.once('close', resolve));
   async function stop() {
     child.kill('SIGKILL');
     await exited;
+    if (diagnosticLog && !diagnosticLog.writableEnded) {
+      await new Promise((resolve, reject) => {
+        diagnosticLog.once('error', reject);
+        diagnosticLog.end(resolve);
+      });
+    }
   }
   try {
     const baseURL = await new Promise((resolve, reject) => {
