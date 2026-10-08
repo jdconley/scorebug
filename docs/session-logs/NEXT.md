@@ -16,7 +16,7 @@ Preserve originals, recordings and unrelated simulators. The
 ## Current readiness and next work
 
 Follow the [focused remediation plan](../superpowers/plans/2026-09-30-sustained-4k-recording-1080-streaming.md).
-Target: iPhone16Pro, clear case and USB charging, home LAN/software proxy;
+Target: new iPhone18Pro (iOS27.0.1), USB charging and normal case (confirm current case), home LAN/software proxy;
 progressive startup followed by60continuous minutes of actual1080p30/6Mbps input
 while recording clean4K30/audio, then successful stop/export/playback/relaunch.
 Implementation checkpoint: saved phone hour recovery/export/playback/relaunch passes;
@@ -32,12 +32,17 @@ pass: `ordinary-native-nncHUb/media-source-validation/result.json`, actual1080 i
 Saved-export, archive-stop and600/1800/3600-second combined modes are implemented;
 new combined collection/hold gates have not yet run on hardware.
 
-Current blocker: short physical runner failed before starting with “Authentication
-canceled. Canceled by user.” A fresh read-only readiness check reports the phone locked. The pending async
-request asks the user to unlock it, approve the automation/passcode prompt and report readiness. Do not silently retry
-or repeat the14-minute saved export. No physical capture/lab is active. Latest
-build is prepared; do not claim the new Stop or sustained target qualified.
-See [implementation session](2026-09-30-sustained-4k1080-implementation.md).
+Current device: `00008160-000C5CAE20434036`, iPhone18Pro, wired/trusted/paired.
+Xcode `/Applications/Xcode.app/Contents/Developer`27.0/SDK27.0 builds current app/tests.
+Developer Mode is off; user has been asked to enable it, restart/confirm and unlock.
+No capture/test has started. Device-specific build joined70 because Developer Mode is disabled; generic
+profiles do not yet include the new UDID. Harness now targets this device and allows
+registration; verify app/runner profiles after setup succeeds. Do not run camera automation before
+Developer Mode, DDI, provisioning and lock checks pass. No original recording
+recovery on this replacement phone: prior hour is retained on the old phone/Mac.
+Mac disk initially7.9GiB, after new toolchain build7.7GiB: short Stop fits; final
+hour transfer/proxy outputs need additional space. Do not delete originals or
+unrelated artifacts. See [new-phone session](2026-10-08-new-phone-setup.md).
 Next: short fresh Stop, then an instrumented combined600-second trace for the
 remaining receiver-proof cause and measured phone thermal workload. Cap attribution
 and the qualification harness are implemented; physical resource/collection checks
@@ -61,7 +66,7 @@ completion status or manually concatenate segments.
 Fixed archive verification/copy buffer retention: isolated real-hour recovery
 RSS13.8GB→35MB.20focused archive-store tests pass; signed iPhone build passes and
 updated app installed. Saved phone native recovery/export is now confirmed; fresh Stop remains open.
-Next, run only the short fresh Stop check after the readiness reply; do not start another hour until its unresolved questions warrant it.
+Next, run only the short fresh Stop check on the new phone after setup/readiness; do not start another hour until its unresolved questions warrant it.
 
 Adaptive causes: initial receiver-proof invalidation resets1080→240; single
 proxy timestamp-cap omission/151frames classified as worker pressure drops1080→720;
@@ -114,7 +119,7 @@ No UI tests; Watch needs Join offered match. Three `Scorebug Manual ... qiL8sA`
 simulators remain booted/preserved; `manual-simulators-qiL8sA/devices.json` owns IDs.
 Their backend is stopped. No silent deletion of those app containers/recordings.
 
-Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; FFmpeg
+Xcode `/Applications/Xcode.app/Contents/Developer`27.0 for the new phone (old26.2 remains installed); FFmpeg
 `/opt/homebrew/opt/ffmpeg-full/bin/`; last LAN192.168.1.130, recheck if needed.
 Prepared1080 source `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`600s;
 4K `artifacts/qa/uhd-app-20260928/input.mov`600s. Allow startup/finalization headroom.

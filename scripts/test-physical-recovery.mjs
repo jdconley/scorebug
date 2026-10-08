@@ -320,6 +320,10 @@ async function main() {
   );
   try {
     sourceHead = await run('git', ['rev-parse', 'HEAD'], 'source-head');
+    const sdkVersion = (
+      await run('xcrun', ['--sdk', 'iphoneos', '--show-sdk-version'], 'sdk-version')
+    ).trim();
+    const testRunName = physicalTestRunName(sdkVersion);
     await run('xcodegen', ['generate', '--spec', join(root, 'ios/Project.yml')], 'generate');
     const derived = join(root, 'ios/DerivedData/PhysicalPhone'),
       products = join(derived, 'Build/Products');
@@ -331,13 +335,16 @@ async function main() {
         '-scheme',
         'Scorebug',
         '-destination',
-        'generic/platform=iOS',
+        `id=${options.device}`,
+        '-destination-timeout',
+        '60',
         '-configuration',
         'Debug',
         '-derivedDataPath',
         derived,
         `DEVELOPMENT_TEAM=${options.team}`,
         '-allowProvisioningUpdates',
+        '-allowProvisioningDeviceRegistration',
         'build-for-testing',
       ],
       'build',
@@ -367,25 +374,29 @@ async function main() {
       false,
       'Unlock the phone before starting the camera recovery test',
     );
-    const inputs = await readPhysicalRecoveryInputs(products, [
-      fileURLToPath(import.meta.url),
-      ...[
-        'ios/Project.yml',
-        'ios/Scorebug.xcodeproj/project.pbxproj',
-        'ios/Sources/Scorebug/App.swift',
-        'ios/Sources/Scorebug/Debug/RecoveryLoopbackConfiguration.swift',
-        'ios/Sources/Scorebug/Debug/RecoveryLoopbackBridge.swift',
-        'ios/AppUITests/PhysicalStreamingTests.swift',
-        'ios/AppUITests/RecoveryControlConfiguration.swift',
-      ].map((name) => join(root, name)),
-      ...[
-        'device-lab.mjs',
-        'ordinary-recovery-control.mjs',
-        'udp-impairment.mjs',
-        'private-lab-network.mjs',
-        'test-ordinary-native-app.mjs',
-      ].map((name) => join(root, 'scripts', name)),
-    ]);
+    const inputs = await readPhysicalRecoveryInputs(
+      products,
+      [
+        fileURLToPath(import.meta.url),
+        ...[
+          'ios/Project.yml',
+          'ios/Scorebug.xcodeproj/project.pbxproj',
+          'ios/Sources/Scorebug/App.swift',
+          'ios/Sources/Scorebug/Debug/RecoveryLoopbackConfiguration.swift',
+          'ios/Sources/Scorebug/Debug/RecoveryLoopbackBridge.swift',
+          'ios/AppUITests/PhysicalStreamingTests.swift',
+          'ios/AppUITests/RecoveryControlConfiguration.swift',
+        ].map((name) => join(root, name)),
+        ...[
+          'device-lab.mjs',
+          'ordinary-recovery-control.mjs',
+          'udp-impairment.mjs',
+          'private-lab-network.mjs',
+          'test-ordinary-native-app.mjs',
+        ].map((name) => join(root, 'scripts', name)),
+      ],
+      sdkVersion,
+    );
     await writeFile(
       join(artifact, 'inputs.json'),
       JSON.stringify({ sourceHead, device: options.device, inputs }, null, 2),
@@ -426,7 +437,7 @@ async function main() {
         'python3',
         [
           configure,
-          join(products, 'Scorebug_iphoneos26.2-arm64.xctestrun'),
+          join(products, testRunName),
           testRun,
           'ScorebugAppUITests',
           environmentPath,
@@ -434,10 +445,11 @@ async function main() {
         ],
         'configure',
       );
-      const configuredInputs = await readPhysicalRecoveryInputs(products, [
-        testRun,
-        environmentPath,
-      ]);
+      const configuredInputs = await readPhysicalRecoveryInputs(
+        products,
+        [testRun, environmentPath],
+        sdkVersion,
+      );
       await writeFile(
         join(artifact, 'configured-inputs.json'),
         JSON.stringify(configuredInputs, null, 2),
@@ -567,13 +579,22 @@ async function hashInput(path) {
   const data = await readFile(path);
   return { path, sha256: createHash('sha256').update(data).digest('hex'), bytes: data.length };
 }
-export async function readPhysicalRecoveryInputs(products, extraPaths = []) {
+function physicalTestRunName(sdkVersion) {
+  assert(
+    typeof sdkVersion === 'string' &&
+      /^[1-9][0-9]*\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$/.test(sdkVersion),
+    'Require the selected iPhoneOS SDK version',
+  );
+  return `Scorebug_iphoneos${sdkVersion}-arm64.xctestrun`;
+}
+// Preserve callers of the original26.2 helper; this runner always supplies its selected SDK.
+export async function readPhysicalRecoveryInputs(products, extraPaths = [], sdkVersion = '26.2') {
   const names = [
     'Debug-iphoneos/Scorebug.app/Scorebug',
     'Debug-iphoneos/Scorebug.app/Scorebug.debug.dylib',
     'Debug-iphoneos/ScorebugAppUITests-Runner.app/ScorebugAppUITests-Runner',
     'Debug-iphoneos/ScorebugAppUITests-Runner.app/PlugIns/ScorebugAppUITests.xctest/ScorebugAppUITests',
-    'Scorebug_iphoneos26.2-arm64.xctestrun',
+    physicalTestRunName(sdkVersion),
   ];
   return Promise.all([...names.map((name) => join(products, name)), ...extraPaths].map(hashInput));
 }

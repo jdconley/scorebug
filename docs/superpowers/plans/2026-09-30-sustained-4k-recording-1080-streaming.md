@@ -1,6 +1,6 @@
 # Sustained 4K recording and 1080p streaming implementation plan
 
-**Goal:** On the current iPhone 16 Pro, sustain actual 1080p30 upload while recording clean 4K30 with audio, then stop, export, play and relaunch without an app exit.
+**Goal:** On the current iPhone 18 Pro, sustain actual 1080p30 upload while recording clean 4K30 with audio, then stop, export, play and relaunch without an app exit.
 
 **Architecture:** Keep independent segmented local recording and the progressive SRT uploader, with the local software proxy producing both overlaid MP4 and mock RTMP recordings. Correct adaptation from attributed evidence, then reduce measured phone workload. Preserve real thermal, congestion, stale-proof and authority-change safeguards.
 
@@ -10,7 +10,7 @@
 
 ## Target configuration and acceptance
 
-Use the iPhone 16 Pro, Apple clear case, USB charging, a lit moving volleyball scene, home LAN and this Mac's software proxy. Record 3840×2160 at 30 fps with the existing H.264 30 Mbps archive profile and audio; stream through the normal ladder to 1920×1080 at 30 fps and 6 Mbps with audio. Recording quality and streaming ceiling are independent settings. Log actual connection, battery and charging state; verify that media takes the intended LAN route rather than an unintended USB route.
+Use the iPhone 18 Pro with USB charging, its normal case (confirm the current case before thermal comparisons), a lit moving volleyball scene, home LAN and this Mac's software proxy. Record 3840×2160 at 30 fps with the existing H.264 30 Mbps archive profile and audio; stream through the normal ladder to 1920×1080 at 30 fps and 6 Mbps with audio. Recording quality and streaming ceiling are independent settings. Log actual connection, battery and charging state; verify that media takes the intended LAN route rather than an unintended USB route.
 
 The final acceptance capture includes normal minimum-quality startup, ramp and trial confirmation, followed by **60 continuous minutes of confirmed actual 1080p input**. Record 4K throughout, including startup and a short continuation after streaming stops. The proxy scaling a low-resolution input to a 1080p output does not satisfy this goal.
 
@@ -27,7 +27,7 @@ Case-off and battery-powered comparisons can identify heat contributors; they do
 
 ## Evidence and unresolved questions
 
-The [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
+The previous iPhone16Pro [hour result](../../session-logs/2026-09-30-hour-stream-setup.md) and `artifacts/qa/physical-hour-preparation-20260930/hour-acceptance.json` are the baseline. No physical capture is active. New phone trust/pairing are complete; Developer Mode and device-specific provisioning must finish before testing. Xcode27 build passes. Current implementation results are in the [session log](../../session-logs/2026-09-30-sustained-4k1080-implementation.md).
 
 | Issue | Established evidence | Question to resolve |
 | --- | --- | --- |

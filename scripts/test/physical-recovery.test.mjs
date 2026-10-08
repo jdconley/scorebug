@@ -205,10 +205,22 @@ test('binds the actual Debug implementation image and rejects changes after exec
   }
   const extra = join(products, 'private.xctestrun');
   await writeFile(extra, 'configured private run');
-  const inputs = await readPhysicalRecoveryInputs(products, [extra]);
+  const inputs = await readPhysicalRecoveryInputs(products, [extra], '26.2');
   assert(inputs.some((i) => i.path.endsWith('/Scorebug.debug.dylib')));
   assert(inputs.some((i) => i.path === extra));
   await verifyPhysicalRecoveryInputs(inputs);
+  const currentRun = join(products, 'Scorebug_iphoneos27.0-arm64.xctestrun');
+  await writeFile(currentRun, 'current SDK run');
+  const current = await readPhysicalRecoveryInputs(products, [extra], '27.0');
+  assert(current.some((i) => i.path === currentRun));
+  assert(!current.some((i) => i.path.endsWith(names[4])));
+  await verifyPhysicalRecoveryInputs(current);
+  assert(
+    (await readPhysicalRecoveryInputs(products, [extra])).some((i) => i.path.endsWith(names[4])),
+  );
+  for (const sdk of ['', '27', '../27.0', '27.0\n26.2']) {
+    await assert.rejects(readPhysicalRecoveryInputs(products, [], sdk));
+  }
   await writeFile(join(products, names[1]), 'changed implementation');
   await assert.rejects(verifyPhysicalRecoveryInputs(inputs), /changed/);
 });
