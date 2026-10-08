@@ -405,10 +405,16 @@ export function requireOrdinaryTestResult(summary, tests, expectedTest) {
   );
 }
 
-export function ordinaryEnvironment(environment = process.env) {
+export function ordinaryEnvironment(environment = process.env, developerDirectory = developer) {
+  assert(
+    typeof developerDirectory === 'string' &&
+      isAbsolute(developerDirectory) &&
+      !developerDirectory.includes('\0'),
+    'Explicit Xcode directory must be absolute',
+  );
   return {
     ...Object.fromEntries(Object.entries(environment).filter(([key]) => !key.includes('SCOREBUG'))),
-    DEVELOPER_DIR: developer,
+    DEVELOPER_DIR: developerDirectory,
   };
 }
 
@@ -416,14 +422,24 @@ export function ordinaryEnvironment(environment = process.env) {
 export async function runOrdinaryCommand(
   command,
   args,
-  { artifact, label, timeout = 60_000, grace = 3_000, signal, commands, onOutput } = {},
+  {
+    artifact,
+    label,
+    timeout = 60_000,
+    grace = 3_000,
+    signal,
+    commands,
+    onOutput,
+    developerDirectory = developer,
+  } = {},
 ) {
   signal?.throwIfAborted();
+  const commandEnvironment = ordinaryEnvironment(process.env, developerDirectory);
   commands?.push({ command, args, label }); // Callers never put credentials in argv.
   const log = createWriteStream(join(artifact, `${label}.log`), { flags: 'wx', mode: 0o600 });
   const child = spawn(command, args, {
     cwd: root,
-    env: ordinaryEnvironment(),
+    env: commandEnvironment,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

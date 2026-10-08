@@ -262,6 +262,26 @@ test('strips all inherited laboratory switches, including Xcode test-child injec
   assert.equal(Object.keys(environment).filter((key) => key.includes('SCOREBUG')).length, 0);
   assert.equal(environment.DEVELOPER_DIR, '/Applications/Xcode-26.2.0.app/Contents/Developer');
 });
+test('physical commands use the explicitly selected Xcode without inheriting laboratory switches', async () => {
+  const developerDirectory = '/Applications/Xcode.app/Contents/Developer';
+  const env = ordinaryEnvironment(
+    { PATH: '/bin', SCOREBUG_TEST_NATIVE_QUALITY: '1' },
+    developerDirectory,
+  );
+  assert.equal(env.DEVELOPER_DIR, developerDirectory);
+  assert.equal(env.SCOREBUG_TEST_NATIVE_QUALITY, undefined);
+  const artifact = await mkdtemp(join(tmpdir(), 'scorebug-xcode-selection-'));
+  try {
+    const actual = await runOrdinaryCommand(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.DEVELOPER_DIR)'],
+      { artifact, label: 'developer', developerDirectory },
+    );
+    assert.equal(actual, developerDirectory);
+  } finally {
+    await rm(artifact, { recursive: true, force: true });
+  }
+});
 test('a timed-out command joins its child process group before returning', async () => {
   const artifact = await mkdtemp(join(tmpdir(), 'scorebug-command-'));
   try {

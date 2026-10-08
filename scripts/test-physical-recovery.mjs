@@ -301,6 +301,8 @@ async function main() {
       timeout,
       signal: controller.signal,
       commands,
+      developerDirectory:
+        process.env.DEVELOPER_DIR ?? '/Applications/Xcode-26.2.0.app/Contents/Developer',
     });
   let labArtifact,
     sourceHead,

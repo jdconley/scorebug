@@ -34,15 +34,18 @@ new combined collection/hold gates have not yet run on hardware.
 
 Current device: `00008160-000C5CAE20434036`, iPhone18Pro, wired/trusted/paired.
 Xcode `/Applications/Xcode.app/Contents/Developer`27.0/SDK27.0 builds current app/tests.
-Developer Mode is off; user has been asked to enable it, restart/confirm and unlock.
-No capture/test has started. Device-specific build joined70 because Developer Mode is disabled; generic
-profiles do not yet include the new UDID. Harness now targets this device and allows
-registration; verify app/runner profiles after setup succeeds. Do not run camera automation before
-Developer Mode, DDI, provisioning and lock checks pass. No original recording
-recovery on this replacement phone: prior hour is retained on the old phone/Mac.
-Mac disk initially7.9GiB, after new toolchain build7.7GiB: short Stop fits; final
-hour transfer/proxy outputs need additional space. Do not delete originals or
-unrelated artifacts. See [new-phone session](2026-10-08-new-phone-setup.md).
+Developer Mode is enabled, DDI usable and phone unlocked. No capture/test has
+started. Current blocker: Xcode27 device build reports No Account for TeamB222J9J7B8;
+app/runner profiles omit the new UDID. Conley team is visible in Xcode UI but profile
+refresh did not resolve CLI authentication. The account sign-in sheet is open for
+the user; pending async question asks them to finish Conley authentication.
+Harness now selects actual SDK and explicitly forwards selected Xcode to shared
+commands;3focused environment/process checks pass. Legacy simulator defaults remain.
+After auth, verify selected-device registration/signing profiles, then run short
+archive-stop; do not repeat failed builds without new account-state evidence.
+Old hour is retained on old phone/Mac; no recovery attempt on this new phone.
+Mac space is now78GiB, sufficient headroom for staged tests; no task cleanup done.
+See [new-phone session](2026-10-08-new-phone-setup.md).
 Next: short fresh Stop, then an instrumented combined600-second trace for the
 remaining receiver-proof cause and measured phone thermal workload. Cap attribution
 and the qualification harness are implemented; physical resource/collection checks
