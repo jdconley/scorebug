@@ -78,7 +78,16 @@ it('loads source access between two snapshots and uses the latest authoritative 
     gameId: 'match',
     generation: 1,
     scoreRevision: 2,
-    overlay: 'H 1-0 A · Set 1 · Sets 0-0',
+    overlay:
+      JSON.stringify({
+        style: 'bar',
+        label: null,
+        bestOf: 3,
+        teams: snapshot().assignment.match.teams,
+        score: { home: 1, away: 0, set: 1, homeSets: 0, awaySets: 0 },
+        completedSets: [],
+        serving: null,
+      }) + '\n',
     readUrl: connection().connection.readUrl,
     sourceReady: true,
     outputId: 'local-sink',
@@ -145,4 +154,24 @@ it('rejects credentials in the control URL and unsafe worker identities', () => 
   for (const url of ['file:///private', 'http://token@localhost', 'https://host/?token=private'])
     expect(() => new WorkerClient(url, 'token', 'mac')).toThrow();
   expect(() => new WorkerClient('http://localhost', 'token', '../other')).toThrow();
+});
+it('carries the scorebug style, best-of and completed sets into the overlay', async () => {
+  const styled = snapshot() as ReturnType<typeof snapshot> & {
+    assignment: { match: Record<string, unknown> };
+  };
+  Object.assign(styled.assignment.match, {
+    scorebugStyle: 'setCard',
+    rules: { bestOf: 5, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
+    completedSets: [{ set: 1, home: 25, away: 20, winner: 'home', overrideReason: null }],
+  });
+  const f = await fixture((path) => ({
+    body: path.includes('/connection') ? connection() : styled,
+  }));
+  expect(JSON.parse((await f.client.load())!.overlay)).toMatchObject({
+    style: 'setCard',
+    bestOf: 5,
+    completedSets: [{ set: 1, home: 25, away: 20, winner: 'home' }],
+  });
+  Object.assign(styled.assignment.match, { scorebugStyle: 'hologram' });
+  expect(JSON.parse((await f.client.load())!.overlay).style).toBe('bar');
 });

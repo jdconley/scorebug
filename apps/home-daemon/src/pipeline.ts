@@ -20,8 +20,10 @@ import {
   type EncoderTimingSnapshot,
 } from './encoder-timing.js';
 import { fork, type ChildProcess } from 'node:child_process';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import type { Logger } from './logger.js';
+import { OverlayFeed } from './scorebug/feed.js';
+import { overlayRegions } from './scorebug/layout.js';
 import {
   DecodedVideoLifetime,
   DecodedVideoTelemetry,
@@ -36,6 +38,7 @@ export type PipelineSpec = {
   publishUrl?: string;
   /** Fresh per-attempt local path; recording contains the final proxy overlay. */
   recordingPath?: string;
+  /** Serialized ScorebugOverlay JSON; the overlay feed re-renders when it changes. */
   scoreFile: string;
   nvenc: boolean;
   encoder?: 'software' | 'videotoolbox' | 'nvenc';
@@ -43,7 +46,6 @@ export type PipelineSpec = {
   decoderThreading?: 'automatic' | 'slice';
   profile?: { width: number; height: number; fps: number; bitrateKbps: number };
   ffmpegPath?: string;
-  fontPath?: string;
 };
 
 export type PipelineHandle = {
@@ -67,9 +69,11 @@ export type PipelineHandle = {
   };
 };
 
-function filterPath(value: string): string {
-  // First escape the option value, then the enclosing filter graph. No shell is used.
-  return value.replace(/[\\':]/g, '\\$&').replace(/[\\'\[\],;]/g, '\\$&');
+/** Overlay canvas: the output canvas, or 1080p for the legacy profile-less graph. */
+export function overlaySize(spec: PipelineSpec): { width: number; height: number } {
+  return spec.profile
+    ? { width: spec.profile.width, height: spec.profile.height }
+    : { width: 1920, height: 1080 };
 }
 
 /** Shared initialization options for the live pipeline and local startup probe. */
@@ -130,21 +134,6 @@ export function buildFfmpegArgs(
       profile.bitrateKbps > 100000)
   )
     throw new Error('invalid_video_profile');
-  const ratio = (profile?.height ?? 1080) / 1080;
-  const drawtext = [
-    `drawtext=textfile=${filterPath(spec.scoreFile)}`,
-    'reload=1',
-    'expansion=none',
-    'fontcolor=white',
-    `fontsize=${Math.max(14, Math.round(42 * ratio))}`,
-    'box=1',
-    'boxcolor=black@0.55',
-    `boxborderw=${Math.round(18 * ratio)}`,
-    `x=${Math.round(40 * ratio)}`,
-    `y=h-${Math.round(100 * ratio)}`,
-    `fontfile=${filterPath(spec.fontPath ?? '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')}`,
-  ].join(':');
-
   const encoder = spec.encoder ?? (spec.nvenc ? 'nvenc' : 'software');
   const video = videoEncoderArgs(encoder);
   video.push(
@@ -165,12 +154,39 @@ export function buildFfmpegArgs(
   // mint new credits. Keep source PTS and the shared A/V timeline unchanged.
   video.push('-fps_mode', 'passthrough', '-enc_time_base:v', 'demux');
   const cap = profile ? `${frameRateCapFilter(profile.fps)},` : '';
-  const filter = profile
-    ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:eval=frame,${drawtext}`
-    : drawtext;
+  const canvas = profile
+    ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:eval=frame`
+    : 'null';
+  // Input 1 is the worker's timestamped RGBA scorebug (see scorebug/feed.ts):
+  // one packed box per style. Each box is cropped out, converted to YUVA and
+  // blended at its place with straight alpha in the main format. Only the
+  // active style's box has pixels; blending cost is the boxes' area. The RGB to
+  // YUV matrix is left to format negotiation so it follows the camera's: forcing
+  // BT.709 against an untagged source made FFmpeg 7.1 convert every output frame
+  // through RGB (2x CPU). eof_action=pass: a lost feed drops the graphic, while
+  // source EOF still ends the graph (an overlay frame never creates video).
+  const layout = overlayRegions(overlaySize(spec));
+  const yuva = 'format=yuva420p';
+  const labels = layout.regions.map((region) => `scorebug_${region.style}`);
+  const filter =
+    `${canvas}[base];` +
+    `[1:v:0]split=${labels.length}${labels.map((label) => `[${label}_packed]`).join('')};` +
+    layout.regions
+      .map(
+        ({ frame, canvas: at }, index) =>
+          `[${labels[index]}_packed]crop=${frame.width}:${frame.height}:${at.x}:${at.y},${yuva}[${labels[index]}];`,
+      )
+      .join('') +
+    layout.regions
+      .map(
+        ({ frame }, index) =>
+          `[${index ? `${labels[index - 1]}_done` : 'base'}][${labels[index]}]overlay=x=${frame.x}:y=${frame.y}:eof_action=pass:format=auto` +
+          `[${index === labels.length - 1 ? 'video' : `${labels[index]}_done`}]`,
+      )
+      .join(';');
   // A sink-only side branch observes every decoder frame without changing the
-  // live branch's timebase (the cap uses its rounding tolerance). The simple
-  // graph still has exactly one external input and one output.
+  // live branch's timebase (the cap uses its rounding tolerance). The graph has
+  // one output; input 1 (the scorebug) feeds only the final overlays.
   const geometry =
     options.decoderDiagnostics && options.decodedGeometry
       ? 'showinfo@scorebug_geometry=checksum=0:udu_sei_as_ascii=0,'
@@ -201,12 +217,19 @@ export function buildFfmpegArgs(
     ...(decoderThreading === 'slice' ? ['-thread_type:v:0', 'slice'] : []),
     '-i',
     spec.pullUrl,
+    // Bounded overlay prefetch: the feed writes at most ~2 frames ahead of main.
+    '-thread_queue_size',
+    '8',
+    '-f',
+    'matroska',
+    '-i',
+    'pipe:0',
+    '-filter_complex',
+    '[0:v:0]' + telemetry + filter,
     '-map',
-    '0:v:0',
+    '[video]',
     '-map',
     '0:a:0',
-    '-vf',
-    telemetry + filter,
     ...video,
     ...(options.encoderTiming
       ? [
@@ -431,11 +454,27 @@ export function startPipeline(
   };
 
   log.info('ffmpeg_spawning', { gameId: spec.gameId, nvenc: spec.nvenc });
+  let overlay: OverlayFeed | undefined;
   try {
     child = fork(new URL('./pipeline-guardian.mjs', import.meta.url), [], {
       execArgv: [],
-      stdio: ['ignore', 'pipe', 'ignore', 'ipc', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'ignore', 'ipc', 'pipe', 'pipe', 'pipe'],
     });
+    // Guardian fd6 is handed to FFmpeg as stdin: the scorebug overlay input.
+    const overlaySink = child.stdio.at(6) as Writable | null | undefined;
+    overlay = overlaySink
+      ? new OverlayFeed({
+          scoreFile: spec.scoreFile,
+          size: overlaySize(spec),
+          sink: overlaySink,
+          ...(options.monotonicNow ? { now: options.monotonicNow } : {}),
+          onEvent: (event) => {
+            try {
+              log.warn(event, { gameId: spec.gameId });
+            } catch {}
+          },
+        })
+      : undefined;
     // Guardian IPC remains fd3; fd4 becomes FFmpeg decoded telemetry fd3,
     // and fd5 becomes the independent encoder timing fd4. Always drain both.
     const timingPipe = child.stdio.at(5) as Readable;
@@ -451,6 +490,7 @@ export function startPipeline(
         ...(decoderDelivery ? [decoderDelivery] : []),
         ...(lifetime ? [lifetime] : []),
         ...(decodedHistory ? [decodedHistory] : []),
+        ...(overlay ? [overlay.observer] : []),
       ],
       () => {
         telemetryEOF = true;
@@ -499,6 +539,7 @@ export function startPipeline(
       if (!child?.pid) guardianSpawnFailed = true;
     });
     child.once('close', () => {
+      overlay?.stop();
       decodedVideo.end();
       decoderCadence.end();
       decoderDelivery?.end();
@@ -520,7 +561,9 @@ export function startPipeline(
       packetTiming: Boolean(options.onTerminal && options.packetTiming),
       decodedGeometry: Boolean(options.onTerminal && options.decodedGeometry),
     });
+    void overlay?.start();
   } catch {
+    overlay?.stop();
     log.error('ffmpeg_spawn_failed', { gameId: spec.gameId });
     if (!child?.pid) failedBeforeSpawn();
   }

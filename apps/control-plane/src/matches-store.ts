@@ -8,6 +8,7 @@ import type {
   MatchCredential,
   MatchRules,
   MatchSnapshot,
+  ScorebugStyle,
   ScoringState,
   Teams,
   WatchPairingIssueRequest,
@@ -15,15 +16,24 @@ import type {
   WatchPairingIssued,
   WatchPairingRedeemed,
 } from '@scorebug/protocol';
+import { DEFAULT_SCOREBUG_STYLE } from '@scorebug/protocol';
 import { canonical } from './canonical-json.js';
 import { MediaStore } from './media-store.js';
 import { applyScoringOperation, initialScoringState, ScoringError } from './scoring.js';
 
-export type CreateMatch = { id: string; deviceId: string; teams: Teams; rules: MatchRules };
+export type CreateMatch = {
+  id: string;
+  deviceId: string;
+  teams: Teams;
+  rules: MatchRules;
+  scorebugStyle?: ScorebugStyle | undefined;
+};
+// Match rows are JSON documents: rows written before scorebugStyle existed lack
+// the field and read back as the default style, so no SQL migration is needed.
 type StoredMatch = Omit<
   MatchSnapshot,
-  'score' | 'completedSets' | 'canUndo' | 'endReason' | 'status'
-> & { scoring: ScoringState; creationRequest: string };
+  'score' | 'completedSets' | 'canUndo' | 'endReason' | 'status' | 'scorebugStyle'
+> & { scoring: ScoringState; creationRequest: string; scorebugStyle?: ScorebugStyle };
 export class MatchStoreError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -59,6 +69,7 @@ function snapshot(match: StoredMatch): MatchSnapshot {
     canUndo: match.scoring.status === 'active' && match.scoring.history.length > 0,
     scorer: match.scorer,
     broadcast: match.broadcast,
+    scorebugStyle: match.scorebugStyle ?? DEFAULT_SCOREBUG_STYLE,
   };
 }
 
@@ -184,6 +195,7 @@ export class MatchStore {
         scoring: initialScoringState(),
         scorer: { deviceId: input.deviceId, epoch: 1 },
         broadcast: { desired: 'stopped', generation: 0 },
+        scorebugStyle: input.scorebugStyle ?? DEFAULT_SCOREBUG_STYLE,
         creationRequest: canonical(input),
       };
       this.db
@@ -421,6 +433,9 @@ export class MatchStore {
         try {
           if (command.operation.type === 'take_over')
             match.scorer = { deviceId: command.deviceId, epoch: match.scorer.epoch + 1 };
+          else if (command.operation.type === 'set_scorebug_style')
+            // Presentation only: outside scoring history, so undo never reverts it.
+            match.scorebugStyle = command.operation.style;
           else match.scoring = applyScoringOperation(match.scoring, match.rules, command.operation);
           if (match.scoring.status === 'ended') {
             match.broadcast = { desired: 'stopped', generation: match.broadcast.generation + 1 };

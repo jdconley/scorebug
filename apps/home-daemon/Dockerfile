@@ -1,5 +1,7 @@
 # Linux CPU image; no CUDA runtime is required for the default software encoder.
 # NVENC on other hosts still requires actual driver/toolkit and media qualification.
+# No system fonts: the worker rasterizes the scorebug itself (resvg + the
+# Barlow Condensed files bundled in apps/home-daemon/assets/fonts, SIL OFL 1.1).
 #
 # Built from the repo root so the workspace layout is visible:
 #   docker build -f apps/home-daemon/Dockerfile -t scorebug/home-daemon .
@@ -10,7 +12,7 @@ FROM node:22-trixie-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates fonts-dejavu-core ffmpeg tini \
+        ca-certificates ffmpeg tini \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g pnpm@9.15.0
 

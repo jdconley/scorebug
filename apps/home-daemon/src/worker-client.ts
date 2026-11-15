@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { renderOverlayLine } from './overlay-text.js';
+import { SCOREBUG_STYLES } from '@scorebug/protocol';
+import { scorebugOverlay, serializeScorebugOverlay } from './scorebug/state.js';
 import type { WorkerInput } from './supervisor.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -25,6 +26,22 @@ const assignmentSchema = z.object({
           homeSets: integer,
           awaySets: integer,
         }),
+        // Optional so a worker can run against a control plane from before the
+        // graphic scorebug; missing values draw the default style with no sets.
+        rules: z.object({ bestOf: z.union([z.literal(3), z.literal(5)]) }).optional(),
+        completedSets: z
+          .array(
+            z.object({
+              set: integer.min(1),
+              home: integer,
+              away: integer,
+              winner: z.enum(['home', 'away']),
+            }),
+          )
+          .max(5)
+          .optional(),
+        // A style added by a newer control plane falls back to the default.
+        scorebugStyle: z.enum(SCOREBUG_STYLES).optional().catch(undefined),
         broadcast: z.object({ desired, generation: integer }),
       }),
       media: z.object({
@@ -145,11 +162,7 @@ export class WorkerClient {
       gameId: latest.match.id,
       generation: connection.generation,
       scoreRevision: latest.match.revision,
-      overlay: renderOverlayLine(
-        latest.match.teams.home,
-        latest.match.teams.away,
-        latest.match.score,
-      ),
+      overlay: serializeScorebugOverlay(scorebugOverlay(latest.match)),
       readUrl: connection.readUrl,
       sourceReady: connection.source.ready,
       outputId: latest.media.broadcast.selection!.outputId,

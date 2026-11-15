@@ -25,7 +25,6 @@ const schema = z
       .default('1080p30'),
     FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
     FFPROBE_PATH: z.string().min(1).default('ffprobe'),
-    FONT_PATH: z.string().min(1).default('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
     SCORE_DIR: z.string().default('/tmp/scorebug'),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   })

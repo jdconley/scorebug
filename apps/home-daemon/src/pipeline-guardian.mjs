@@ -166,13 +166,15 @@ process.on('message', (message) => {
   try {
     // Guardian owns all encoder readers; parent fd4 is decoded telemetry and
     // fd5 is encoder timing. Raw diagnostics stay private to this process.
+    // Parent fd6 (the scorebug overlay feed) is shared, not copied, as the
+    // encoder's stdin; only the parent writes it, so its EOF reaches FFmpeg.
     diagnostics = request.diagnostics === true ? new EncoderDiagnostics() : undefined;
     packetTiming =
       diagnostics && request.packetTiming === true ? new WorkerPacketTiming() : undefined;
     decodedGeometry =
       diagnostics && request.decodedGeometry === true ? new DecodedGeometry() : undefined;
     encoder = spawn(request.binary, request.args, {
-      stdio: ['ignore', 'pipe', diagnostics ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: [6, 'pipe', diagnostics ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
     forward(/** @type {import('node:stream').Readable} */ (encoder.stdout), 1);
     forward(/** @type {import('node:stream').Readable} */ (encoder.stdio[3]), 4);

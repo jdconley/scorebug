@@ -38,17 +38,15 @@ it('executes the configured media binary instead of the one on PATH', async () =
   }
 });
 
-it('uses the selected font for the overlay', () => {
+it('needs no system font: the scorebug is rasterized by the worker', () => {
   const args = buildFfmpegArgs({
     gameId: 'qa',
     pullUrl: 'unused',
     publishUrl: 'unused',
     scoreFile: '/tmp/score.txt',
     nvenc: false,
-    fontPath: '/custom/score.ttf',
   });
-  expect(args[args.indexOf('-vf') + 1]).toContain('/custom/score.ttf');
-  expect(args[args.indexOf('-vf') + 1]).not.toContain('/usr/share/fonts');
+  expect(args.join(' ')).not.toMatch(/fontfile|drawtext|\/usr\/share\/fonts/);
 });
 
 it('settles a missing binary without an unhandled error or a pending exit', async () => {
@@ -94,7 +92,9 @@ async function childFixture(body: string) {
     log,
     records,
     async ready() {
-      await expect.poll(async () => readFile(ready, 'utf8')).toMatch(/^\d+$/);
+      // Spawned workers load pipeline.ts (and the scorebug renderer) through tsx; on
+      // shared CI runners that can take several seconds, longer than poll's 1 s default.
+      await expect.poll(async () => readFile(ready, 'utf8'), { timeout: 15_000 }).toMatch(/^\d+$/);
     },
     async cleanup() {
       try {
@@ -139,55 +139,62 @@ it('escalates an ignored TERM to KILL and keeps repeated stop calls idempotent',
   }
 });
 
-it('reaps an encoder that ignores TERM after its worker is killed abruptly', async () => {
-  const fixture = await childFixture(`
+// Spawns a tsx worker process; allow for slow CI startup.
+it(
+  'reaps an encoder that ignores TERM after its worker is killed abruptly',
+  { timeout: 30_000 },
+  async () => {
+    const fixture = await childFixture(`
     require('node:fs').writeSync(3, 'frame:0 pts:0 pts_time:0\\nscorebug.source=1\\n');
     process.on('SIGTERM', () => require('node:fs').writeFileSync(__filename + '.term', 'received'));
     setInterval(() => {}, 1000);
   `);
-  const workerPath = join(fixture.dir, 'worker.mjs');
-  await writeFile(
-    workerPath,
-    `
+    const workerPath = join(fixture.dir, 'worker.mjs');
+    await writeFile(
+      workerPath,
+      `
     import { startPipeline } from ${JSON.stringify(new URL('../src/pipeline.ts', import.meta.url).href)};
     const noop = () => {};
     startPipeline(${JSON.stringify(fixture.spec)}, { debug: noop, info: noop, warn: noop, error: noop }, { stopTimeoutMs: 50 });
     setInterval(() => {}, 1000);
   `,
-  );
-  const worker = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), workerPath], {
-    stdio: 'ignore',
-  });
-  const exited = new Promise((resolve) => worker.once('exit', resolve));
-  try {
-    await fixture.ready();
-    const pid = Number(await readFile(join(fixture.dir, 'ready'), 'utf8'));
-    worker.kill('SIGKILL');
-    await exited;
-    await expect
-      .poll(async () => readFile(fixture.spec.ffmpegPath + '.term', 'utf8'), { timeout: 1500 })
-      .toBe('received');
-    await expect
-      .poll(
-        () => {
-          try {
-            process.kill(pid, 0);
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        { timeout: 1500 },
-      )
-      .toBe(false);
-  } finally {
-    worker.kill('SIGKILL');
-    await fixture.cleanup();
-  }
-});
+    );
+    const worker = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), workerPath], {
+      stdio: 'ignore',
+    });
+    const exited = new Promise((resolve) => worker.once('exit', resolve));
+    try {
+      await fixture.ready();
+      const pid = Number(await readFile(join(fixture.dir, 'ready'), 'utf8'));
+      worker.kill('SIGKILL');
+      await exited;
+      await expect
+        .poll(async () => readFile(fixture.spec.ffmpegPath + '.term', 'utf8'), { timeout: 1500 })
+        .toBe('received');
+      await expect
+        .poll(
+          () => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          { timeout: 1500 },
+        )
+        .toBe(false);
+    } finally {
+      worker.kill('SIGKILL');
+      await fixture.cleanup();
+    }
+  },
+);
 
+// Spawns a tsx worker process; allow for slow CI startup.
 it.each([1, 3, 4])(
   'keeps encoder descriptor %s writable during parent-loss finalization',
+  { timeout: 30_000 },
   async (fd) => {
     const fixture = await childFixture(`
     process.on('SIGTERM', () => setTimeout(() => {

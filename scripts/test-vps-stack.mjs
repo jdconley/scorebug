@@ -25,7 +25,7 @@ const environment = {
   SCOREBUG_RELEASE: project,
   CORS_ORIGINS: 'https://localhost.invalid',
   ...Object.fromEntries(
-    ['PHONE_TOKEN', 'HOME_TOKEN', 'INTERNAL_TOKEN', 'RELAY_API_PASSWORD'].map((key) => [
+    ['PHONE_TOKEN', 'HOME_TOKEN', 'RELAY_API_PASSWORD'].map((key) => [
       key,
       randomBytes(32).toString('hex'),
     ]),

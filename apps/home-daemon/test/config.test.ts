@@ -10,17 +10,15 @@ const base = {
 };
 
 describe('media tool configuration', () => {
-  it('preserves explicit binary and font paths', () => {
+  it('preserves explicit binary paths', () => {
     const config = loadConfig({
       ...base,
       FFMPEG_PATH: '/opt/media/ffmpeg',
       FFPROBE_PATH: '/opt/media/ffprobe',
-      FONT_PATH: '/opt/media/score font.ttf',
     });
     expect(config).toMatchObject({
       FFMPEG_PATH: '/opt/media/ffmpeg',
       FFPROBE_PATH: '/opt/media/ffprobe',
-      FONT_PATH: '/opt/media/score font.ttf',
     });
   });
   it('rejects empty explicit binary paths', () => {

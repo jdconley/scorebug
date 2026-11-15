@@ -11,9 +11,11 @@
     "lint": "echo 'lint: noop'",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm --filter @scorebug/protocol build && vitest run",
-    "test:watch": "pnpm --filter @scorebug/protocol build && vitest"
+    "test:watch": "pnpm --filter @scorebug/protocol build && vitest",
+    "render-scorebug": "pnpm --filter @scorebug/protocol build && tsx scripts/render-scorebug.ts"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@scorebug/protocol": "workspace:*",
     "zod": "^4.4.3"
   },

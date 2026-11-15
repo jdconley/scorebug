@@ -226,7 +226,6 @@ HTTPS_PORT=$HTTPS_PORT
 CADDY_TLS=$CADDY_TLS
 PHONE_TOKEN=$PHONE_TOKEN
 HOME_TOKEN=$HOME_TOKEN
-INTERNAL_TOKEN=$INTERNAL_TOKEN
 RELAY_API_PASSWORD=$RELAY_API_PASSWORD
 WORKER_ID=$WORKER_ID
 OUTPUT_ID=$OUTPUT_ID
@@ -361,7 +360,7 @@ cmd_server() {
     warn 'public certificates need this host reachable on ports 80 and 443'
   fi
 
-  for key in PHONE_TOKEN HOME_TOKEN INTERNAL_TOKEN RELAY_API_PASSWORD; do
+  for key in PHONE_TOKEN HOME_TOKEN RELAY_API_PASSWORD; do
     value=$(env_get "$SERVER_ENV" "$key")
     if [ "$ROTATE" -eq 1 ] || [ -z "$value" ]; then value=$(random_hex); fi
     eval "$key=\$value"
