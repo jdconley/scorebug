@@ -93,5 +93,5 @@ try {
 }
 if (!process.exitCode)
   console.log(
-    'PASS: final image serves health and rejects unauthenticated game access; owned resources removed.',
+    'PASS: final image serves health and rejects unauthenticated match access; owned resources removed.',
   );
