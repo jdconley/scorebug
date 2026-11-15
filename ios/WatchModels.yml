@@ -1,0 +1,35 @@
+# Isolated model tests: no app, WatchConnectivity, camera or media dependencies.
+name: ScorebugWatchModels
+options:
+  bundleIdPrefix: live.scorebug
+settings:
+  base:
+    SWIFT_VERSION: '5.10'
+packages:
+  ScorebugCore:
+    path: Packages/ScorebugCore
+targets:
+  ScorebugWatchModelTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - path: Sources/ScorebugWatch/WatchScoringModel.swift
+      - path: Sources/WatchSupport/WatchSetupProvenance.swift
+      - path: Sources/WatchSupport/WatchRelaySessionGate.swift
+      - path: Sources/WatchSupport/WatchConnectivityDiagnostic.swift
+      - path: WatchModelTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.watch.modeltests
+    dependencies:
+      - package: ScorebugCore
+schemes:
+  ScorebugWatchModelTests:
+    build:
+      targets:
+        ScorebugWatchModelTests: all
+    test:
+      targets:
+        - ScorebugWatchModelTests

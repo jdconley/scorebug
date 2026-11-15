@@ -1,0 +1,41 @@
+logLevel: info
+api: true
+apiAddress: :9997
+rtsp: false
+rtmp: false
+hls: false
+webrtc: false
+moq: false
+srt: true
+srtAddress: :8890
+authInternalUsers:
+  # Native paths are created by the control plane with distinct, mandatory SRT
+  # publish/read encryption passphrases. No other media protocol is enabled.
+  - user: any
+    permissions:
+      - action: publish
+        path: '~^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$'
+      - action: read
+        path: '~^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$'
+  - user: qa-publisher
+    pass: qa-publish-not-production
+    permissions:
+      - action: publish
+        path: fixture
+  - user: qa-reader
+    pass: qa-read-not-production
+    permissions:
+      - action: read
+        path: fixture
+  - user: qa-admin
+    pass: qa-admin-not-production
+    permissions:
+      - action: api
+paths:
+  fixture:
+    srtPublishPassphrase: qa-publish-encryption
+    srtReadPassphrase: qa-read-encryption
+    record: true
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordSegmentDuration: 1m
+    recordDeleteAfter: 24h

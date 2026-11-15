@@ -1,5 +1,7 @@
 # @scorebug/scoring
 
+> Legacy prototype: the September product plan replaces this PWA with native iPhone and Apple Watch scoring. The instructions below describe the existing prototype only; browser scoring is not a planned product feature.
+
 PWA you tap from the stands. Big buttons, no chrome, installable.
 
 ## Develop

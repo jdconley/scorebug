@@ -1,0 +1,33 @@
+{
+  "description": "Byte-exact original complete inputs for owned candidate cost and baseline joins; does not qualify the original experiment. Native audit reused from owned-receiver-LvDNAy.native.json.gz with its existing provenance.",
+  "inputs": {
+    "format": {
+      "source": "artifacts/qa/native-app-LvDNAy/failure-app-data-DyWfFh/QA/native-profile-transitions.json",
+      "fixture": "scripts/test/fixtures/owned-candidate-LvDNAy.format.gz",
+      "bytes": 1782488,
+      "compressedBytes": 176696,
+      "sha256": "ec00c5a8e6bb5fa2733eca656a09e1f0d1be8e534b183565817ba29b9fee2864"
+    },
+    "snapshot": {
+      "source": "artifacts/qa/native-app-LvDNAy/failure-app-data-DyWfFh/QA/video-observation.json",
+      "fixture": "scripts/test/fixtures/owned-candidate-LvDNAy.snapshot.gz",
+      "bytes": 308705,
+      "compressedBytes": 17799,
+      "sha256": "98c65595d10519b529c99e152efeb8ba18b22b6f0fa9016d3649ef3a5070fe4e"
+    },
+    "quality": {
+      "source": "artifacts/qa/native-app-LvDNAy/failure-app-data-DyWfFh/QA/quality-control.json",
+      "fixture": "scripts/test/fixtures/owned-candidate-LvDNAy.quality.gz",
+      "bytes": 760700,
+      "compressedBytes": 66940,
+      "sha256": "b0cdf26445443119d4aab3b16b69c821ee2747eba9b39690a5a94b1272cd4ce1"
+    },
+    "decoded": {
+      "source": "artifacts/qa/native-app-LvDNAy/owned-recording-diagnostic/direct.gray",
+      "fixture": "scripts/test/fixtures/owned-candidate-LvDNAy.decoded.gz",
+      "bytes": 141760,
+      "compressedBytes": 24772,
+      "sha256": "faacafb44ab96a82964a5a4134b61c7c54d540fe5adfc966178a59f07e450125"
+    }
+  }
+}

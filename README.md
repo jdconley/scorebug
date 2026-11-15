@@ -1,87 +1,99 @@
 # Scorebug
 
-Open-source live streaming of kids' volleyball games with a graphical scoreboard overlay, run by one parent from the stands.
+Live streaming of volleyball games with a scoreboard, operated from the stands.
+An iPhone films and keeps a clean local recording. Score from its paired Apple Watch
+or the native Scorebug app on another iPhone, including a watch paired to that iPhone. A portable worker adds the score and sends the broadcast
+to YouTube.
 
-One parent points a phone at the court. Another (or the same one) taps a scoreboard from the stands. The broadcast handles itself.
+> Status: native iPhone/Watch scoring and clean recording/export have passing local
+> and simulator checks. Native Mac/software-proxy streaming passes recovery and
+> over ten minutes of actual adaptive 4K delivery with complete saved A/V. Physical
+> phone/Watch reliability, full-match operation and other proxy hosts remain
+> unqualified. Not ready for a real game; see the current plan below.
 
-> Status: early scaffolding. Not yet operational.
+## Try the current system locally
 
-## What it does
-
-- iPhone captures 1080p, encodes H.264 at 5–6 Mbps, and publishes via **SRT** to a $5/mo VPS.
-- The VPS runs **MediaMTX** as a relay and notifies a control plane.
-- A **home machine** (already-on, with an NVIDIA GPU) pulls the SRT stream, composites a scoreboard overlay with **FFmpeg + NVENC**, and pushes **RTMPS** to YouTube Live.
-- A small **PWA** lets you tap the score from your phone in the stands; updates land on the overlay within a beat.
-- The iPhone keeps a full-resolution local archive (fragmented MP4, never re-encoded) for after the game.
-
-Glass-to-glass latency target: ~5–10s.
-
-## Why
-
-Existing options:
-
-- Paid SaaS: $30–100+/mo, no source access.
-- OBS + manual scoreboard: needs someone at a laptop the whole game.
-
-Scorebug aims to be free to fork, ~$5/mo to operate, and runnable by one parent.
-
-## Architecture (v1)
-
-```
-iPhone (HaishinKit, SRT)  ──►  VPS  ──►  Home machine  ──►  YouTube Live
-                              MediaMTX     FFmpeg+NVENC      RTMPS
-                              Hono API     Overlay (HTML)
-                                  ▲
-                                  │ REST / WS
-Phone PWA (scoring) ──────────────┘
-```
-
-See [docs/architecture.md](docs/architecture.md) for the full picture, including the protocol, security model, and v2 upgrade path (Smelter + Rive overlay, kill/dig/block callouts).
-
-## Layout
-
-```
-scorebug/
-├── apps/
-│   ├── control-plane/   # Hono API on the VPS — game state, WS to home
-│   ├── home-daemon/     # WS client on home box — spawns ffmpeg/Smelter
-│   ├── overlay/         # Transparent 1920x1080 HTML scoreboard
-│   └── scoring/         # PWA: big buttons, taps the score
-├── packages/
-│   ├── protocol/        # Shared TS types — HomeMessage, Score, etc.
-│   └── eslint-config/
-├── ios/                 # Native capture app (Swift, AVFoundation, HaishinKit)
-├── docs/
-└── Justfile             # Cross-language task runner
-```
-
-iOS lives at the top level, not in `apps/`, because Swift and pnpm workspaces don't share anything.
-
-## Requirements
-
-- Node 22+ and pnpm 9+ for the TS apps
-- [just](https://github.com/casey/just) for task running
-- Xcode 16+ for the iOS app (iOS 17+ target)
-- A home box with NVIDIA GPU (NVENC) for compositing
-- A small VPS for ingest + control plane (we use Hetzner CPX11 in Hillsboro)
-
-## Quickstart
+The accepted simulator workflow includes native phone/Watch scoring, clean local
+recording/export, streaming through the overlay proxy, and both final MP4 outputs.
+On the configured development Mac, start a hands-on session without UI tests:
 
 ```sh
-pnpm install
-just --list
+node scripts/simulator-lab.mjs --host YOUR_PRIVATE_LAN_IP --duration 1800
 ```
 
-Apps and per-app run commands will be filled in as scaffolds land.
+Follow the [setup steps](docs/fast-iteration.md#hands-on-simulator-session), or add
+`--source /absolute/prepared/input.mov` for representative footage. Use the software
+proxy locally. Simulator UHD, severe-congestion media and abrupt crash tails remain
+[explicit limits](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md#immediate-delivery-checkpoint).
+This working demo does not imply full-match or physical-device qualification.
 
-## Domain
+## Current plan
 
-`scorebug.live` — production.
+- [Architecture and requirements](docs/architecture.md)
+- [Encoding formats and streaming protocols](docs/streaming-formats-and-protocols.md)
+- [Delivery milestones and acceptance gates](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
+- [Simulator acceptance and tested platform matrix](docs/simulator-acceptance.md)
+- [Local, simulator, phone, and watch validation](docs/local-testing.md)
+- [Native scoring API progress](docs/native-scoring-api.md)
+- [Media control API and recovery evidence](docs/media-control-api.md)
+- [Real SRT relay access and process supervision](docs/relay-conformance.md)
+- [Native worker setup and local media checks](apps/home-daemon/README.md)
+- [Worker status and native display](docs/worker-status.md)
+- [Worker capabilities and startup preflight](docs/worker-capabilities.md)
+- [Local sustained media qualification](docs/media-soak.md)
+- [Capture SDK compatibility findings](docs/capture-sdk-compatibility.md)
+- [Milestone 0 verification results](docs/milestone-0-results.md)
 
-## License
+The plan prioritizes reliable local recording, adaptive live quality with a measured
+24 fps floor during viable connectivity, watch scoring, and a worker that runs on
+home or cloud systems. Qualify the Mac first, physical phone/watch next, and other
+worker hosts afterward. Target iPhone 14 and newer, with capability-based support for
+older phones; support the current OS and two prior release generations.
 
-[MIT](LICENSE) © Conley Chaos LLC.
+## Components
 
-## Security
+```text
+ios/                    Native iPhone/Watch scoring, capture, archive and streaming
+apps/scoring/           Legacy PWA prototype; superseded by native scoring
+apps/control-plane/     Hono API and game state
+apps/home-daemon/       Broadcast worker (name retained from initial implementation)
+packages/protocol/      Shared TypeScript contracts
+docs/                   Design and validation plans
+infra/vps/              Persistent API and managed relay deployment configuration
+```
 
-Disclosures: security@scorebug.live.
+The initial overlay is FFmpeg text. Animated graphics and player callouts are later
+work; there is no separate overlay app yet. Local recording, native scoring and both proxy outputs are implemented; remaining
+qualification is tracked in the plan.
+
+## Development
+
+Node 22.13+ and the repository-pinned pnpm 9.15.0 are used for the TypeScript apps.
+
+```sh
+pnpm install --frozen-lockfile
+```
+
+Use the [fast iteration guide](docs/fast-iteration.md) to launch a hands-on simulator
+session, select focused checks, or run the full native simulator checkpoint. The full suite is a release/integration tool,
+not the default after every edit. Existing local feature evidence is recorded in
+the [acceptance matrix](docs/simulator-acceptance.md).
+
+Start the isolated fixtures with `pnpm local:up` and the local API with
+`pnpm dev:api`. On a clean host, first build the maintained ingest with
+`docker compose -f docker-compose.dev.yml build ingest`; retain an existing
+`scorebug/ingest:drain-v1` image. The mock output sink remains stock
+MediaMTX. Use `pnpm local:down` when finished. See [local testing](docs/local-testing.md)
+and [device testing](docs/device-testing.md) for build and 100 ms worker-report defaults.
+
+For `pnpm test:apple` and Apple development, see the validation runbook's Xcode, XcodeGen, and simulator
+matrix. On this Mac use the installed `ffmpeg-full` binary for SRT and text overlays;
+the default `ffmpeg` lacks those capabilities. Native macOS workers can use
+VideoToolbox; a GPU is not required for lower-profile CPU operation.
+
+The original production hostname is `scorebug.live`; deployment remains unverified.
+Hosts and endpoints are configurable rather than fixed product requirements.
+
+## License and security
+
+[MIT](LICENSE) © Conley Chaos LLC. See [SECURITY.md](SECURITY.md) for disclosures.

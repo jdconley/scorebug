@@ -12,7 +12,9 @@ struct CameraPreviewView: UIViewRepresentable {
         return v
     }
 
-    func updateUIView(_ uiView: PreviewUIView, context: Context) {}
+    func updateUIView(_ uiView: PreviewUIView, context: Context) {
+        if uiView.previewLayer.session !== session { uiView.previewLayer.session = session }
+    }
 }
 
 final class PreviewUIView: UIView {

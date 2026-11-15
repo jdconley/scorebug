@@ -1,0 +1,940 @@
+{
+  "current": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "starting": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "starting",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "starting",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "zeroOrigin": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "0"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "maximumOrigin": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "8589934591"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "legacy": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z"
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidPublicationType": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": 42
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidPublicationArray": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": []
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidPublicationNull": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": null
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidPublicationMissing": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {}
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidReaderType": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": 42,
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidClockType": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": []
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidOriginType": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": 90000
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidReaderCase": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000A",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidReaderNewline": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a\n",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidPublisherUUID": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "publisher",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidAttemptUUID": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "attempt",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidSameConnections": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "10000000-0000-0000-0000-00000000000a",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidOriginUpperBound": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "8589934592"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidOriginLeadingZero": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "00"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidOriginNegative": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "-1"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidOriginNewline": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000\n"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidOriginOverflow": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "18446744073709551616"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidConvention": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "other",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidObservationGame": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "other",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidObservationGeneration": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 3,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidObservationState": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "starting",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidObservationAttempt": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 0,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidObservationMissing": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "producing_output",
+      "observation": null,
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidStale": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f",
+      "state": "stale",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidEpochMissing": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidEpochCase": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "D6C217A3-27C5-44EA-A55E-3B951C67981F",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  },
+  "invalidEpochNewline": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": "mac",
+      "workerEpoch": "d6c217a3-27c5-44ea-a55e-3b951c67981f\n",
+      "state": "producing_output",
+      "observation": {
+        "gameId": "match",
+        "generation": 2,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2040-01-01T00:00:00.000Z",
+      "expiresAt": "2040-01-01T00:00:05.000Z",
+      "publication": {
+        "readerId": "10000000-0000-0000-0000-00000000000a",
+        "publisherId": "20000000-0000-0000-0000-00000000000b",
+        "publishingAttemptId": "30000000-0000-0000-0000-00000000000c",
+        "clock": {
+          "convention": "mpegts-ingress-origin-90k-v1",
+          "originPTS": "90000"
+        }
+      }
+    },
+    "serverTime": "2040-01-01T00:00:01.000Z"
+  }
+}

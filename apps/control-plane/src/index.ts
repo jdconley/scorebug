@@ -3,9 +3,31 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import { loadConfig } from './config.js';
 import { createApp } from './app.js';
 import { tokensMatch } from './auth.js';
+import { RelayLifecycleError } from './relay-lifecycle.js';
 
 const config = loadConfig();
-const { app, bus, log } = createApp(config);
+const { app, bus, log, relayLifecycle } = createApp(config);
+
+// One in-flight pass at a time. Startup inventory also recovers paths left by a crash.
+if (relayLifecycle) {
+  let lastError: string | undefined;
+  const reconcile = async () => {
+    try {
+      await relayLifecycle.reconcile();
+      if (lastError) log.info('relay_reconciliation_recovered');
+      lastError = undefined;
+    } catch (error) {
+      const code = error instanceof RelayLifecycleError ? error.code : 'relay_unavailable';
+      if (code !== 'broadcast_changed' && code !== lastError) {
+        log.warn('relay_reconciliation_failed', { code });
+        lastError = code;
+      }
+    } finally {
+      setTimeout(() => void reconcile(), 1000).unref();
+    }
+  };
+  void reconcile();
+}
 
 const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
 

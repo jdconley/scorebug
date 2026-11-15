@@ -1,0 +1,50 @@
+name: Native Apple
+
+on:
+  push:
+    branches: [main]
+    paths: ['ios/**', 'vendor/HaishinKit/**', '.github/workflows/native.yml']
+  pull_request:
+    branches: [main]
+    paths: ['ios/**', 'vendor/HaishinKit/**', '.github/workflows/native.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apple:
+    name: Native models and iPhone/Watch simulator build
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+      - name: Toolchain and project generation
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate --spec ios/Scoring.yml
+          xcodegen generate --spec ios/Project.yml
+      - name: Shared scoring and recovery contracts
+        run: swift test --package-path ios/Packages/ScorebugCore --scratch-path ios/.build/core
+      - name: Native scoring models
+        run: >-
+          xcodebuild test -project ios/ScorebugScoring.xcodeproj
+          -scheme ScorebugScoringModelTests -destination 'platform=macOS'
+          -derivedDataPath ios/DerivedData/ScoringModel
+          CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+      - name: Build complete phone app and embedded Watch app
+        run: >-
+          xcodebuild build -project ios/Scorebug.xcodeproj -scheme Scorebug
+          -configuration Debug -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath ios/DerivedData/NativeCI
+          ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
+
+# Real SRT/RTMP, Docker, Watch UI and long media qualification run on the
+# local lab. This hosted build is not evidence of those runtime behaviors.

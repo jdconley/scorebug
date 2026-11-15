@@ -1,0 +1,1595 @@
+import Combine
+import Foundation
+import ScorebugCore
+import ScorebugMedia
+import ScorebugStreaming
+import SRTHaishinKit
+
+#if DEBUG
+/// Isolated from the capture UI: frequent diagnostic strings must not redraw all tabs.
+@MainActor final class PublishingQualityDiagnosticDisplay: ObservableObject {
+    @Published var value: String?
+}
+#endif
+
+/// Immutable historical mapping owned by exactly one observation attempt.
+struct PublishingClockObservation: Equatable, Sendable {
+    let scope: VideoFrameObservationScope
+    let transportClock: PublishingTransportClock
+    let isClosed: Bool
+}
+
+/// Control-plane waits run independently from FilmModel's archive health loop.
+/// Only a synchronous tap is shared with capture. No network operation owns it.
+@MainActor final class CaptureStreamingModel: ObservableObject {
+    enum LocalState: String { case idle, starting, publishing, failed }
+    // Sleep interval only; awaited publisher work can extend actual collection cadence.
+    static let publishingHealthInterval: Duration = .milliseconds(100)
+    @Published var endpoint = "http://localhost:18787"
+    @Published var installationToken = ""
+    @Published var workerId = "local-worker"
+    @Published var outputId = "local-output"
+    @Published private(set) var localState: LocalState = .idle
+    @Published private(set) var message: String?
+    @Published private(set) var connectedGameID: String?
+    @Published private(set) var busy = false
+    @Published private(set) var stopping = false
+    private(set) var needsStorageRetry = false {
+        willSet { if newValue != needsStorageRetry { objectWillChange.send() } }
+    }
+    private(set) var commandState: BroadcastCoordinatorState? {
+        willSet { if newValue != commandState { objectWillChange.send() } }
+    }
+    private(set) var workerState: WorkerMediaState = .unknown {
+        willSet { if newValue != workerState { objectWillChange.send() } }
+    }
+    private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
+    private(set) var workerDecoderCadenceFreshness: WorkerDecoderCadenceFreshness?
+    private(set) var workerDecoderDeliveryFreshness: WorkerDecoderDeliveryFreshness? {
+        didSet {
+            if let delivery = workerDecoderDeliveryFreshness, deliveryAuthority?.permits(delivery) == true { return }
+            deliveryAuthority?.revoke(reason: workerDeliveryTracker.unavailabilityReason?.rawValue ?? "deliveryContextChanged")
+            deliveryAuthority = workerDecoderDeliveryFreshness.map(PublishingDeliveryAuthority.init)
+        }
+    }
+    private var deliveryAuthority: PublishingDeliveryAuthority?
+    deinit {
+        deliveryAuthority?.revoke(); candidateAuthority?.revoke()
+        #if DEBUG
+        capacityClockPolling?.cancel()
+        #endif
+    }
+    private var workerDeliveryTracker = WorkerDecoderDeliveryTracker()
+    private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness? {
+        didSet {
+            if let evidence = workerReceiverProbeFreshness, candidateAuthority?.permits(evidence) == true { return }
+            candidateAuthority?.revoke()
+            candidateAuthority = workerReceiverProbeFreshness.map(PublishingCandidateAuthority.init)
+        }
+    }
+    private(set) var candidateAuthority: PublishingCandidateAuthority?
+    private var probeReadSequence: UInt64 = 0
+    private var acceptedProbeReadSequence: UInt64 = 0
+    struct MeasuredCandidate: Sendable {
+        let measurement: PublishingCandidateAdmission.Measurement
+        let binding: PublishingProbeObservation
+        let probe: PublishingProbeObservation
+        let boundAt: Double
+        let completedAt: Double
+        let permitsCurrentCandidate: @Sendable (UUID) -> Bool
+    }
+    typealias MeasuredCandidateReader = @MainActor () async -> MeasuredCandidate?
+    /// The publisher fixes admission semantics for its entire lifetime. Injected
+    /// legacy readers retain laboratory admission unless explicitly overridden.
+    enum CandidateAdmissionMode { case laboratoryIPv4, productionSRT }
+    var measuredCandidateFactory: ((any MediaPublisher) -> MeasuredCandidateReader?) = { publisher in
+        var read: (@Sendable () async -> NativeCandidateSnapshot?)?
+        if let candidate = publisher as? NativeOwnedCandidatePublisher {
+            read = { await candidate.candidateSnapshot() }
+        }
+        #if DEBUG
+        if let candidate = publisher as? NativeCandidatePublisher {
+            read = { await candidate.candidateSnapshot() }
+        }
+        #endif
+        guard let read else { return nil }
+        return {
+            guard let snapshot = await read() else { return nil }
+            return MeasuredCandidate(measurement: .init(snapshot.cost), binding: snapshot.binding, probe: snapshot.probe,
+                boundAt: snapshot.boundAt, completedAt: snapshot.completedAt,
+                permitsCurrentCandidate: snapshot.permitsCurrentCandidate)
+        }
+    }
+    private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
+    private var receiverProbeTracker = WorkerReceiverProbeTracker()
+    private var receiverProbeLeaseDeadline: ContinuousClock.Instant?
+    private var receiverProbeOwner: PublishingProbeObservation?
+    private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
+    @Published private(set) var appliedPublishingSettings: QualityController.Settings?
+    #if DEBUG
+    var nativeFixedUHDForDiagnostics = false
+    private var controlFailureAuditCount = 0
+    var nativeUHDTransitionForDiagnostics = false
+    var nativeOwnedUHDTransitionForDiagnostics = false
+    var nativeWarmUHDCandidateForDiagnostics = false
+    var nativeWarmUHDProbeForDiagnostics = false
+    private(set) var nativeWarmedCandidateInputCount: Int?
+    private(set) var nativeWarmedProbeBytes: UInt64?
+    var nativeDirectUHDForDiagnostics = false
+    var nativeFreezeUHDPollingForDiagnostics = false
+    var nativeUHDPollingIsFrozen: Bool {
+        nativeDirectUHDForDiagnostics && nativeFreezeUHDPollingForDiagnostics && appliedPublishingSettings?.profileID == "2160p30"
+    }
+    /// Short combined-path isolation; never used by the app's adaptive controller.
+    func performNativeUHDTransitionDiagnostic() async throws -> PublishingVideoProfileChange {
+        guard nativeFixedUHDForDiagnostics, nativeUHDTransitionForDiagnostics,
+              localState == .publishing, let session = publishing?.session else {
+            throw SRTMediaPublisher.PublisherError.invalidState
+        }
+        let baseline = try await session.setVideoBitRate(nativeOwnedUHDTransitionForDiagnostics
+            ? PublishingVideoProfile.minimumStartup.bitRate : PublishingVideoProfile.hd1080.bitRate)
+        if nativeWarmUHDCandidateForDiagnostics || nativeWarmUHDProbeForDiagnostics {
+            guard nativeOwnedUHDTransitionForDiagnostics,
+                  let publisher = publishing?.probeObserver as? NativeOwnedCandidatePublisher else {
+                throw SRTMediaPublisher.PublisherError.invalidState
+            }
+            async let candidate = nativeWarmUHDCandidateForDiagnostics ? publisher.warmCandidateForDiagnostics() : nil
+            async let probe = nativeWarmUHDProbeForDiagnostics ? publisher.warmProbeForDiagnostics(expecting: baseline) : nil
+            (nativeWarmedCandidateInputCount, nativeWarmedProbeBytes) = try await (candidate, probe)
+        }
+        let replacement = try await session.setVideoProfile(.uhd2160, expecting: baseline)
+        _ = try await session.setVideoBitRate(PublishingVideoProfile.uhd2160.bitRate, expecting: .replacement(replacement))
+        return replacement
+    }
+    var nativeHealthFixtureObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)?
+    var nativeSubmissionFixtureObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)?
+    let qualityDiagnosticDisplay = PublishingQualityDiagnosticDisplay()
+    private(set) var qualityDiagnostic: String? {
+        get { qualityDiagnosticDisplay.value }
+        set { qualityDiagnosticDisplay.value = newValue }
+    }
+    private var candidateInputDiagnostic: [String: String] = [:]
+    #endif
+    private(set) var sentSamples = 0
+    /// One bounded current or latest closed attempt. Counts are local callback
+    /// evidence; a starting snapshot establishes neither applied settings nor readiness.
+    private(set) var videoObservation: VideoFrameObservationSnapshot?
+    /// Same attempt/anchor as video observations, but closes at ingress cancellation
+    /// rather than encoder-drain completion. This is not transport capacity or loss.
+    private(set) var ingressObservation: LiveIngressObservationSnapshot?
+    /// Historical native clock mapping; closure marks detach, not current readiness.
+    private(set) var publishingClockObservation: PublishingClockObservation?
+    #if DEBUG
+    // Explicit simulator fixture flag; Mac unit tests opt in by injection.
+    var workerReportAgeProofsEnabled: Bool = {
+        #if targetEnvironment(simulator)
+        VideoObservationFixture.requested(environment: ProcessInfo.processInfo.environment)
+        #else
+        false
+        #endif
+    }()
+    var cadenceReportFixtureWriter: ((Data) async -> Void)? = {
+        #if targetEnvironment(simulator)
+        guard WorkerCadenceReportAudit.requested(environment: ProcessInfo.processInfo.environment) else { return nil }
+        return { await WorkerCadenceReportAudit.persist($0) }
+        #else
+        return nil
+        #endif
+    }()
+    var capacityClockFixtureFactory: (VideoFrameObservationScope) -> NativeCapacityClockFixture? = { scope in
+        #if targetEnvironment(simulator)
+        guard VideoObservationFixture.capacityFileUplink(environment: ProcessInfo.processInfo.environment) else { return nil }
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Scorebug/QA", isDirectory: true)
+        return try? NativeCapacityClockFixture(scope: scope, directory: directory)
+        #else
+        return nil
+        #endif
+    }
+    private var capacityClockFixture: NativeCapacityClockFixture?
+    private var capacityClockPolling: Task<Void, Never>?
+    private var cadenceReportAudit: WorkerCadenceReportAudit?
+    private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
+    private var receiverProbeHistory = ReceiverProbeFixtureHistory()
+    var receiverProbeFixtureWriter: ((Data) async -> Void)? = {
+        #if targetEnvironment(simulator)
+        return ReceiverProbeFixtureHistory.writer(environment: ProcessInfo.processInfo.environment)
+        #else
+        return nil
+        #endif
+    }()
+    private(set) var workerSourceIntervalHistory: [WorkerSourceIntervalObservation] = []
+    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof], LiveIngressObservationSnapshot?, PublishingClockObservation?, [WorkerSourceIntervalObservation]) async -> Void)? = {
+        #if targetEnvironment(simulator)
+        return { snapshot, detached, proofs, ingress, clock, sourceIntervals in
+            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs, ingressObservation: ingress, publishingClockObservation: clock, sourceIntervals: sourceIntervals)
+        }
+        #else
+        return nil
+        #endif
+    }()
+    #endif
+    private var diagnosticAttemptID: UUID?
+    @Published private(set) var activeRecordingID: String?
+    private var workerEpoch = UUID()
+    private var workerStatusRequest: (id: UUID, task: Task<Bool, Never>)?
+    private var workerFreshness: WorkerStatusFreshness?
+    private var workerSourceTracker = WorkerSourceIntervalTracker()
+    private var setup: SavedCaptureSetup?
+    var watchSetupConnection: (endpoint: String, installationToken: String)? {
+        guard !needsStorageRetry, let setup, !setup.installationToken.isEmpty else { return nil }
+        return (setup.endpoint, setup.installationToken)
+    }
+    private var restored = false
+    // Transient sheet state only; never changes or clears the saved connection.
+    var isSetupPresented = false
+    private var current: CurrentCapture?
+    private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int, attempt: UUID, observations: VideoFrameObservationOwner?, probeObserver: (any PublishingProbeObserving)?)?
+    private var coordinator: BroadcastCommandCoordinator?
+    var controlPollInterval: Duration {
+        #if DEBUG
+        // Probe evidence has a 300-ms observed lease. A two-second status
+        // cadence would let local health expire every interval baseline.
+        if nativeFixedUHDForDiagnostics || cadenceReportFixtureWriter != nil || receiverProbeFixtureWriter != nil { return .milliseconds(100) }
+        #endif
+        return qualityDriver == nil ? .seconds(2) : .milliseconds(100)
+    }
+    private var qualityDriver: PublishingQualityDriver?
+    #if DEBUG
+    private var transitionDriver: NativeProfileTransitionDriver?
+    private var adaptiveProfileEvidence: NativeProfileTransitionEvidence?
+    #endif
+    private var action: Task<Void, Never>?
+    private var actionID: UUID?
+    private var stoppingTask: Task<Void, Never>?
+    private var publisherTeardown: Task<Void, Never>?
+    private var teardownID: UUID?
+    @Published private var publisherStopping = false
+    private var epoch = UUID()
+    private var controlBusy = false {
+        // Only the setup sheet displays whether polling temporarily locks its fields.
+        willSet { if newValue != controlBusy && isSetupPresented { objectWillChange.send() } }
+    }
+    private struct NativeReconnect {
+        let id = UUID()
+        let context: CurrentCapture
+        let gameID: String
+        let generation: Int
+        let notBefore: Double
+    }
+    @Published private var nativeReconnect: NativeReconnect?
+    private var nativeReconnectFailures = 0
+    private var nativeHealthySince: Double?
+    private let reconnectClock: () -> Double
+    private var requestedStart: CurrentCapture?
+    private var shouldStopOwnedBroadcast = false
+    private var ownedRecordingIDs: Set<String> = []
+    private let storage: any CaptureSetupStorage
+    private let pendingStore: any PendingBroadcastStore
+    private let clientFactory: (ScoringEndpoint) -> MatchHTTPClient
+    private let publisherFactory: (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher
+    private let observationFactory: (VideoFrameObservationScope) throws -> VideoFrameObservationOwner
+    private let qualityFactory: @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver?
+
+    convenience init() {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Scorebug", isDirectory: true)
+        self.init(storage: CaptureKeychain(), pendingStore: JSONFilePendingBroadcastStore(url: directory.appendingPathComponent("pending-broadcast.json")))
+    }
+    init(storage: any CaptureSetupStorage, pendingStore: any PendingBroadcastStore,
+         clientFactory: @escaping (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
+         publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
+             #if DEBUG && targetEnvironment(simulator)
+             let environment = ProcessInfo.processInfo.environment
+             let ownedMeasurement = try NativeOwnedCandidatePublisher.requested(environment: environment)
+             let measuredTrial = try NativeMeasuredTrialFixture.requested(environment: environment)
+             let candidateProfile = try NativeCandidateFixture.requested(environment: environment)
+             let candidateHeadroom = try NativeCandidateHeadroomFixture.requested(environment: environment)
+             let probeMode = try NativeBandwidthProbePublisher.requested(environment: environment)
+             let cadencePacing = try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment)
+             if environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540", WorkerCadenceReportAudit.requested(environment: environment) {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeProfileTransitionPublisher(url: url, observations: observations, adaptive: true, sequence: .stallReset)
+             }
+             if try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment) {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 let target = try VideoObservationFixture.publishingURL(url, environment: environment)
+                 return NativeProfileTransitionPublisher(url: target, observations: observations, adaptive: true, pacesEncodedVideo: cadencePacing)
+             }
+             if let sequence = try NativeProfileTransitionEvidence.requestedSequence(environment: environment) {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeProfileTransitionPublisher(url: url, observations: observations, sequence: sequence)
+             }
+             let profile = try VideoObservationFixture.liveProfile(environment: environment)
+             let target = try VideoObservationFixture.publishingURL(url, environment: environment)
+             if !VideoObservationFixture.requested(environment: environment) {
+                 return CaptureStreamingModel.productionPublisher(url: url, observations: observations)
+             }
+             let proof = VideoObservationFixture.requested(environment: environment) && profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
+             let transitions = measuredTrial ? observations.map {
+                 NativeProfileTransitionEvidence(scope: $0.snapshot.scope, sequence: ownedMeasurement ? .ownedMeasured : probeMode == .repeated ? .repeatedMeasured : .measured)
+             } : nil
+             let observer: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)?
+             let didStop: (@Sendable () -> Void)?
+             if let proof {
+                 observer = { frame in proof.observe(frame); transitions?.observe(frame) }
+                 didStop = { proof.persist() }
+             }
+             else { observer = nil; didStop = nil }
+             let campaignOwner: PublishingCandidateCampaignOwner?
+             let audioObserver: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?
+             if candidateProfile != nil {
+                 guard observations != nil else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 campaignOwner = PublishingCandidateCampaignOwner()
+             } else { campaignOwner = nil }
+             if proof != nil || campaignOwner != nil {
+                 audioObserver = { frame in proof?.observeAudio(frame); campaignOwner?.observeAudio(frame) }
+             } else { audioObserver = nil }
+             let publisher = SRTMediaPublisher(url: target, observations: observations,
+                 encoderConfigurationObserver: proof.map { proof in { frame in proof.observeEncoding(frame); transitions?.observeEncoder(frame) } }, videoProfile: profile,
+                 compressedVideoObserver: observer, compressedAudioObserver: audioObserver,
+                 muxedPacketObserver: proof.map { proof in { frame in proof.observeMux(frame) } },
+                 didStop: didStop, allowsBandwidthProbes: probeMode != nil, videoCost: proof?.videoCost)
+             proof?.observeStartup(from: publisher)
+             if ownedMeasurement {
+                 guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
+                     campaignOwner: campaignOwner, timingProfile: try VideoObservationFixture.timingProfile(environment: ProcessInfo.processInfo.environment),
+                     lifecycle: NativeCandidateLifecycleAudit(scope: observations.snapshot.scope),
+                     profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
+                     joinedStop: transitions.map { evidence in {
+                         evidence.close()
+                         if let data = try? evidence.data() { await NativeProfileTransitionEvidence.persist(data) }
+                     } })
+             }
+             let primary: any MediaPublisher
+             if let probeMode {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 primary = NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope,
+                     mode: probeMode, candidateHeadroom: candidateHeadroom,
+                     coordinatesMeasurement: measuredTrial && probeMode == .staged,
+                     policy: try NativeMeasuredTrialFixture.probePolicy(environment: environment))
+             } else { primary = publisher }
+             if let candidateProfile {
+                 guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeCandidatePublisher(publisher: primary, scope: observations.snapshot.scope, liveProfile: profile,
+                     candidate: candidateProfile, campaignOwner: campaignOwner, candidateHeadroom: candidateHeadroom,
+                     requiresMeasurementReadiness: measuredTrial, repeated: probeMode == .repeated,
+                     lifecycle: measuredTrial ? NativeCandidateLifecycleAudit(scope: observations.snapshot.scope) : nil,
+                     profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
+                     joinedStop: transitions.map { evidence in {
+                         evidence.close()
+                         if let data = try? evidence.data() { await NativeProfileTransitionEvidence.persist(data) }
+                     } })
+             }
+             return primary
+             #else
+             return CaptureStreamingModel.productionPublisher(url: url, observations: observations)
+             #endif
+         },
+         observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { scope in
+             #if DEBUG && targetEnvironment(simulator)
+             let limit = VideoObservationFixture.completedWindowLimit(environment: ProcessInfo.processInfo.environment)
+             return try VideoFrameObservationOwner(scope: scope, completedWindowLimit: limit, sourceHistoryCapacity: 2048)
+             #else
+             return try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 2048)
+             #endif
+         }, qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = {
+             try PublishingQualityDriver.standard(session: $0, attemptID: $1)
+         }, reconnectClock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
+        self.reconnectClock = reconnectClock
+        self.storage = storage; self.pendingStore = pendingStore
+        self.clientFactory = clientFactory; self.publisherFactory = publisherFactory
+        self.observationFactory = observationFactory; self.qualityFactory = qualityFactory
+    }
+    nonisolated static func productionPublisher(url: URL, observations: VideoFrameObservationOwner?,
+        makePublisher: (URL, VideoFrameObservationOwner?, PublishingVideoProfile,
+            (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?, Bool) -> any MediaPublisher = {
+                SRTMediaPublisher(url: $0, observations: $1, videoProfile: $2,
+                    compressedAudioObserver: $3, allowsBandwidthProbes: $4)
+            }) -> any MediaPublisher {
+        guard let observations else {
+            return makePublisher(url, nil, .minimumStartup, nil, false)
+        }
+        let campaign = PublishingCandidateCampaignOwner()
+        let publisher = makePublisher(url, observations, .minimumStartup,
+            { campaign.observeAudio($0) }, true)
+        return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
+            campaignOwner: campaign, stagePlanSelection: .productionSRT)
+    }
+
+    nonisolated static func productionUHDPublisher(url: URL, observations: VideoFrameObservationOwner?,
+        healthObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)? = nil,
+        submissionObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)? = nil) -> any MediaPublisher {
+        guard let observations else { return productionPublisher(url: url, observations: nil) }
+        let campaign = PublishingCandidateCampaignOwner()
+        let publisher = SRTMediaPublisher(url: url, observations: observations, videoProfile: .minimumStartup,
+            compressedAudioObserver: { campaign.observeAudio($0) }, allowsBandwidthProbes: true, probeBudget: .uhd,
+            healthObserver: healthObserver, encoderSubmissionObserver: submissionObserver)
+        return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
+            campaignOwner: campaign, stagePlanSelection: .productionSRTUHD)
+    }
+
+    var isReconnecting: Bool { nativeReconnect != nil }
+    var canStopStreaming: Bool { localState == .publishing || localState == .starting || isReconnecting }
+    var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && requestedStart == nil && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
+    var canChangeSetup: Bool {
+        guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, !needsStorageRetry else { return false }
+        do { return try pendingStore.load() == nil && (setup?.reports.isEmpty ?? true) && (setup?.stopRecordingIDs?.isEmpty ?? true) } catch { return false }
+    }
+
+    func restore() async {
+        guard !restored else { return }
+        restored = true
+        do {
+            setup = try storage.load()
+            if var saved = setup {
+                _ = try ScoringEndpoint(saved.endpoint)
+                endpoint = saved.endpoint; installationToken = saved.installationToken
+                workerId = saved.workerId; outputId = saved.outputId
+                for index in saved.reports.indices where saved.reports[index].report.status == .recording {
+                    saved.reports[index].report.sequence += 1
+                    saved.reports[index].report.status = .interrupted
+                    saved.reports[index].delivered = false
+                }
+                setup = saved
+                guard (saved.stopRecordingIDs?.count ?? 0) <= 64 else { throw CaptureControlError.storage }
+                ownedRecordingIDs = Set(saved.reports.map { $0.report.recordingId } + (saved.stopRecordingIDs ?? []))
+                if let pending = try pendingStore.load(), pending.endpointScope == saved.endpointScope,
+                   pending.captureDeviceId == saved.deviceId, pending.command.gameId == saved.credential?.gameId,
+                   case .start(let selection) = pending.command.operation { ownedRecordingIDs.insert(selection.recordingId) }
+                shouldStopOwnedBroadcast = !ownedRecordingIDs.isEmpty
+                try persist()
+                try makeCoordinator()
+            }
+        } catch { needsStorageRetry = true; message = "Capture setup could not be restored. Retry to read the saved connection. Local recording is independent." }
+    }
+
+    /// Invoked in the same MainActor turn that clears FilmModel's context, before
+    /// archive drain, storage, HTTP or encoder awaits. Detach/cancel is immediate.
+    func captureChanged(_ context: CurrentCapture?, terminalStatus: RecordingStatus? = .stopped) {
+        let previous = current
+        if context?.id != previous?.id || context?.tap !== previous?.tap {
+            cancelNativeReconnect()
+            appliedPublishingSettings = nil
+            #if DEBUG
+            qualityDiagnostic = nil; candidateInputDiagnostic = [:]
+            #endif
+            // Revoke before recording/report/control work can suspend, including
+            // replacement taps that deliberately reuse a recording identifier.
+            candidateAuthority?.revoke()
+            if previous != nil, context != nil { clearWorker() }
+            workerSourceTracker.clear()
+            workerSourceInterval = nil
+            #if DEBUG
+            if context != nil { workerSourceIntervalHistory = [] }
+            #endif
+        }
+        if let requestedStart, context?.id != requestedStart.id || context?.tap !== requestedStart.tap {
+            self.requestedStart = nil
+            localState = .idle
+            message = "Streaming start canceled because the recording changed."
+        }
+        current = context
+        activeRecordingID = context?.id
+        #if DEBUG
+        // A closing capture snapshots its old attempt in detachPublisher before
+        // clearing; a replacement recording cannot inherit live proof history.
+        if context != nil, previous?.id != context?.id { workerReportAgeProofHistory.clear() }
+        #endif
+        if context == nil {
+            epoch = UUID()
+            action?.cancel()
+            detachPublisher()
+            shouldStopOwnedBroadcast = true
+            let coordinator = coordinator
+            Task { await coordinator?.setActiveRecording(nil) }
+            if let previous, let terminalStatus { queueReport(previous, status: terminalStatus) }
+        } else if let context {
+            ownedRecordingIDs.insert(context.id)
+            queueReport(context, status: .recording)
+        }
+    }
+
+    func captureFinished(_ context: CurrentCapture, interrupted: Bool) {
+        if nativeReconnect?.context.tap === context.tap { cancelNativeReconnect() }
+        queueReport(context, status: interrupted ? .interrupted : .stopped)
+    }
+
+    func connect() async {
+        guard !busy, !stopping, !publisherStopping, !controlBusy else { return }
+        await restore()
+        do {
+            if setup == nil || endpoint != setup?.endpoint || installationToken != setup?.installationToken || workerId != setup?.workerId || outputId != setup?.outputId {
+                guard canChangeSetup else { throw CaptureControlError.unresolved }
+                let valid = try ScoringEndpoint(endpoint)
+                guard !installationToken.isEmpty, validIdentifier(workerId), validIdentifier(outputId) else { throw CaptureControlError.noSetup }
+                setup = SavedCaptureSetup(endpoint: valid.url.absoluteString, installationToken: installationToken,
+                    deviceId: setup?.deviceId ?? UUID().uuidString, workerId: workerId, outputId: outputId, credential: nil, reports: [])
+                try persist()
+                coordinator = nil; connectedGameID = nil; commandState = nil; clearWorker()
+            }
+            try persist()
+            busy = true
+            defer { busy = false }
+            try await joinActiveMatch()
+            message = "Connected to the active match. Record video before starting streaming."
+        } catch { fail(error) }
+    }
+
+    func startStreaming() async {
+        cancelNativeReconnect()
+        await beginStreaming()?.value
+    }
+
+    /// Called synchronously by the button so a poll cannot steal an accepted tap
+    /// before an unstructured Task reaches the start guard. Only one intent exists.
+    func requestStartStreaming() {
+        guard canStart, let context = current else { return }
+        cancelNativeReconnect()
+        if controlBusy {
+            requestedStart = context
+            localState = .starting
+            message = "Waiting for the current connection check before starting streaming."
+        } else {
+            _ = beginStreaming()
+        }
+    }
+
+    private func resumeRequestedStart(controlFailed: Bool) {
+        guard let requested = requestedStart else { return }
+        requestedStart = nil
+        guard current?.id == requested.id, current?.tap === requested.tap, !stopping, !publisherStopping else {
+            localState = .idle
+            return
+        }
+        guard !controlFailed else { localState = .failed; return }
+        guard canStart else {
+            localState = .failed
+            message = "Streaming could not start while the connection has unresolved changes. Retry the connection, then start streaming again."
+            return
+        }
+        _ = beginStreaming()
+    }
+
+    private func beginStreaming(reconnecting: NativeReconnect? = nil) -> Task<Void, Never>? {
+        guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, let context = current else { return nil }
+        busy = true
+        let attempt = UUID(); epoch = attempt; actionID = attempt
+        diagnosticAttemptID = attempt; videoObservation = nil; ingressObservation = nil; publishingClockObservation = nil
+        localState = .starting; message = nil; clearWorker()
+        let task = Task { [self] in
+            defer { if actionID == attempt { action = nil; actionID = nil; busy = false } }
+            var startupStage = "restore"
+            do {
+                await restore()
+                try check(context, attempt)
+                if reconnecting != nil, coordinator == nil { throw CaptureControlError.selectionChanged }
+                if coordinator == nil { try await joinActiveMatch(); try check(context, attempt) }
+                guard let setup, let credential = setup.credential, let coordinator else { throw CaptureControlError.noSetup }
+                // A stop may have yielded to an already-running control poll or
+                // failed offline. Resolve that intent before recovery can replay a
+                // start or reuse the same server selection for this new publisher.
+                if shouldStopOwnedBroadcast {
+                    let stopped = try await coordinator.recover(activeRecordingId: nil)
+                    try check(context, attempt)
+                    commandState = stopped
+                    commandState = try await reconcileOwnedStop(stopped, coordinator: coordinator)
+                    try check(context, attempt)
+                    guard !shouldStopOwnedBroadcast else { throw CaptureControlError.unresolved }
+                }
+                try reserveStopOwnership(context.id)
+                queueReport(context, status: .recording)
+                startupStage = "recordingReport"
+                try await flushReports()
+                try check(context, attempt)
+                startupStage = "broadcastRecovery"
+                var state = try await coordinator.recover(activeRecordingId: context.id)
+                try check(context, attempt)
+                commandState = state
+                guard state.pending == nil else { throw CaptureControlError.unresolved }
+                let selection = BroadcastSelection(workerId: setup.workerId, outputId: setup.outputId, captureDeviceId: setup.deviceId, recordingId: context.id)
+                if let reconnecting {
+                    guard nativeReconnect?.id == reconnecting.id, credential.gameId == reconnecting.gameID,
+                          state.snapshot?.broadcast.desired == .running,
+                          state.snapshot?.broadcast.generation == reconnecting.generation,
+                          state.snapshot?.broadcast.selection == selection else { throw CaptureControlError.selectionChanged }
+                }
+                let needsStart = state.snapshot?.broadcast.desired != .running || state.snapshot?.broadcast.selection != selection
+                var allowsUHD = false
+                if needsStart || context.profile.isUHDRecording {
+                    startupStage = "workerCapabilities"
+                    let checkStarted = ContinuousClock.now
+                    let capabilities = try await clientFactory(ScoringEndpoint(setup.endpoint)).workerCapabilities(workerId: setup.workerId, credential: credential)
+                    try check(context, attempt)
+                    guard capabilities.permitsStart(worker: setup.workerId, output: setup.outputId,
+                        requestDuration: checkStarted.duration(to: .now)) else { throw CaptureControlError.workerUnavailable }
+                    allowsUHD = capabilities.permitsUHDInput(worker: setup.workerId, output: setup.outputId,
+                        sourceWidth: context.profile.width, sourceHeight: context.profile.height,
+                        requestDuration: checkStarted.duration(to: .now))
+                }
+                if needsStart {
+                    startupStage = "broadcastStart"
+                    state = try await coordinator.submit(.start(selection: selection), activeRecordingId: context.id)
+                    try check(context, attempt)
+                    commandState = state
+                    guard state.outcome?.accepted == true else { throw CaptureControlError.rejected }
+                }
+                guard let broadcast = state.snapshot?.broadcast, broadcast.desired == .running, broadcast.selection == selection else { throw CaptureControlError.selectionChanged }
+                let client = try clientForSetup()
+                startupStage = "publishAccess"
+                let access = try await client.publishAccess(recordingId: context.id, generation: broadcast.generation, publishingAttemptId: attempt, credential: credential)
+                try check(context, attempt)
+                // Measurement starts after the earlier control-plane requests, but
+                // includes encoder/transport startup. Revision 1 identifies the existing
+                // initial publishing configuration; it does not assert that startup applied it.
+                let scope = VideoFrameObservationScope(recordingID: context.id, matchID: credential.gameId,
+                    broadcastGeneration: broadcast.generation, publishingAttemptID: attempt, appliedProfileRevision: 1)
+                // Unavailable diagnostics must not fail publishing, archive or storage.
+                let observations = try? observationFactory(scope)
+                videoObservation = observations?.snapshot
+                let session: PublishingSession
+                let publisher: any MediaPublisher
+                startupStage = "publisherConstruction"
+                do {
+                    #if DEBUG
+                    if nativeFixedUHDForDiagnostics {
+                        guard allowsUHD else { throw SRTMediaPublisher.PublisherError.invalidState }
+                        if nativeOwnedUHDTransitionForDiagnostics {
+                            publisher = Self.productionUHDPublisher(url: access.publishUrl, observations: observations,
+                                healthObserver: nativeHealthFixtureObserver, submissionObserver: nativeSubmissionFixtureObserver)
+                        } else {
+                        publisher = SRTMediaPublisher(url: access.publishUrl, observations: observations,
+                            videoProfile: nativeUHDTransitionForDiagnostics ? .hd1080 : .uhd2160,
+                            healthObserver: nativeHealthFixtureObserver, encoderSubmissionObserver: nativeSubmissionFixtureObserver)
+                        }
+                    } else {
+                    publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations,
+                        healthObserver: nativeHealthFixtureObserver, submissionObserver: nativeSubmissionFixtureObserver) : publisherFactory(access.publishUrl, observations)
+                    }
+                    #else
+                    publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations) : publisherFactory(access.publishUrl, observations)
+                    #endif
+                    session = try PublishingSession(publisher: publisher, maxBytes: 12 * 1024 * 1024 * context.profile.captureQueueScale,
+                        healthCheckInterval: Self.publishingHealthInterval,
+                        ingressObservation: ingressConfiguration(for: videoObservation))
+                    ingressObservation = session.snapshot.ingressObservation
+                } catch {
+                    videoObservation = observations?.close()
+                    throw error
+                }
+                #if DEBUG
+                if let candidate = publisher as? NativeCandidatePublisher {
+                    await candidate.setDiagnostics { [weak session] in NativeCandidatePublisher.Pressure(session?.snapshot) }
+                    try check(context, attempt)
+                }
+                #endif
+                publishing = (context, session, broadcast.generation, attempt, observations, publisher as? any PublishingProbeObserving)
+                guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
+                startupStage = "publisherStart"
+                try await session.start()
+                try check(context, attempt)
+                #if DEBUG
+                if nativeFixedUHDForDiagnostics { qualityDriver = nil }
+                else {
+                qualityDriver = try allowsUHD ? PublishingQualityDriver.production(session: session, attemptID: attempt,
+                    profiles: nativeDirectUHDForDiagnostics
+                        ? [PublishingQualityDriver.productionUHDProfiles[0], PublishingQualityDriver.productionUHDProfiles.last!]
+                        : PublishingQualityDriver.productionUHDProfiles) : qualityFactory(session, attempt)
+                }
+                #else
+                qualityDriver = try allowsUHD ? PublishingQualityDriver.production(session: session, attemptID: attempt,
+                    profiles: PublishingQualityDriver.productionUHDProfiles) : qualityFactory(session, attempt)
+                #endif
+                qualityDriver?.appliedSettingsDidChange = { [weak self, weak session] settings in
+                    guard let self, let session, let live = self.publishing,
+                          live.session === session, live.attempt == attempt,
+                          (self.localState == .starting || self.localState == .publishing), self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
+                          session.snapshot.state == .publishing, session.snapshot.failure == nil else { return }
+                    if self.appliedPublishingSettings != settings { self.appliedPublishingSettings = settings }
+                }
+                #if DEBUG
+                qualityDriver?.candidateInputDiagnosticProvider = { [weak self, weak session] in
+                    guard let self, let session, let live = self.publishing, live.session === session,
+                          live.attempt == attempt, self.current?.tap === live.context.tap else { return [:] }
+                    return self.candidateInputDiagnostic
+                }
+                qualityDriver?.currentDiagnosticDidChange = { [weak self, weak session] value in
+                    guard let self, let session, let live = self.publishing,
+                          live.session === session, live.attempt == attempt,
+                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
+                          session.snapshot.state == .publishing, session.snapshot.failure == nil else { return }
+                    self.qualityDiagnostic = value
+                }
+                #endif
+                if let candidate = publisher as? NativeOwnedCandidatePublisher, let driver = qualityDriver {
+                    let policy: PublishingBandwidthProbeSnapshot.Policy
+                    #if DEBUG
+                    policy = candidate.maximumAttempts == nil ? .recoveryBudget :
+                        try NativeMeasuredTrialFixture.probePolicy(environment: ProcessInfo.processInfo.environment)
+                    #else
+                    policy = .recoveryBudget
+                    #endif
+                    try await driver.installOwnedMeasurementPublisher(candidate, session: session, policy: policy)
+                    try check(context, attempt)
+                }
+                #if DEBUG
+                if let candidate = publisher as? NativeCandidatePublisher, let driver = qualityDriver {
+                    let installed = await candidate.setMeasurementContextProvider { [weak self, weak session, weak driver] in
+                        guard let self, let session, let driver else { return nil }
+                        return await self.candidateMeasurementContext(session: session, attempt: attempt, driver: driver)
+                    }
+                    try check(context, attempt)
+                    if installed {
+                        driver.sourceEvaluationDidComplete = { [weak candidate] in
+                            candidate?.measurementReadinessChanged()
+                        }
+                    }
+                }
+                #endif
+                if let readCandidate = measuredCandidateFactory(publisher) {
+                    let mode: CandidateAdmissionMode = (publisher as? NativeOwnedCandidatePublisher)?.stagePlanSelection.isProductionSRT == true ? .productionSRT : .laboratoryIPv4
+                    qualityDriver?.candidateInputProvider = { [weak self] state in
+                        await self?.measuredCandidateInput(state, admissionMode: mode, readCandidate: readCandidate)
+                    }
+                }
+                qualityDriver?.cadenceInputProvider = { [weak self, weak session] in
+                    guard let self, let session, let live = self.publishing,
+                          live.session === session, live.attempt == attempt,
+                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
+                          session.snapshot.state == .publishing, session.snapshot.failure == nil else { return nil }
+                    return .init(cadence: self.workerDecoderCadenceFreshness, diagnostics: .init(snapshot: session.snapshot))
+                }
+                qualityDriver?.deliveryInputProvider = { [weak self] in
+                    guard let self, let current = self.publishing, current.attempt == attempt,
+                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == current.context.id, self.current?.tap === current.context.tap,
+                          let history = current.observations?.sourceHistorySnapshot,
+                          let delivery = self.workerDecoderDeliveryFreshness,
+                          let clock = current.session.snapshot.transportClock else { return nil }
+                    return .init(history: history, clock: .init(scope: history.scope, transportClock: clock, isClosed: false),
+                        diagnostics: .init(snapshot: current.session.snapshot), delivery: delivery, authority: self.deliveryAuthority)
+                }
+                #if DEBUG
+                capacityClockFixture = observations.map { capacityClockFixtureFactory($0.snapshot.scope) } ?? nil
+                if let capacityClockFixture {
+                    // Lab timestamps must remain responsive while MainActor control awaits network I/O.
+                    capacityClockPolling = Task.detached { await capacityClockFixture.runPolling() }
+                }
+                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true, environment: ProcessInfo.processInfo.environment, timingProfile: qualityDriver?.timingProfile)
+                if let fixture = publisher as? NativeProfileTransitionPublisher {
+                    if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
+                    else { transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence) }
+                }
+                #endif
+                localState = .publishing
+                nativeReconnect = nil; nativeHealthySince = reconnectClock()
+                shouldStopOwnedBroadcast = false
+                message = "Sending camera media. Worker output is reported separately."
+            } catch {
+                #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+                Self.persistStartupFailure(error, stage: startupStage, attemptID: attempt)
+                #endif
+                if epoch == attempt {
+                    detachPublisher(); localState = .failed
+                    if let reconnecting, nativeReconnect?.id == reconnecting.id,
+                       Self.isTransientControlFailure(error) || error as? PublishingSessionError == .startFailed || error as? CaptureControlError == .workerUnavailable {
+                        scheduleNativeReconnect(context: reconnecting.context, gameID: reconnecting.gameID,
+                            generation: reconnecting.generation)
+                    } else {
+                        cancelNativeReconnect(); shouldStopOwnedBroadcast = reconnecting == nil; fail(error)
+                    }
+                }
+                if let coordinator { commandState = await coordinator.state() }
+            }
+        }
+        action = task
+        return task
+    }
+
+    func stopStreaming() async {
+        cancelNativeReconnect()
+        requestedStart = nil
+        if let stoppingTask { await stoppingTask.value; return }
+        stopping = true
+        epoch = UUID()
+        let priorAction = action, priorActionID = actionID
+        priorAction?.cancel()
+        detachPublisher()
+        let teardown = publisherTeardown
+        shouldStopOwnedBroadcast = true
+        let coordinator = coordinator
+        let task = Task { [self] in
+            await coordinator?.setActiveRecording(nil)
+            await teardown?.value
+            await priorAction?.value
+            if actionID == priorActionID { action = nil; actionID = nil; busy = false }
+            await pollControl()
+        }
+        stoppingTask = task
+        await task.value
+        stoppingTask = nil
+        stopping = false
+    }
+
+    /// A separate modest timer drives this method. A delayed request never blocks
+    /// camera health. Local state and observation expiry use pollLocalHealth().
+    func pollBackgroundControl() async {
+        await restore()
+        // Let an in-flight poll settle under the existing controlBusy guard.
+        // Once idle and clean, keep the form enabled until editing finishes.
+        // Pending commands/reports, stop ownership and storage failures retain
+        // normal recovery because they make canChangeSetup false.
+        if isSetupPresented && current == nil && canChangeSetup { return }
+        await pollControl(includeWorkerStatus: false)
+    }
+
+    func pollControl(includeWorkerStatus: Bool = true) async {
+        let controlStartedUptime = ProcessInfo.processInfo.systemUptime
+        if needsStorageRetry && setup == nil { restored = false }
+        await restore()
+        // Defer the owned broadcast stop until publisher finish settles. Each
+        // control await can reenter a local stop on MainActor.
+        guard !busy, !controlBusy, !publisherStopping, let setup, setup.credential != nil else { return }
+        controlBusy = true
+        var controlFailed = false
+        defer {
+            controlBusy = false
+            resumeRequestedStart(controlFailed: controlFailed)
+            if !controlFailed { resumeNativeReconnect() }
+        }
+        do {
+            try persist()
+            if coordinator == nil { try makeCoordinator() }
+            try await flushReports()
+            guard !publisherStopping, let coordinator else { return }
+            var state = try await coordinator.recover(activeRecordingId: shouldStopOwnedBroadcast ? nil : current?.id)
+            guard !publisherStopping else { return }
+            commandState = state
+            if message == Self.reconnectingMessage { message = nil }
+            if shouldStopOwnedBroadcast {
+                state = try await reconcileOwnedStop(state, coordinator: coordinator)
+                guard !publisherStopping else { return }
+                if shouldStopOwnedBroadcast && state.pending != nil { return }
+            }
+            if let publishing {
+                let broadcast = state.snapshot?.broadcast
+                if broadcast?.desired != .running || broadcast?.generation != publishing.generation || broadcast?.selection?.recordingId != publishing.context.id || broadcast?.selection?.captureDeviceId != setup.deviceId {
+                    detachPublisher()
+                    message = "Streaming selection ended or changed. Recording continues on this device."
+                }
+            }
+            if includeWorkerStatus {
+                controlFailed = await pollWorkerStatus(controlStartedUptime: controlStartedUptime)
+            }
+        } catch {
+            controlFailed = true
+            clearWorker()
+            if let coordinator { commandState = await coordinator.state() }
+            handlePollingFailure(error)
+        }
+    }
+
+    /// Keep stop ownership until recovery proves the owned selection is gone.
+    /// Both maintenance and replacement startup must honor the same intent.
+    private func reconcileOwnedStop(_ recovered: BroadcastCoordinatorState,
+                                    coordinator: BroadcastCommandCoordinator) async throws -> BroadcastCoordinatorState {
+        guard shouldStopOwnedBroadcast, let setup else { return recovered }
+        var state = recovered
+        if state.pending != nil {
+            do { state = try await coordinator.discardExpired(); commandState = state }
+            catch BroadcastCoordinatorError.notExpired { return state }
+        }
+        guard !publisherStopping else { return state }
+        if state.pending == nil, let selection = state.snapshot?.broadcast.selection,
+           state.snapshot?.broadcast.desired == .running, selection.captureDeviceId == setup.deviceId,
+           ownedRecordingIDs.contains(selection.recordingId) {
+            state = try await coordinator.submit(.stop, activeRecordingId: current?.id, requiredStopSelection: selection)
+            commandState = state
+        }
+        if state.pending == nil, let broadcast = state.snapshot?.broadcast,
+           broadcast.desired == .stopped || broadcast.selection.map({
+               $0.captureDeviceId != setup.deviceId || !ownedRecordingIDs.contains($0.recordingId)
+           }) == true {
+            setupClearStopOwnership()
+            try persist()
+            shouldStopOwnedBroadcast = false
+        }
+        return state
+    }
+
+    /// Worker acquisition has its own foreground schedule. It never awaits
+    /// persistence, report flushing or broadcast-command recovery.
+    func pollWorkerStatus() async {
+        _ = await pollWorkerStatus(controlStartedUptime: ProcessInfo.processInfo.systemUptime)
+    }
+
+    private func pollWorkerStatus(controlStartedUptime: Double) async -> Bool {
+        #if DEBUG
+        if nativeUHDPollingIsFrozen { return false }
+        #endif
+        guard !Task.isCancelled else { return false }
+        let request: Task<Bool, Never>
+        if let inFlight = workerStatusRequest {
+            request = inFlight.task
+        } else {
+            guard !busy, !stopping, !publisherStopping,
+                  let setup, let credential = setup.credential else { return false }
+            let id = UUID(), observedEpoch = workerEpoch
+            let observedBroadcast = commandState?.snapshot?.broadcast
+            let observedPublishing = publishing
+            let requestTask = Task { [self] in
+                defer {
+                    // An obsolete completion can release only its own slot.
+                    if workerStatusRequest?.id == id { workerStatusRequest = nil }
+                }
+                @MainActor func ownsRequest() -> Bool {
+                    !Task.isCancelled && workerStatusRequest?.id == id && workerEpoch == observedEpoch &&
+                    self.setup?.endpoint == setup.endpoint && self.setup?.credential == credential &&
+                    commandState?.snapshot?.broadcast == observedBroadcast &&
+                    publishing?.attempt == observedPublishing?.attempt &&
+                    publishing?.session === observedPublishing?.session &&
+                    (observedPublishing == nil || (activeRecordingID == observedPublishing?.context.id &&
+                        current?.tap === observedPublishing?.context.tap && diagnosticAttemptID == observedPublishing?.attempt))
+                }
+                guard ownsRequest() else { return false }
+                do {
+                    let requestStartedAtUptime = ProcessInfo.processInfo.systemUptime
+                    let requestStart = ContinuousClock.now
+                    let response: WorkerMediaStatusResponse
+                    do {
+                        let deliveryRequest: DecoderDeliveryRequest? = publishing == nil ? nil :
+                            workerDeliveryTracker.cursor.map(DecoderDeliveryRequest.after) ?? .full
+                        response = try await clientForSetup().workerStatus(credential: credential, delivery: deliveryRequest)
+                    } catch {
+                        // A stopped attempt no longer owns either successes or failures.
+                        guard ownsRequest() else { return false }
+                        throw error
+                    }
+                    let received = ContinuousClock.now
+                    let responseReceivedAtUptime = ProcessInfo.processInfo.systemUptime
+                    guard ownsRequest() else { return false }
+                    guard response.status.gameId == credential.gameId, response.status.generation == commandState?.snapshot?.broadcast.generation,
+                          response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(reason: .contextMismatch); return false }
+                    let requestDuration = requestStart.duration(to: received)
+                    // Read sender acceptance after the receiver response; earlier local
+                    // counts could legitimately lag bytes already observed by the relay.
+                    let probeReadStartedAt = ProcessInfo.processInfo.systemUptime
+                    let readSequence = nextProbeReadSequence()
+                    let observedProbe = await observedPublishing?.probeObserver?.probeObservation()
+                    let probeReadFinishedAt = ProcessInfo.processInfo.systemUptime
+                    guard ownsRequest() else { return false }
+                    let probe = acceptProbeObservation(observedProbe, sequence: readSequence)
+                    // A response whose native join was overtaken has no truthful native
+                    // read bracket for the newer proof. Preserve current evidence and
+                    // wait for the next control response instead of relabelling it.
+                    guard acceptedProbeReadSequence == readSequence else { return false }
+                    updateReceiverProbe(response: response, probe: probe, receivedAt: received, requestDuration: requestDuration,
+                        requestStartedAtUptime: requestStartedAtUptime, responseReceivedAtUptime: responseReceivedAtUptime,
+                        probeReadStartedAt: probeReadStartedAt, probeReadFinishedAt: probeReadFinishedAt)
+                    workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
+                    workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
+                    if let publishing, localState == .publishing,
+                       publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+                       current?.tap === publishing.context.tap, response.status.validatedPublication != nil {
+                        if let timing = DeliveryRequestTiming(startedAt: requestStartedAtUptime, receivedAt: responseReceivedAtUptime) {
+                            workerDecoderDeliveryFreshness = workerDeliveryTracker.observe(response: response,
+                                expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration, requestTiming: timing)
+                        } else {
+                            workerDeliveryTracker.unavailable(reason: .invalidRequestTiming); workerDecoderDeliveryFreshness = nil
+                        }
+                        workerDecoderCadenceFreshness = WorkerDecoderCadenceFreshness(response: response,
+                            expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
+                        if let history = publishing.observations?.sourceHistorySnapshot {
+                            workerSourceInterval = workerSourceTracker.observe(response: response, history: history,
+                                clock: clockObservation(publishing.session.snapshot.transportClock, scope: history.scope, isClosed: false),
+                                receivedAt: received, requestDuration: requestDuration)
+                        } else { workerSourceTracker.clear(); workerSourceInterval = nil }
+                    } else {
+                        workerDecoderCadenceFreshness = nil
+                        workerDeliveryTracker.unavailable(reason: .publicationUnavailable); workerDecoderDeliveryFreshness = nil
+                        workerSourceTracker.clear()
+                        workerSourceInterval = nil
+                    }
+                    #if DEBUG
+                    if let publishing, localState == .publishing, publishing.attempt == diagnosticAttemptID {
+                        let evaluatedUptime = ProcessInfo.processInfo.systemUptime, evaluated = ContinuousClock.now
+                        cadenceReportAudit?.record(response: response, expectedAttempt: publishing.attempt,
+                            helper: workerDecoderCadenceFreshness, delivery: workerDecoderDeliveryFreshness, receivedAt: received, requestDuration: requestDuration,
+                            receivedUptime: responseReceivedAtUptime, instant: evaluated, evaluatedUptime: evaluatedUptime,
+                            timing: .init(controlStartedUptime: controlStartedUptime, statusRequestStartedUptime: requestStartedAtUptime,
+                                responseReceivedUptime: responseReceivedAtUptime, probeReadStartedUptime: probeReadStartedAt,
+                                probeReadFinishedUptime: probeReadFinishedAt, auditEvaluatedUptime: evaluatedUptime))
+                    }
+                    if workerReportAgeProofsEnabled, let interval = workerSourceInterval {
+                        let previous = workerSourceIntervalHistory.last
+                        if previous?.sequence != interval.sequence || previous?.workerEpoch != interval.workerEpoch ||
+                            previous?.workerAttempt != interval.workerAttempt || previous?.publication != interval.publication {
+                            workerSourceIntervalHistory.append(interval)
+                            if workerSourceIntervalHistory.count > 128 { workerSourceIntervalHistory.removeFirst() }
+                        } else if !workerSourceIntervalHistory.isEmpty {
+                            // Keep the original source/age anchor while recording later completion evidence.
+                            workerSourceIntervalHistory[workerSourceIntervalHistory.count - 1].processing = interval.processing
+                        }
+                    }
+                    if workerReportAgeProofsEnabled, let publishing, localState == .publishing,
+                       publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+                       let scope = publishing.observations?.snapshot.scope {
+                        // One evaluation instant, one call to the actual helper. Preserve
+                        // its return; export must never recompute or imply current age.
+                        let evaluated = ContinuousClock.now
+                        let actualAge = workerDecodedVideoFreshness?.ageUpperBound(at: evaluated)
+                        workerReportAgeProofHistory.record(WorkerReportAgeProof(scope: scope,
+                            helper: workerDecodedVideoFreshness,
+                            serverUpperBoundMs: response.status.decodedVideoAgeUpperBoundMs,
+                            requestDuration: requestDuration, residenceDuration: received.duration(to: evaluated),
+                            helperAgeUpperBound: actualAge))
+                    } else { workerReportAgeProofHistory.clear() }
+                    #endif
+                    // A newly completed worker report need not wait for the next health
+                    // tick. The driver coalesces both callers into the same owned task.
+                    if let publishing, let qualityDriver {
+                        qualityDriver.tick(encoderReady: publishing.observations?.hasEncodedSourceHistory == true,
+                            source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: publishing.session.snapshot))
+                    }
+                    workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
+                    return false
+                } catch {
+                    // Cancellation and revoked ownership are not network failures.
+                    guard ownsRequest(), !(error is CancellationError),
+                          (error as? URLError)?.code != .cancelled else { return false }
+                    // Maintenance may still be suspended with a queued button tap.
+                    // End that intent now; its later completion cannot revive it.
+                    requestedStart = nil
+                    clearWorker(reason: .statusRequestFailed)
+                    // Teardown joins this request; this request must never await teardown.
+                    handlePollingFailure(error)
+                    return true
+                }
+            }
+            workerStatusRequest = (id, requestTask)
+            request = requestTask
+        }
+        // SwiftUI cancellation does not automatically cancel an unstructured task.
+        return await withTaskCancellationHandler {
+            await request.value
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+    func pollLocalHealth(at instant: ContinuousClock.Instant = .now) {
+        workerDeliveryTracker.expire(at: instant)
+        workerDecoderDeliveryFreshness = workerDeliveryTracker.latest
+        receiverProbeTracker.expire(at: instant)
+        workerReceiverProbeInterval = receiverProbeTracker.latest
+        if receiverProbeLeaseDeadline.map({ instant < $0 }) != true ||
+            receiverProbeOwner?.isActive(at: ProcessInfo.processInfo.systemUptime) != true {
+            receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: instant)
+            receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
+            workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+        }
+        if workerReceiverProbeFreshness?.snapshotAgeUpperBound(at: instant).map({ $0 <= WorkerReceiverProbeTracker.maximumAge }) != true ||
+            workerReceiverProbeFreshness?.lastDeliveryAgeUpperBound(at: instant).map({ $0 <= WorkerReceiverProbeTracker.maximumAge }) != true {
+            workerReceiverProbeFreshness = nil
+        }
+        workerSourceTracker.expire(at: instant)
+        workerSourceInterval = workerSourceTracker.latest
+        if workerFreshness?.isFresh(at: instant) == false {
+            workerState = .stale; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
+            #if DEBUG
+            workerReportAgeProofHistory.clear()
+            #endif
+        }
+        guard let publishing else { return }
+        videoObservation = publishing.observations?.poll()
+        let snapshot = publishing.session.snapshot
+        sentSamples = snapshot.sentSamples
+        ingressObservation = snapshot.ingressObservation
+        publishingClockObservation = clockObservation(snapshot.transportClock,
+            scope: videoObservation?.scope, isClosed: false)
+        #if DEBUG
+        let shouldTickQuality = !nativeUHDPollingIsFrozen
+        #else
+        let shouldTickQuality = true
+        #endif
+        if shouldTickQuality { qualityDriver?.tick(encoderReady: publishing.observations?.hasEncodedSourceHistory == true,
+            source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: snapshot))
+        }
+        if snapshot.failure != nil || snapshot.state == .stopped {
+            let retryable = snapshot.failure == .publisherUnhealthy || snapshot.failure == .appendFailed
+            let gameID = setup?.credential?.gameId
+            detachPublisher()
+            localState = .failed
+            if retryable, let gameID, current?.tap === publishing.context.tap, !stopping {
+                scheduleNativeReconnect(context: publishing.context, gameID: gameID, generation: publishing.generation)
+            } else {
+                cancelNativeReconnect(); shouldStopOwnedBroadcast = true
+                message = "Camera publishing stopped. Your local recording continues. Retry streaming when the connection is ready."
+            }
+        } else if let since = nativeHealthySince, reconnectClock() - since >= 30 {
+            nativeReconnectFailures = 0
+        }
+    }
+
+    private func cancelNativeReconnect() {
+        nativeReconnect = nil; nativeReconnectFailures = 0; nativeHealthySince = nil
+    }
+    private func scheduleNativeReconnect(context: CurrentCapture, gameID: String, generation: Int) {
+        let delays = [2.0, 4.0, 8.0, 16.0, 30.0]
+        nativeReconnectFailures = min(nativeReconnectFailures + 1, delays.count)
+        nativeHealthySince = nil
+        nativeReconnect = .init(context: context, gameID: gameID, generation: generation,
+            notBefore: reconnectClock() + delays[nativeReconnectFailures - 1])
+        shouldStopOwnedBroadcast = false
+        message = "Stream connection interrupted. Local recording continues; reconnecting automatically."
+    }
+    /// Called only after a successful control poll, outside its busy guard.
+    private func resumeNativeReconnect() {
+        guard let retry = nativeReconnect, !busy, !stopping, !publisherStopping,
+              publishing == nil, requestedStart == nil, commandState?.pending == nil else { return }
+        guard current?.id == retry.context.id, current?.tap === retry.context.tap,
+              setup?.credential?.gameId == retry.gameID,
+              let broadcast = commandState?.snapshot?.broadcast,
+              broadcast.desired == .running, broadcast.generation == retry.generation,
+              broadcast.selection?.captureDeviceId == setup?.deviceId,
+              broadcast.selection?.recordingId == retry.context.id,
+              broadcast.selection?.workerId == setup?.workerId,
+              broadcast.selection?.outputId == setup?.outputId else {
+            cancelNativeReconnect()
+            message = "Streaming selection ended or changed. Recording continues on this device."
+            return
+        }
+        guard reconnectClock() >= retry.notBefore, !needsStorageRetry else { return }
+        _ = beginStreaming(reconnecting: retry)
+    }
+
+    private func nextProbeReadSequence() -> UInt64 {
+        probeReadSequence += 1
+        return probeReadSequence
+    }
+
+    /// A bounded latest native sample. A late reader can use newer accepted
+    /// ownership, but cannot move its byte count, stage or lease backwards.
+    @discardableResult private func acceptProbeObservation(_ value: PublishingProbeObservation?, sequence: UInt64) -> PublishingProbeObservation? {
+        guard sequence > acceptedProbeReadSequence else { return receiverProbeOwner }
+        let instant = ContinuousClock.now, now = ProcessInfo.processInfo.systemUptime
+        guard let value, value.isActive(at: now),
+              value.publishingGeneration == publishing?.session.snapshot.transportClock?.publishingGeneration else {
+            acceptedProbeReadSequence = sequence
+            receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: instant)
+            receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
+            workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+            return nil
+        }
+        if let prior = receiverProbeOwner {
+            let sameOwner = prior.id == value.id && prior.publishingGeneration == value.publishingGeneration &&
+                prior.policy == value.policy && prior.stage == value.stage && prior.campaign == value.campaign && prior.bitRate == value.bitRate && prior.startedAt == value.startedAt
+            if sameOwner {
+                guard value.acceptedPayloadBytes >= prior.acceptedPayloadBytes,
+                      value.leaseDeadline >= prior.leaseDeadline,
+                      (value.lastAcceptedAt ?? 0) >= (prior.lastAcceptedAt ?? 0) else { return prior }
+            } else {
+                receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: instant)
+                workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+            }
+        }
+        acceptedProbeReadSequence = sequence
+        receiverProbeOwner = value
+        receiverProbeLeaseDeadline = instant + .seconds(value.leaseDeadline - now)
+        return value
+    }
+
+    #if DEBUG
+    private func candidateMeasurementContext(session: PublishingSession, attempt: UUID,
+                                             driver: PublishingQualityDriver) async -> PublishingQualitySession.CandidateMeasurementContext? {
+        guard let original = publishing else { return nil }
+        func ownsCurrent() -> Bool {
+            guard let live = publishing else { return false }
+            return !Task.isCancelled && qualityDriver === driver && live.session === session &&
+                live.attempt == attempt && diagnosticAttemptID == attempt && localState == .publishing &&
+                activeRecordingID == original.context.id && current?.tap === original.context.tap &&
+                live.context.tap === original.context.tap && session.snapshot.state == .publishing &&
+                session.snapshot.failure == nil
+        }
+        guard ownsCurrent() else { return nil }
+        let context = await driver.candidateMeasurementContext(diagnostics: .init(snapshot: session.snapshot))
+        guard ownsCurrent() else { return nil }
+        return context
+    }
+    #endif
+
+    func measuredCandidateInput(_ state: PublishingQualitySession.Snapshot,
+                                admissionMode: CandidateAdmissionMode = .laboratoryIPv4,
+                                readCandidate: MeasuredCandidateReader) async -> PublishingCandidateAdmission? {
+        guard let original = publishing else { return nil }
+        let session = original.session, attempt = original.attempt, tap = original.context.tap
+        let ownerEpoch = workerEpoch
+        func ownsCurrent() -> Bool {
+            guard let live = publishing else { return false }
+            return !Task.isCancelled && workerEpoch == ownerEpoch && live.session === session && live.attempt == attempt &&
+                diagnosticAttemptID == attempt && localState == .publishing &&
+                activeRecordingID == original.context.id && current?.tap === tap &&
+                live.session.snapshot.state == .publishing && live.session.snapshot.failure == nil
+        }
+        func note(_ gate: String) {
+            #if DEBUG
+            guard ownsCurrent() else { return }
+            candidateInputDiagnostic["candidateProviderGate"] = gate
+            candidateInputDiagnostic["candidateProviderObservedAtUptimeSeconds"] = String(ProcessInfo.processInfo.systemUptime)
+            #endif
+        }
+        guard ownsCurrent(), state.attemptID == attempt, !state.isClosed, !state.isBusy else { note("owner-unavailable"); return nil }
+        let refreshSequence = nextProbeReadSequence()
+        let nativeProbe = await original.probeObserver?.probeObservation()
+        guard ownsCurrent() else { return nil }
+        // This observes a real native lease even before candidate completion.
+        // Receiver report timestamps remain anchored to the original response.
+        guard acceptProbeObservation(nativeProbe, sequence: refreshSequence) != nil else { note("native-probe-unavailable"); return nil }
+        guard let revision = state.revision, let settings = state.applied, let receipt = state.receipt,
+              let acknowledgedAt = state.acknowledgedAt,
+              let boundAuthority = candidateAuthority else { note("applied-or-authority-unavailable"); return nil }
+        let candidateSequence = nextProbeReadSequence()
+        let candidate = await readCandidate()
+        guard ownsCurrent(), candidateAuthority === boundAuthority else { note("owner-changed"); return nil }
+        guard let candidate else { note("candidate-not-ready"); return nil }
+        guard let probe = acceptProbeObservation(candidate.probe, sequence: candidateSequence) else { note("candidate-probe-unavailable"); return nil }
+        // Read every mutable input only after the final await. Exact scope also
+        // binds recording/tap observations, not just the publishing attempt.
+        guard candidate.measurement.scope == publishing?.observations?.snapshot.scope,
+              let pair = receiverProbeTracker.latestPair, let authority = candidateAuthority,
+              authority.permits(pair.newer.end), authority.permits(pair.older.end) else { note("candidate-scope-or-receiver-pair-unavailable"); return nil }
+        let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: revision,
+            settings: settings, receipt: receipt, acknowledgedAt: acknowledgedAt)
+        let id = candidate.measurement.id, permitsCandidate = candidate.permitsCurrentCandidate
+        let admit = admissionMode == .productionSRT ? PublishingCandidateAdmission.productionSRT : PublishingCandidateAdmission.laboratoryIPv4
+        note("validating-admission")
+        let admission = admit(candidate.measurement, applied,
+            candidate.binding, candidate.boundAt, candidate.completedAt,
+            probe, pair, authority, .sample(),
+            { [weak session] in session?.snapshot.lastBitRateChange },
+            { permitsCandidate(id) }, { gate in
+                #if DEBUG
+                self.candidateInputDiagnostic["lastCandidateAdmissionGate"] = gate
+                self.candidateInputDiagnostic["lastCandidateAdmissionObservedAtUptimeSeconds"] = String(ProcessInfo.processInfo.systemUptime)
+                #endif
+            })
+        note(admission == nil ? "admission-unavailable" : "admitted")
+        return admission
+    }
+
+    private func updateReceiverProbe(response: WorkerMediaStatusResponse, probe: PublishingProbeObservation?,
+                                     receivedAt: ContinuousClock.Instant, requestDuration: Duration,
+                                     requestStartedAtUptime: Double, responseReceivedAtUptime: Double,
+                                     probeReadStartedAt: Double, probeReadFinishedAt: Double) {
+        let now = ContinuousClock.now
+        let nativeNow = ProcessInfo.processInfo.systemUptime
+        guard let publishing, localState == .publishing, publishing.session.snapshot.state == .publishing,
+              publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+              current?.tap === publishing.context.tap, let probe, probe.isActive(at: nativeNow),
+              probe.publishingGeneration == publishing.session.snapshot.transportClock?.publishingGeneration,
+              let worker = commandState?.snapshot?.broadcast.selection?.workerId else {
+            receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: now)
+            receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
+            workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil; return
+        }
+        // ContinuousClock was sampled before uptime: conversion errs toward expiry.
+        receiverProbeLeaseDeadline = now + .seconds(probe.leaseDeadline - nativeNow)
+        receiverProbeOwner = probe
+        let expected = WorkerReceiverProbeExpectation(gameId: response.status.gameId, generation: publishing.generation,
+            workerId: worker, publishingAttemptId: publishing.attempt.uuidString.lowercased(),
+            probeId: probe.id.uuidString.lowercased(), publishingGeneration: probe.publishingGeneration,
+            bitRate: probe.bitRate, stage: probe.stage, campaign: probe.campaign)
+        let evidence = WorkerReceiverProbeFreshness(response: response, expected: expected,
+            receivedAt: receivedAt, requestDuration: requestDuration)
+        workerReceiverProbeInterval = receiverProbeTracker.observe(evidence, acceptedPayloadBytes: probe.acceptedPayloadBytes,
+            senderActive: true, at: now)
+        let fresh = evidence?.snapshotAgeUpperBound(at: now).map { $0 <= WorkerReceiverProbeTracker.maximumAge } == true &&
+            (evidence?.snapshot.deliveredMessages == "0" || evidence?.lastDeliveryAgeUpperBound(at: now).map { $0 <= WorkerReceiverProbeTracker.maximumAge } == true)
+        workerReceiverProbeFreshness = !receiverProbeTracker.isQuarantined && fresh ? evidence : nil
+        #if DEBUG
+        if workerReportAgeProofsEnabled {
+            receiverProbeHistory.record(workerReceiverProbeInterval, accepted: probe, at: now,
+                timing: .init(requestStartedAt: requestStartedAtUptime, responseReceivedAt: responseReceivedAtUptime,
+                    nativeReadStartedAt: probeReadStartedAt, nativeReadFinishedAt: probeReadFinishedAt, evaluatedAt: nativeNow),
+                quarantined: receiverProbeTracker.isQuarantined)
+        }
+        #endif
+    }
+
+    private func joinActiveMatch() async throws {
+        guard var saved = setup else { throw CaptureControlError.noSetup }
+        let client = try clientForSetup()
+        let active = try await client.active(installationToken: saved.installationToken)
+        try Task.checkCancellation()
+        guard let match = active.snapshot, match.status == .active else { throw CaptureControlError.noActiveMatch }
+        if saved.credential?.gameId != match.id {
+            guard try pendingStore.load() == nil, saved.reports.isEmpty else { throw CaptureControlError.unresolved }
+        }
+        let joined = try await client.join(gameId: match.id, deviceId: saved.deviceId, role: .capture, installationToken: saved.installationToken)
+        try Task.checkCancellation()
+        guard joined.credential.gameId == match.id, joined.credential.deviceId == saved.deviceId, joined.credential.role == .capture else { throw CaptureControlError.invalidCredential }
+        // Reload the mutable outbox after I/O: a local stop may have queued a report.
+        saved.reports = setup?.reports ?? []
+        saved.credential = joined.credential
+        setup = saved
+        try persist()
+        try makeCoordinator()
+        if let current { queueReport(current, status: .recording) }
+    }
+    private func makeCoordinator() throws {
+        guard let saved = setup, let credential = saved.credential else { return }
+        guard credential.deviceId == saved.deviceId, credential.role == .capture else { throw CaptureControlError.invalidCredential }
+        coordinator = BroadcastCommandCoordinator(client: try clientForSetup(), credential: credential, installationToken: saved.installationToken, endpointScope: saved.endpointScope, store: pendingStore)
+        connectedGameID = credential.gameId
+    }
+    private func clientForSetup() throws -> MatchHTTPClient {
+        guard let setup else { throw CaptureControlError.noSetup }
+        return clientFactory(try ScoringEndpoint(setup.endpoint))
+    }
+    private func check(_ context: CurrentCapture, _ attempt: UUID) throws {
+        try Task.checkCancellation()
+        guard current?.id == context.id, current?.tap === context.tap, epoch == attempt else { throw CaptureControlError.recordingStopped }
+    }
+    private func ingressConfiguration(for snapshot: VideoFrameObservationSnapshot?) -> LiveIngressObservationConfiguration? {
+        guard let snapshot else { return nil }
+        #if DEBUG && targetEnvironment(simulator)
+        let limit = VideoObservationFixture.completedWindowLimit(environment: ProcessInfo.processInfo.environment)
+        #else
+        let limit = 8
+        #endif
+        return .init(scope: snapshot.scope, monotonicAnchor: snapshot.monotonicAnchor,
+            windowDuration: snapshot.windowDuration, completedWindowLimit: limit, initialPhase: .startup)
+    }
+
+    private func clockObservation(_ clock: PublishingTransportClock?, scope: VideoFrameObservationScope?,
+                                  isClosed: Bool) -> PublishingClockObservation? {
+        guard let clock, let scope else { return nil }
+        return PublishingClockObservation(scope: scope, transportClock: clock, isClosed: isClosed)
+    }
+
+    private func detachPublisher() {
+        appliedPublishingSettings = nil
+        #if DEBUG
+        qualityDiagnostic = nil; candidateInputDiagnostic = [:]
+        #endif
+        let statusRequest = workerStatusRequest?.task
+        statusRequest?.cancel()
+        candidateAuthority?.revoke()
+        if let publishing {
+            publishing.context.tap.detach(publishing.session)
+            let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
+            #if DEBUG
+            let capacityClock = capacityClockFixture; capacityClockFixture = nil
+            let capacityClockTask = capacityClockPolling; capacityClockPolling = nil
+            capacityClockTask?.cancel()
+            var cadenceAudit = cadenceReportAudit
+            let cadenceWriter = cadenceReportFixtureWriter
+            cadenceReportAudit = nil
+            let transitions = transitionDriver; transitionDriver = nil; transitions?.cancel()
+            let adaptiveProof = adaptiveProfileEvidence; adaptiveProfileEvidence = nil
+            // Production fixture I/O defaults only on explicitly enabled simulators.
+            // Tests may inject an in-memory writer to exercise this same joined boundary.
+            let fixtureWriter = workerReportAgeProofsEnabled ? videoObservationFixtureWriter : nil
+            // A final callback cannot establish capture detach or hide a stall.
+            let captureDetachedAt = fixtureWriter == nil ? nil : ProcessInfo.processInfo.systemUptime
+            let workerReportAgeProofs = workerReportAgeProofHistory.proofs
+            let sourceIntervals = workerSourceIntervalHistory
+            let probeWriter = workerReportAgeProofsEnabled ? receiverProbeFixtureWriter : nil
+            let probeData = probeWriter == nil ? nil : publishing.observations.flatMap { try? receiverProbeHistory.data(scope: $0.snapshot.scope) }
+            #endif
+            publishing.session.cancel()
+            if diagnosticAttemptID == publishing.attempt {
+                let snapshot = publishing.session.snapshot
+                ingressObservation = snapshot.ingressObservation
+                publishingClockObservation = clockObservation(snapshot.transportClock,
+                    scope: publishing.observations?.snapshot.scope, isClosed: true)
+            }
+            let session = publishing.session
+            let observations = publishing.observations, attempt = publishing.attempt
+            let id = UUID()
+            teardownID = id
+            publisherStopping = true
+            publisherTeardown = Task { [self] in
+                #if DEBUG
+                await capacityClockTask?.value
+                await capacityClock?.closeAndExport()
+                #endif
+                await quality?.stop()
+                #if DEBUG
+                await transitions?.stop()
+                #endif
+                await session.stop()
+                _ = await statusRequest?.value
+                #if DEBUG
+                cadenceAudit?.close()
+                if let cadenceData = try? cadenceAudit?.data(), let cadenceWriter { await cadenceWriter(cadenceData) }
+                if let probeData, let probeWriter { await probeWriter(probeData) }
+                if let adaptiveProof {
+                    adaptiveProof.close()
+                    if let data = try? adaptiveProof.data() { await NativeProfileTransitionEvidence.persist(data) }
+                }
+                #endif
+                // Drain completion owns closure, even when an old task can no longer
+                // publish diagnostics. Normal stop changes epoch before this returns.
+                let final = observations?.close()
+                if teardownID == id {
+                    if diagnosticAttemptID == attempt {
+                        let snapshot = session.snapshot
+                        videoObservation = final
+                        ingressObservation = snapshot.ingressObservation
+                        publishingClockObservation = clockObservation(snapshot.transportClock,
+                            scope: final?.scope, isClosed: true)
+                        #if DEBUG
+                        if let final, let captureDetachedAt, let fixtureWriter {
+                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs, ingressObservation, publishingClockObservation, sourceIntervals)
+                        }
+                        #endif
+                    }
+                    publisherStopping = false
+                    publisherTeardown = nil
+                    teardownID = nil
+                }
+            }
+        }
+        publishing = nil; localState = .idle; sentSamples = 0; clearWorker()
+    }
+    private func clearWorker(reason: WorkerDecoderDeliveryTracker.UnavailabilityReason = .statusUnavailable) {
+        workerStatusRequest?.task.cancel()
+        candidateAuthority?.revoke(); candidateAuthority = nil
+        acceptedProbeReadSequence = nextProbeReadSequence()
+        workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
+        workerSourceTracker.clear(); workerSourceInterval = nil
+        if publishing == nil { workerDeliveryTracker.reset() } else { workerDeliveryTracker.unavailable(reason: reason) }
+        workerDecoderDeliveryFreshness = nil
+        if publishing == nil { receiverProbeTracker.reset() }
+        else { receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false) }
+        receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
+        workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+        #if DEBUG
+        workerReportAgeProofHistory.clear()
+        workerSourceIntervalHistory = []
+        if publishing == nil { receiverProbeHistory = ReceiverProbeFixtureHistory() }
+        #endif
+    }
+    private func reserveStopOwnership(_ id: String) throws {
+        guard var saved = setup else { throw CaptureControlError.noSetup }
+        var ids = saved.stopRecordingIDs ?? []
+        if !ids.contains(id) {
+            guard ids.count < 64 else { throw CaptureControlError.unresolved }
+            ids.append(id)
+        }
+        saved.stopRecordingIDs = ids
+        setup = saved
+        ownedRecordingIDs.insert(id)
+        try persist()
+    }
+    private func setupClearStopOwnership() { setup?.stopRecordingIDs = [] }
+
+    private func queueReport(_ context: CurrentCapture, status: RecordingStatus) {
+        guard var saved = setup, let credential = saved.credential else { return }
+        if let index = saved.reports.firstIndex(where: { $0.report.recordingId == context.id }) {
+            if saved.reports[index].report.status == status { return }
+            saved.reports[index].report.sequence += 1
+            saved.reports[index].report.status = status
+            saved.reports[index].delivered = false
+        } else {
+            saved.reports.append(PendingCaptureReport(credential: credential, report: RecordingReport(recordingId: context.id, sequence: 1, status: status, startedAt: context.startedAt), delivered: false))
+        }
+        setup = saved
+        do { try persist() } catch { fail(error) }
+    }
+    private func flushReports() async throws {
+        try persist()
+        while let pending = setup?.reports.first(where: { !$0.delivered }) {
+            // A live report is never replayed after local capture ends/relaunches.
+            guard pending.report.status != .recording || current?.id == pending.report.recordingId else { throw CaptureControlError.recordingStopped }
+            let response = try await clientForSetup().reportRecording(pending.report, credential: pending.credential)
+            guard response.recording.gameId == pending.credential.gameId, response.recording.deviceId == pending.credential.deviceId,
+                  response.recording.recordingId == pending.report.recordingId, response.recording.sequence == pending.report.sequence,
+                  response.recording.status == pending.report.status, response.recording.startedAt == pending.report.startedAt else { throw MatchClientError.invalidResponse }
+            if let index = setup?.reports.firstIndex(where: { $0.report == pending.report }) {
+                if pending.report.status == .recording { setup?.reports[index].delivered = true }
+                else { setup?.reports.remove(at: index) }
+                try persist()
+            }
+            try Task.checkCancellation()
+        }
+    }
+    private func persist() throws {
+        guard let setup else { return }
+        do { try storage.save(setup); needsStorageRetry = false }
+        catch { needsStorageRetry = true; throw CaptureControlError.storage }
+    }
+    private static let reconnectingMessage = "Server connection interrupted. Recording and publishing continue; reconnecting automatically."
+
+    /// Control availability is independent of the accepted media connection.
+    /// Stale worker evidence is cleared by callers; a fresh snapshot still enforces
+    /// selection ownership on recovery. Never resurrect starts or explicit stops.
+    private func handlePollingFailure(_ error: Error) {
+        if nativeReconnect != nil {
+            if Self.isTransientControlFailure(error) { return }
+            cancelNativeReconnect()
+        }
+        if let publishing, !shouldStopOwnedBroadcast, !publisherStopping,
+           publishing.session.snapshot.state == .publishing,
+           publishing.session.snapshot.failure == nil,
+           Self.isTransientControlFailure(error) {
+            message = Self.reconnectingMessage
+            return
+        }
+        if publishing != nil { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true }
+        fail(error)
+    }
+
+    private static func isTransientControlFailure(_ error: Error) -> Bool {
+        if let error = error as? URLError {
+            switch error.code {
+            case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+                 .dnsLookupFailed, .notConnectedToInternet, .internationalRoamingOff,
+                 .callIsActive, .dataNotAllowed:
+                return true
+            default: return false
+            }
+        }
+        if case let MatchClientError.http(status, _) = error {
+            return status == 429 || (500...599).contains(status)
+        }
+        return false
+    }
+
+    private func fail(_ error: Error) {
+        candidateAuthority?.revoke()
+        if error is CancellationError || error as? CaptureControlError == .recordingStopped { return }
+        #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+        if controlFailureAuditCount < 16 {
+            controlFailureAuditCount += 1
+            Self.persistStartupFailure(error, stage: "controlFailure", attemptID: UUID())
+        }
+        #endif
+        if localState == .starting { localState = .failed }
+        if error as? CaptureControlError == .storage || error as? BroadcastCoordinatorError == .storageFailure {
+            needsStorageRetry = true
+            message = "Streaming state could not be saved. Retry before changing setup. Local recording is independent."
+        } else if error as? CaptureControlError == .unresolved || commandState?.pending != nil {
+            message = "Broadcast command is unresolved. Retry reconciliation before changing setup."
+        } else if error as? CaptureControlError == .workerUnavailable {
+            message = "The selected streaming proxy is unavailable or cannot start its encoder/output. Check the worker and output in Setup, then retry. Local recording continues."
+        } else if error as? CaptureControlError == .noActiveMatch {
+            message = "No active match. Create or join a match in Score, then connect capture."
+        } else if error as? CaptureControlError == .noSetup {
+            message = "Set the server, installation token, worker and output before streaming."
+        } else {
+            message = "Streaming control failed. Check the server connection and retry. Local recording is independent."
+        }
+    }
+
+    #if DEBUG && os(iOS) && !targetEnvironment(simulator)
+    private static func persistStartupFailure(_ error: Error, stage: String, attemptID: UUID) {
+        let scalar = error as NSError
+        var record: [String: Any] = ["formatVersion": 1, "attemptID": attemptID.uuidString.lowercased(),
+            "stage": stage, "uptimeSeconds": ProcessInfo.processInfo.systemUptime,
+            "errorType": String(reflecting: type(of: error)), "domain": scalar.domain, "code": scalar.code]
+        if case let MatchClientError.http(status, code) = error {
+            record["httpStatus"] = status
+            if let code, code.range(of: "^[a-zA-Z0-9_]{1,64}$", options: .regularExpression) != nil {
+                record["httpErrorCode"] = code
+            }
+        }
+        if let underlying = scalar.userInfo[NSUnderlyingErrorKey] as? NSError {
+            record["underlyingDomain"] = underlying.domain; record["underlyingCode"] = underlying.code
+        }
+        // No localized text, userInfo, server response, URL or credential is retained.
+        guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) else { return }
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Scorebug/QA", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: directory.appendingPathComponent("streaming-failure-\(attemptID.uuidString.lowercased()).json"), options: .withoutOverwriting)
+    }
+    #endif
+    private func validIdentifier(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 128 && value.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }
+    }
+}

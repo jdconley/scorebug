@@ -1,0 +1,551 @@
+@preconcurrency import AVFoundation
+import XCTest
+@testable import ScorebugMedia
+
+@MainActor final class PublishingSessionTests: XCTestCase {
+    func testReadinessRejectsSamplesUntilStartCompletesAndCannotRestart() async throws {
+        let gate = PublishingGate()
+        let publisher = PublisherFixture(startGate: gate)
+        let session = try PublishingSession(publisher: publisher)
+        let sample = try publishingAudio(1)
+        XCTAssertFalse(session.offer(sample))
+        let start = Task { try await session.start() }
+        await gate.waitUntilEntered()
+        XCTAssertEqual(session.snapshot.state, .starting)
+        XCTAssertFalse(session.offer(sample))
+        gate.release()
+        try await start.value
+        XCTAssertEqual(session.snapshot.state, .publishing)
+        XCTAssertTrue(session.offer(sample))
+        await eventually { publisher.seconds == [1] }
+        await session.stop()
+        XCTAssertEqual(session.snapshot.state, .stopped)
+        XCTAssertFalse(session.offer(sample))
+        do { try await session.start(); XCTFail("Sessions are one-use") }
+        catch { XCTAssertEqual(error as? PublishingSessionError, .invalidState) }
+        XCTAssertEqual(publisher.starts, 1)
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testStartFailureJoinsPublisherCleanupAndLatchesSanitizedFailure() async throws {
+        let publisher = PublisherFixture(startFails: true)
+        let session = try PublishingSession(publisher: publisher)
+        do { try await session.start(); XCTFail("Expected startup failure") }
+        catch { XCTAssertEqual(error as? PublishingSessionError, .startFailed) }
+        XCTAssertEqual(session.snapshot.failure, .startFailed)
+        XCTAssertEqual(session.snapshot.state, .failed)
+        XCTAssertEqual(publisher.stops, 1)
+        await session.stop()
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testAppendFailureClosesIngressAndAutomaticallyStopsPublisher() async throws {
+        let publisher = PublisherFixture(appendFails: true)
+        let session = try PublishingSession(publisher: publisher)
+        try await session.start()
+        XCTAssertTrue(session.offer(try publishingAudio(1)))
+        await eventually { session.snapshot.failure == .appendFailed }
+        await session.stop()
+        XCTAssertFalse(session.offer(try publishingAudio(2)))
+        XCTAssertEqual(session.snapshot.sentSamples, 0)
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testHealthMonitorDetectsIdleFailureWithoutSamples() async throws {
+        let publisher = PublisherFixture()
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2))
+        try await session.start()
+        publisher.markUnhealthy()
+        await eventually { session.snapshot.failure == .publisherUnhealthy }
+        await session.stop()
+        XCTAssertEqual(session.snapshot.sentSamples, 0)
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testStopUnblocksSuspendedHealthAndJoinsMonitorBeforeReturning() async throws {
+        let publisher = SuspendedHealthPublisher()
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2))
+        try await session.start()
+        await eventually { publisher.healthGate.hasEntered }
+        let stop = Task { await session.stop() }
+        await eventually { publisher.healthCompletionGate.hasEntered }
+        XCTAssertEqual(publisher.stops, 1, "Publisher stop must unblock the suspended health query")
+        XCTAssertFalse(publisher.healthReturned)
+        XCTAssertEqual(session.snapshot.state, .stopping, "Stop must join the monitor after publisher.stop returns")
+        publisher.healthCompletionGate.release()
+        await stop.value
+        XCTAssertTrue(publisher.healthReturned)
+        XCTAssertEqual(session.snapshot.state, .stopped)
+        XCTAssertNil(session.snapshot.failure)
+    }
+
+    func testQueueDropsOldestByCountAndBytesAndRejectsOversizeWithoutEviction() async throws {
+        for limits in [(2, 100), (8, 4)] {
+            let gate = PublishingGate()
+            let publisher = PublisherFixture(appendGate: gate)
+            let session = try PublishingSession(publisher: publisher, maxItems: limits.0, maxBytes: limits.1)
+            try await session.start()
+            XCTAssertTrue(session.offer(try publishingAudio(0)))
+            await gate.waitUntilEntered()
+            for second in 1...4 { XCTAssertTrue(session.offer(try publishingAudio(Int64(second)))) }
+            XCTAssertEqual(session.snapshot.queue.currentItems, 2)
+            XCTAssertEqual(session.snapshot.queue.currentBytes, 4)
+            XCTAssertEqual(session.snapshot.queue.droppedCount, 2)
+            XCTAssertFalse(session.offer(try publishingAudio(99, bytes: 102)))
+            XCTAssertEqual(session.snapshot.queue.rejectedCount, 1)
+            XCTAssertEqual(session.snapshot.queue.currentItems, 2)
+            XCTAssertNil(session.snapshot.failure)
+            gate.release()
+            await eventually { publisher.seconds.count == 3 }
+            XCTAssertEqual(publisher.seconds, [0, 3, 4], "Stale queued media is evicted")
+            await session.stop()
+            XCTAssertEqual(session.snapshot.sentSamples, 3)
+        }
+    }
+
+    func testStopDuringStartupUnblocksStartAndCannotResurrect() async throws {
+        let gate = PublishingGate()
+        let publisher = PublisherFixture(startGate: gate)
+        let session = try PublishingSession(publisher: publisher)
+        let start = Task { try await session.start() }
+        await gate.waitUntilEntered()
+        await session.stop()
+        do { try await start.value; XCTFail("Stopped startup cannot succeed") }
+        catch { XCTAssertEqual(error as? PublishingSessionError, .cancelled) }
+        XCTAssertEqual(session.snapshot.state, .stopped)
+        XCTAssertFalse(session.offer(try publishingAudio(1)))
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testStopUnblocksAppendDiscardsQueueAndJoinsCancelledConcurrentWaiters() async throws {
+        let appendGate = PublishingGate()
+        let stopGate = PublishingGate()
+        let publisher = PublisherFixture(appendGate: appendGate, stopGate: stopGate)
+        let session = try PublishingSession(publisher: publisher)
+        try await session.start()
+        XCTAssertTrue(session.offer(try publishingAudio(0)))
+        await appendGate.waitUntilEntered()
+        XCTAssertTrue(session.offer(try publishingAudio(1)))
+        let first = Task { await session.stop() }
+        await stopGate.waitUntilEntered()
+        let second = Task { await session.stop() }
+        first.cancel(); second.cancel()
+        XCTAssertEqual(session.snapshot.state, .stopping)
+        XCTAssertEqual(session.snapshot.queue.currentItems, 0)
+        XCTAssertEqual(session.snapshot.queue.droppedCount, 1)
+        XCTAssertFalse(session.offer(try publishingAudio(2)))
+        stopGate.release()
+        await first.value; await second.value
+        XCTAssertEqual(session.snapshot.state, .stopped)
+        XCTAssertEqual(publisher.stops, 1)
+        XCTAssertTrue(publisher.appendReturned)
+    }
+
+    func testExplicitCancelIsLatchedAndCleanupIsJoined() async throws {
+        let publisher = PublisherFixture()
+        let session = try PublishingSession(publisher: publisher)
+        try await session.start()
+        session.cancel()
+        await session.stop()
+        XCTAssertEqual(session.snapshot.failure, .cancelled)
+        XCTAssertEqual(session.snapshot.state, .failed)
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testOwnerDeinitSchedulesCleanupWithoutIdleWorkerRetainingOwner() async throws {
+        let publisher = PublisherFixture()
+        var session: PublishingSession? = try PublishingSession(publisher: publisher)
+        weak let owner = session
+        try await session!.start()
+        session = nil
+        XCTAssertNil(owner)
+        await eventually { publisher.stops == 1 }
+    }
+
+    func testTapAttachesLateReplacesSessionAndGuardsStaleDetach() async throws {
+        let tap = PublishingTap()
+        let one = PublisherFixture(), two = PublisherFixture()
+        let first = try PublishingSession(publisher: one), second = try PublishingSession(publisher: two)
+        try await first.start(); try await second.start()
+        XCTAssertFalse(tap.offer(try publishingAudio(0)))
+        XCTAssertTrue(tap.attach(first))
+        XCTAssertTrue(tap.offer(try publishingAudio(1)))
+        await eventually { one.seconds == [1] }
+        XCTAssertTrue(tap.attach(second))
+        tap.detach(first)
+        XCTAssertTrue(tap.offer(try publishingAudio(2)))
+        await eventually { two.seconds == [2] }
+        tap.detach(second)
+        XCTAssertFalse(tap.offer(try publishingAudio(3)))
+        XCTAssertEqual(first.snapshot.state, .publishing, "Tap does not own stop policy")
+        await first.stop(); await second.stop()
+    }
+
+    func testDefaultLimitsBoundEightItemsAndTwelveMiBIndependently() async throws {
+        for bytes in [2, 2 * 1024 * 1024] {
+            let gate = PublishingGate()
+            let publisher = PublisherFixture(appendGate: gate)
+            let session = try PublishingSession(publisher: publisher)
+            try await session.start()
+            session.offer(try publishingAudio(0))
+            await gate.waitUntilEntered()
+            let sample = try publishingAudio(1, bytes: bytes)
+            for _ in 0..<10 { XCTAssertTrue(session.offer(sample)) }
+            let expectedItems = bytes == 2 ? 8 : 6
+            XCTAssertEqual(session.snapshot.queue.currentItems, expectedItems)
+            XCTAssertEqual(session.snapshot.queue.currentBytes, expectedItems * bytes)
+            XCTAssertEqual(session.snapshot.queue.droppedCount, 10 - expectedItems)
+            await session.stop()
+        }
+    }
+
+    func testCancelledStartWaiterDoesNotAbandonReadiness() async throws {
+        let gate = PublishingGate()
+        let publisher = PublisherFixture(startGate: gate)
+        let session = try PublishingSession(publisher: publisher)
+        let start = Task { try await session.start() }
+        await gate.waitUntilEntered()
+        start.cancel()
+        gate.release()
+        try await start.value
+        XCTAssertEqual(session.snapshot.state, .publishing)
+        await session.stop()
+    }
+
+    func testUnhealthyReadinessNeverAdmitsSamples() async throws {
+        let publisher = PublisherFixture(unhealthyAtStart: true)
+        let session = try PublishingSession(publisher: publisher)
+        do { try await session.start(); XCTFail("Readiness must be healthy") }
+        catch { XCTAssertEqual(error as? PublishingSessionError, .publisherUnhealthy) }
+        XCTAssertFalse(session.offer(try publishingAudio(1)))
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testStopBeforeStartIsTerminalAndReleasesPublisherOnce() async throws {
+        let publisher = PublisherFixture()
+        let session = try PublishingSession(publisher: publisher)
+        await session.stop()
+        await session.stop()
+        XCTAssertEqual(session.snapshot.state, .stopped)
+        do { try await session.start(); XCTFail("Stopped instances are not reusable") }
+        catch { XCTAssertEqual(error as? PublishingSessionError, .invalidState) }
+        XCTAssertEqual(publisher.starts, 0)
+        XCTAssertEqual(publisher.stops, 1)
+    }
+
+    func testIngressObservationSeparatesReadinessOverflowAndJoinedShutdown() async throws {
+        let startGate = PublishingGate(), appendGate = PublishingGate(), stopGate = PublishingGate()
+        defer { startGate.release(); appendGate.release(); stopGate.release() }
+        let publisher = PublisherFixture(startGate: startGate, appendGate: appendGate, stopGate: stopGate)
+        let configuration = ingressConfiguration()
+        let session = try PublishingSession(publisher: publisher, maxItems: 1, maxBytes: 10,
+            ingressObservation: configuration)
+        XCTAssertEqual(session.snapshot.ingressObservation?.phase, .startup)
+        XCTAssertFalse(session.offer(try publishingAudio(99)))
+        let start = Task { try await session.start() }
+        await startGate.waitUntilEntered()
+        XCTAssertEqual(session.snapshot.ingressObservation?.phase, .startup)
+        XCTAssertTrue(session.snapshot.ingressObservation?.totalDispositions.isEmpty == true)
+        startGate.release()
+        try await start.value
+        XCTAssertEqual(session.snapshot.ingressObservation?.phase, .admitting)
+        XCTAssertTrue(session.offer(try publishingAudio(0)))
+        await appendGate.waitUntilEntered()
+        XCTAssertTrue(session.offer(try publishingAudio(1)))
+        XCTAssertTrue(session.offer(try publishingAudio(2)))
+        let active = try XCTUnwrap(session.snapshot.ingressObservation)
+        XCTAssertEqual(active.scope, configuration.scope)
+        XCTAssertEqual(active.maxItems, 1)
+        XCTAssertEqual(active.maxBytes, 10)
+        XCTAssertEqual(active.totalDispositions[.admitted]?[.audio]?.count, 3)
+        XCTAssertEqual(active.totalDispositions[.dequeued]?[.audio]?.count, 1)
+        XCTAssertEqual(active.totalDispositions[.overflowEvicted]?[.audio]?.count, 1)
+        XCTAssertEqual(active.totalDispositions[.overflowEvicted]?[.audio]?.minimumSourcePTS?.seconds, 1)
+        let stop = Task { await session.stop() }
+        await stopGate.waitUntilEntered()
+        let closing = try XCTUnwrap(session.snapshot.ingressObservation)
+        XCTAssertTrue(closing.isClosed)
+        XCTAssertEqual(session.snapshot.state, .stopping)
+        XCTAssertEqual(closing.totalDispositions[.cancellationDiscarded]?[.audio]?.minimumSourcePTS?.seconds, 2)
+        XCTAssertEqual(closing.currentItems, 0)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(session.snapshot.ingressObservation?.current.monotonicEnd, closing.current.monotonicEnd)
+        stopGate.release()
+        await stop.value
+        XCTAssertEqual(session.snapshot.state, .stopped)
+        XCTAssertEqual(session.snapshot.ingressObservation?.current.monotonicEnd, closing.current.monotonicEnd)
+    }
+
+    func testFailedReadinessClosesStartupObservationWithoutInventingAdmission() async throws {
+        let session = try PublishingSession(publisher: PublisherFixture(startFails: true),
+            ingressObservation: ingressConfiguration())
+        do { try await session.start(); XCTFail("Expected startup failure") } catch {}
+        let snapshot = try XCTUnwrap(session.snapshot.ingressObservation)
+        XCTAssertTrue(snapshot.isClosed)
+        XCTAssertEqual(snapshot.phase, .closed)
+        XCTAssertTrue(snapshot.totalDispositions.isEmpty)
+        XCTAssertEqual(snapshot.totalOccupancy.maxPressureSeconds, 0)
+        XCTAssertEqual(snapshot.invalidity, [])
+    }
+
+    func testUnavailableIngressDiagnosticsKeepPublishingUsable() async throws {
+        let valid = ingressConfiguration()
+        let invalid = LiveIngressObservationConfiguration(scope: valid.scope, monotonicAnchor: .nan)
+        for configuration in [nil, invalid] {
+            let publisher = PublisherFixture()
+            let session = try PublishingSession(publisher: publisher, ingressObservation: configuration)
+            try await session.start()
+            XCTAssertTrue(session.offer(try publishingAudio(5)))
+            await eventually { publisher.seconds == [5] }
+            XCTAssertNil(session.snapshot.ingressObservation)
+            await session.stop()
+            XCTAssertNil(session.snapshot.ingressObservation)
+            XCTAssertEqual(session.snapshot.sentSamples, 1)
+        }
+    }
+
+    private func ingressConfiguration() -> LiveIngressObservationConfiguration {
+        .init(scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 1,
+            publishingAttemptID: UUID(), appliedProfileRevision: 1),
+            monotonicAnchor: ProcessInfo.processInfo.systemUptime)
+    }
+
+    func testThermalSamplingStartsAfterReadinessAndUsesExistingMonitor() async throws {
+        let gate = PublishingGate(), sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: PublisherFixture(startGate: gate),
+            healthCheckInterval: .milliseconds(2), thermalSampler: { sampler.sample() })
+        XCTAssertTrue(session.snapshot.thermalObservation.samples.isEmpty)
+        let start = Task { try await session.start() }
+        await gate.waitUntilEntered()
+        XCTAssertEqual(sampler.count, 0)
+        gate.release(); try await start.value
+        await eventually { session.snapshot.thermalObservation.samples.count >= 3 }
+        let live = session.snapshot.thermalObservation
+        XCTAssertEqual(live.samples.first?.sampledAt, 100)
+        XCTAssertEqual(live.interval(from: 100, to: 100.5)?.enclosingMaximumState, .serious)
+        await session.stop()
+        let closed = session.snapshot.thermalObservation
+        XCTAssertTrue(closed.isClosed)
+        XCTAssertNil(closed.freshSample(at: try XCTUnwrap(closed.samples.last).sampledAt))
+        XCTAssertNotNil(closed.interval(from: 100, to: 100.5))
+        let count = sampler.count
+        await session.stop()
+        XCTAssertEqual(sampler.count, count)
+        XCTAssertEqual(session.snapshot.thermalObservation, closed)
+        XCTAssertFalse(live.isClosed, "Earlier value snapshots stay immutable")
+    }
+
+    func testThermalStopFreezesHistoryBeforeSuspendedHealthReturns() async throws {
+        let publisher = SuspendedHealthPublisher(), sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2),
+            thermalSampler: { sampler.sample() })
+        try await session.start()
+        await eventually { publisher.healthGate.hasEntered }
+        XCTAssertEqual(sampler.count, 2, "Readiness plus the monitor read before awaiting health")
+        let stop = Task { await session.stop() }
+        await eventually { publisher.healthCompletionGate.hasEntered }
+        let closed = session.snapshot.thermalObservation
+        XCTAssertTrue(closed.isClosed)
+        XCTAssertEqual(closed.samples.count, 2)
+        publisher.healthCompletionGate.release()
+        await stop.value
+        XCTAssertEqual(session.snapshot.thermalObservation, closed)
+        XCTAssertEqual(sampler.count, 2)
+    }
+
+    func testThermalCancelledStartupNeverSamplesAndClosesHistory() async throws {
+        let gate = PublishingGate(), sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: PublisherFixture(startGate: gate),
+            healthCheckInterval: .milliseconds(2), thermalSampler: { sampler.sample() })
+        let start = Task { try await session.start() }
+        await gate.waitUntilEntered()
+        await session.stop()
+        do { try await start.value; XCTFail("Stopped startup cannot succeed") } catch {}
+        XCTAssertEqual(sampler.count, 0)
+        XCTAssertTrue(session.snapshot.thermalObservation.samples.isEmpty)
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+    }
+
+    func testThermalInvalidReadingQuarantinesOnlyDiagnosticsWhilePublicationContinues() async throws {
+        let publisher = PublisherFixture()
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2),
+            thermalSampler: { .init(state: .nominal, sampledAt: .nan) })
+        try await session.start()
+        XCTAssertTrue(session.snapshot.thermalObservation.isQuarantined)
+        XCTAssertNil(session.snapshot.thermalObservation.freshSample(at: 1))
+        XCTAssertEqual(session.snapshot.state, .publishing)
+        XCTAssertNil(session.snapshot.failure)
+        XCTAssertTrue(session.offer(try publishingAudio(1)))
+        await eventually { session.snapshot.sentSamples == 1 }
+        XCTAssertEqual(publisher.seconds, [1])
+        XCTAssertEqual(publisher.stops, 0)
+        await session.stop()
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+        XCTAssertTrue(session.snapshot.thermalObservation.isQuarantined)
+    }
+
+    func testThermalFailedReadinessNeverSamples() async throws {
+        let sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: PublisherFixture(unhealthyAtStart: true),
+            healthCheckInterval: .milliseconds(2), thermalSampler: { sampler.sample() })
+        do { try await session.start(); XCTFail("Unhealthy startup cannot succeed") } catch {}
+        XCTAssertEqual(sampler.count, 0)
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+    }
+
+    func testThermalProductionSamplerCollectsRealSystemReadingsAndCloses() async throws {
+        let start = ProcessInfo.processInfo.systemUptime
+        let session = try PublishingSession(publisher: PublisherFixture(), healthCheckInterval: .milliseconds(20))
+        try await session.start()
+        await eventually { session.snapshot.thermalObservation.samples.count >= 2 }
+        let live = session.snapshot.thermalObservation
+        let now = ProcessInfo.processInfo.systemUptime
+        let first = try XCTUnwrap(live.samples.first), last = try XCTUnwrap(live.freshSample(at: now))
+        XCTAssertGreaterThanOrEqual(first.sampledAt, start)
+        XCTAssertLessThanOrEqual(last.sampledAt, now)
+        XCTAssertGreaterThan(last.sampledAt, first.sampledAt)
+        XCTAssertNotNil(live.interval(from: first.sampledAt, to: last.sampledAt))
+        print("actual-system-thermal-readings: \(live.samples.map { "\($0.sampledAt):\($0.state)" })")
+        await session.stop()
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+        XCTAssertNil(session.snapshot.thermalObservation.freshSample(at: ProcessInfo.processInfo.systemUptime))
+    }
+
+    private func eventually(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !condition(), ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(condition(), "Condition did not become true", file: file, line: line)
+    }
+}
+
+private final class PublisherFixture: MediaPublisher, @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = false
+    private var ended = false
+    private var startCount = 0, stopCount = 0
+    private var timestamps: [Int64] = []
+    private var didReturnAppend = false
+    let startGate: PublishingGate?, appendGate: PublishingGate?, stopGate: PublishingGate?
+    let startFails: Bool, appendFails: Bool, unhealthyAtStart: Bool
+    init(startGate: PublishingGate? = nil, appendGate: PublishingGate? = nil,
+         stopGate: PublishingGate? = nil, startFails: Bool = false, appendFails: Bool = false, unhealthyAtStart: Bool = false) {
+        self.startGate = startGate; self.appendGate = appendGate; self.stopGate = stopGate
+        self.startFails = startFails; self.appendFails = appendFails; self.unhealthyAtStart = unhealthyAtStart
+    }
+    var starts: Int { lock.withLock { startCount } }
+    var stops: Int { lock.withLock { stopCount } }
+    var seconds: [Int64] { lock.withLock { timestamps } }
+    var appendReturned: Bool { lock.withLock { didReturnAppend } }
+    var isPublishing: Bool { get async { lock.withLock { active } } }
+    func start() async throws {
+        lock.withLock { startCount += 1 }
+        await startGate?.block()
+        if startFails { throw FixtureError.sensitiveTransportDetail }
+        try lock.withLock {
+            if ended { throw CancellationError() }
+            active = !unhealthyAtStart
+        }
+    }
+    func append(_ sample: CapturedMediaSample) async throws {
+        await appendGate?.block()
+        lock.withLock { didReturnAppend = true }
+        if appendFails { throw FixtureError.sensitiveTransportDetail }
+        try lock.withLock {
+            if ended { throw CancellationError() }
+            timestamps.append(Int64(sample.sampleBuffer.presentationTimeStamp.seconds))
+        }
+    }
+    func stop() async {
+        lock.withLock { stopCount += 1; ended = true; active = false }
+        startGate?.release(); appendGate?.release()
+        await stopGate?.block()
+    }
+    func markUnhealthy() { lock.withLock { active = false } }
+    private enum FixtureError: Error { case sensitiveTransportDetail }
+}
+
+private final class SuspendedHealthPublisher: MediaPublisher, @unchecked Sendable {
+    let healthGate = PublishingGate()
+    let healthCompletionGate = PublishingGate()
+    private let lock = NSLock()
+    private var healthReads = 0, stopCount = 0
+    private var active = false, didReturnHealth = false
+    var stops: Int { lock.withLock { stopCount } }
+    var healthReturned: Bool { lock.withLock { didReturnHealth } }
+    var isPublishing: Bool {
+        get async {
+            let shouldSuspend = lock.withLock { healthReads += 1; return healthReads > 1 }
+            if shouldSuspend {
+                // Deliberately ignores task cancellation. Publisher.stop must
+                // unblock this query, then the session must join its return.
+                await healthGate.block()
+                await healthCompletionGate.block()
+                lock.withLock { didReturnHealth = true }
+            }
+            return lock.withLock { active }
+        }
+    }
+    func start() async throws { lock.withLock { active = true } }
+    func append(_ sample: CapturedMediaSample) async throws {}
+    func stop() async {
+        lock.withLock { stopCount += 1; active = false }
+        healthGate.release()
+    }
+}
+
+private final class PublishingGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entered = false, released = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func block() async {
+        await withCheckedContinuation { pending in
+            let immediate = lock.withLock {
+                entered = true
+                if released { return true }
+                continuation = pending; return false
+            }
+            if immediate { pending.resume() }
+        }
+    }
+    var hasEntered: Bool { lock.withLock { entered } }
+    func waitUntilEntered() async { while !hasEntered { await Task.yield() } }
+    func release() {
+        let pending = lock.withLock { released = true; let result = continuation; continuation = nil; return result }
+        pending?.resume()
+    }
+}
+
+private func publishingAudio(_ second: Int64, bytes: Int = 2) throws -> CapturedMediaSample {
+    var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+        mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked, mBytesPerPacket: 2,
+        mFramesPerPacket: 1, mBytesPerFrame: 2, mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+    var format: CMAudioFormatDescription?
+    XCTAssertEqual(CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &description,
+        layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil,
+        formatDescriptionOut: &format), noErr)
+    var block: CMBlockBuffer?
+    XCTAssertEqual(CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+        blockLength: bytes, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+        offsetToData: 0, dataLength: bytes, flags: 0, blockBufferOut: &block), noErr)
+    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 48_000),
+        presentationTimeStamp: CMTime(value: second, timescale: 1), decodeTimeStamp: .invalid)
+    var sampleSize = 2
+    var sample: CMSampleBuffer?
+    XCTAssertEqual(CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block,
+        formatDescription: try XCTUnwrap(format), sampleCount: bytes / 2, sampleTimingEntryCount: 1,
+        sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize,
+        sampleBufferOut: &sample), noErr)
+    return try CapturedMediaSample(sampleBuffer: XCTUnwrap(sample), kind: .audio)
+}
+
+private final class ThermalSamplerFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    var count: Int { lock.withLock { reads } }
+    func sample() -> PublishingThermalSample {
+        lock.withLock {
+            defer { reads += 1 }
+            return .init(state: reads == 1 ? .serious : .nominal, sampledAt: 100 + Double(reads) / 4)
+        }
+    }
+}

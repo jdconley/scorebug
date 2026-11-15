@@ -1,0 +1,68 @@
+{
+  "unknown": {
+    "status": {
+      "gameId": "match",
+      "generation": 1,
+      "workerId": "mac",
+      "observation": null,
+      "observedAt": null,
+      "expiresAt": null,
+      "state": "unknown"
+    },
+    "serverTime": "2026-09-14T04:00:00.000Z"
+  },
+  "current": {
+    "status": {
+      "gameId": "match",
+      "generation": 1,
+      "workerId": "mac",
+      "observation": {
+        "gameId": "match",
+        "generation": 1,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2026-09-14T04:00:00.000Z",
+      "expiresAt": "2026-09-14T04:00:05.000Z",
+      "state": "producing_output"
+    },
+    "serverTime": "2026-09-14T04:00:00.000Z"
+  },
+  "stale": {
+    "status": {
+      "gameId": "match",
+      "generation": 1,
+      "workerId": "mac",
+      "observation": {
+        "gameId": "match",
+        "generation": 1,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1
+      },
+      "observedAt": "2026-09-14T04:00:00.000Z",
+      "expiresAt": "2026-09-14T04:00:05.000Z",
+      "state": "stale"
+    },
+    "serverTime": "2026-09-14T04:00:05.000Z"
+  },
+  "stopped": {
+    "status": {
+      "gameId": "match",
+      "generation": 2,
+      "workerId": null,
+      "observation": null,
+      "observedAt": null,
+      "expiresAt": null,
+      "state": "not_requested"
+    },
+    "serverTime": "2026-09-14T04:00:05.000Z"
+  }
+}

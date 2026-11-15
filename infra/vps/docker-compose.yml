@@ -1,18 +1,7 @@
-# Production VPS stack: Caddy (TLS) + control-plane (Hono) + MediaMTX (SRT).
-# MediaMTX runs in host networking mode so SRT UDP punches through cleanly.
-#
-# Run from this directory:
-#   docker compose pull
-#   docker compose build
-#   docker compose up -d
-#
-# Required env in `.env` (next to this file):
-#   PHONE_TOKEN, HOME_TOKEN, INTERNAL_TOKEN — see ../../apps/control-plane/.env.example
-#   CADDY_DOMAIN — e.g. api.scorebug.live (Caddy will fetch a Let's Encrypt cert)
-
+# Run from this directory after preparing the private .env file.
 services:
   caddy:
-    image: caddy:2-alpine
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
     restart: unless-stopped
     ports:
       - '80:80'
@@ -22,7 +11,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      CADDY_DOMAIN: ${CADDY_DOMAIN}
+      CADDY_DOMAIN: ${CADDY_DOMAIN:?Set the public API domain}
     depends_on:
       - control-plane
 
@@ -30,30 +19,44 @@ services:
     build:
       context: ../..
       dockerfile: apps/control-plane/Dockerfile
-    image: scorebug/control-plane:latest
+    image: scorebug/control-plane:${SCOREBUG_RELEASE:-local}
     restart: unless-stopped
     environment:
-      PHONE_TOKEN: ${PHONE_TOKEN}
-      HOME_TOKEN: ${HOME_TOKEN}
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      PHONE_TOKEN: ${PHONE_TOKEN:?Set a private phone token}
+      HOME_TOKEN: ${HOME_TOKEN:?Set a private worker token}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set a private installation secret}
       PORT: 8787
       HOST: 0.0.0.0
-      INGEST_HOST: ${INGEST_HOST}
+      DATABASE_PATH: /data/scorebug.sqlite
+      INGEST_HOST: ${INGEST_HOST:?Set the externally reachable SRT hostname}
       INGEST_PORT: ${INGEST_PORT:-8890}
-      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      RELAY_API_URL: http://mediamtx:9997
+      RELAY_API_USERNAME: scorebug-admin
+      RELAY_API_PASSWORD: ${RELAY_API_PASSWORD:?Set a private relay management password}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://localhost.invalid}
       LOG_LEVEL: info
+    volumes:
+      - control_data:/data
     expose:
       - '8787'
+    depends_on:
+      - mediamtx
+    stop_grace_period: 30s
 
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: scorebug/ingest:drain-v1
+    build:
+      context: ../../vendor/MediaMTX
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - '${INGEST_PORT:-8890}:8890/udp'
     environment:
-      MTX_INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      MTX_AUTHINTERNALUSERS_1_PASS: ${RELAY_API_PASSWORD:?Set a private relay management password}
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+    stop_grace_period: 10s
 
 volumes:
+  control_data:
   caddy_data:
   caddy_config:

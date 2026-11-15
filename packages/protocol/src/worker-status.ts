@@ -1,0 +1,160 @@
+import type { WorkerCapabilities } from './worker-capabilities.js';
+import type { DecoderDeliveryPacket } from './decoder-delivery-report.js';
+import type { DecoderCadenceSnapshot } from './decoder-cadence.js';
+import type { WorkerReceiverProbe } from './receiver-probe.js';
+import type { WorkerProcessingReport } from './worker-processing.js';
+/** Sanitized process observations and decoder-ingress cadence; never viewer delivery. */
+export const WORKER_STATES = [
+  'idle',
+  'waiting_source',
+  'starting',
+  'producing_output',
+  'stopping',
+  'retrying',
+  'failed',
+  'closed',
+] as const;
+export const WORKER_REASONS = [
+  'assignment_changed',
+  'source_unavailable',
+  'output_mismatch',
+  'control_unavailable',
+  'control_timeout',
+  'output_timeout',
+  'process_exited',
+  'score_write_failed',
+  'start_failed',
+  'retry_budget',
+  'retry_delay',
+  'shutdown',
+] as const;
+export const WORKER_OBSERVATION_TTL_MS = 5000;
+/** Signed decoder PTS at 90 kHz, preserving the input timestamp origin.
+ * Compare with MPEG-TS timestamps modulo 2^33. This identifies coordinates only;
+ * it makes no claim about source loss, receipt time, or delivery. */
+export const DECODED_VIDEO_TRANSPORT_CLOCK = 'mpegts-pts-90k-v1';
+export const DECODED_VIDEO_INVALID_REASONS = [
+  'framing',
+  'numeric',
+  'ordinal',
+  'oversized',
+  'incomplete',
+  'callback',
+  'clock',
+  'overflow',
+] as const;
+export type DecodedVideoInvalidReason = (typeof DECODED_VIDEO_INVALID_REASONS)[number];
+/** Worker decoder/filter ingress, before cap/overlay/output encoding. Not viewer delivery.
+ * PTS are signed safe-integer ticks at a fixed timebase of 1/90000 seconds. */
+export type DecodedVideoWindow = {
+  sequence: number;
+  durationMs: 5000;
+  /** Lower-bound age; server adds receipt residence, excluding unmeasured report transit. */
+  ageMs: number;
+  firstPTS: number | null;
+  lastPTS: number | null;
+  freshFrames: number;
+  duplicateFrames: number;
+  reorderedFrames: number;
+  valid: boolean;
+};
+export type DecodedVideoSnapshot = {
+  /** Optional coordinate convention; absence does not prove transport-clock alignment. */
+  clock?: string;
+  completed: DecodedVideoWindow | null;
+  invalidReason: DecodedVideoInvalidReason | null;
+  ended: boolean;
+};
+export type WorkerState = (typeof WORKER_STATES)[number];
+export type WorkerReason = (typeof WORKER_REASONS)[number];
+export type WorkerObservation = {
+  gameId: string;
+  generation: number;
+  state: WorkerState;
+  reason: WorkerReason | null;
+  attempt: number;
+  frame: number | null;
+  outTimeUs: number | null;
+  scoreRevision: number | null;
+  /** Omitted by legacy workers; absence is unknown, never healthy. */
+  decodedVideo?: DecodedVideoSnapshot;
+  decoderCadence?: DecoderCadenceSnapshot;
+  decoderDelivery?: DecoderDeliveryPacket;
+  processing?: WorkerProcessingReport;
+};
+/** Private worker-to-API correlation, not a new authorization capability. */
+export const WORKER_PIPELINE_READ_IDENTITY = 'srt-read-query-v1';
+export type WorkerPipelineObservation = WorkerObservation & { pipelineReadId?: string };
+export type WorkerPublication = {
+  /** Opaque read-instance correlation only; not freshness, health, or capacity. */
+  pipelineReadKey?: string;
+  readerId: string;
+  publisherId: string;
+  publishingAttemptId: string;
+  clock: { convention: 'mpegts-ingress-origin-90k-v1'; originPTS: string };
+};
+/** Obtain a fresh server token immediately before sampling each observation. */
+export const WORKER_SAMPLE_TIMING_PROTOCOL = 'worker-sample-timing-v1';
+export type WorkerSampleTimingRequest = { workerId: string; sessionId: string };
+export type WorkerSampleTimingResponse = {
+  serverTime: string;
+  /** Omitted when the server cannot establish monotonic issuance provenance. */
+  timingToken?: string;
+};
+export type WorkerSessionRequest = {
+  workerId: string;
+  runId: string;
+  capabilities?: WorkerCapabilities | undefined;
+};
+export type WorkerSessionResponse = {
+  /** Exact capability match enables a fresh challenge before each sample. */
+  sampleTiming?: string;
+  /** Clock convention accepted by this API session. */
+  decodedVideoClock?: string;
+  pipelineReadIdentity?: string;
+  workerProcessing?: string;
+  workerFrameCapOmissions?: string;
+  decoderCadence?: string;
+  decoderDelivery?: string;
+  sessionId: string;
+  serverTime: string;
+  /** Opaque server monotonic timing provenance; echo with a later snapshot. */
+  timingToken?: string;
+};
+export type WorkerObservationRequest = {
+  workerId: string;
+  sessionId: string;
+  sequence: number;
+  timingToken?: string;
+  /** Private pipeline correlation; never copied into public observations. */
+  pipelineReadId?: string;
+  observation: WorkerObservation;
+};
+export type WorkerObservationResponse = {
+  accepted: true;
+  serverTime: string;
+  timingToken?: string;
+};
+export type WorkerMediaStatus = {
+  gameId: string;
+  generation: number;
+  workerId: string | null;
+  /** Public server-owned reporting-session identity, separate from private tokens.
+   * Absent for legacy or reportless status; alone does not prove freshness. */
+  workerEpoch?: string;
+  /** Actual attached source and coordinates; not delivery or capacity evidence. */
+  publication?: WorkerPublication;
+  /** Receiver measurement for that exact publication, independent of identity. */
+  receiverProbe?: WorkerReceiverProbe;
+  state: 'not_requested' | 'unknown' | 'stale' | WorkerState;
+  observation: WorkerObservation | null;
+  /** Proven upper age including report transit and server residence, rounded up in ms.
+   * Omitted when unavailable; server-owned, never supplied by the worker. */
+  decodedVideoAgeUpperBoundMs?: number;
+  /** Upper age of the cadence SNAPSHOT, not of its last frame or completed windows. */
+  decoderCadenceAgeUpperBoundMs?: number;
+  decoderDeliveryAgeUpperBoundMs?: number;
+  observedAt: string | null;
+  expiresAt: string | null;
+};
+export type WorkerMediaStatusResponse = { status: WorkerMediaStatus; serverTime: string };

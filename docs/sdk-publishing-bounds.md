@@ -1,0 +1,245 @@
+# Bounded SDK publishing contract
+
+The maintained HaishinKit 2.2.5 patch preserves startup audio, the shared audio/video
+clock, composition offsets, and a valid first video PTS of zero. It adds finite
+compressed publishing queues and terminal, observable failure. The current app
+starts live video at 240p30/350 kbps; its independent archive retains its own
+settings. Higher live profiles require separate qualification against these
+limits. This is a contract for named queues, not a claim that framework allocations
+or process RSS have a mathematical upper bound.
+
+## Named retained payload limits
+
+| Boundary                        | Buffered items |              Maximum logical bytes per item | Retained payload ceiling |
+| ------------------------------- | -------------: | ------------------------------------------: | -----------------------: |
+| VideoCodec compressed output    |              8 |                                       2 MiB |                   16 MiB |
+| AudioCodec output               |             64 |                                      64 KiB |                    4 MiB |
+| TSWriter output                 |             32 |                              2 MiB + 64 KiB |                   66 MiB |
+| TSWriter startup PES collection |            256 | Also subject to the 2 MiB payload preflight |          8 MiB aggregate |
+| TSWriter A/V interleaving       |            256 | Also subject to the 2 MiB payload preflight |          8 MiB aggregate |
+
+The sum of these retained logical payload ceilings is **102 MiB**. Startup also
+has the existing two-second media-span limit. A 2 MiB compressed video item leaves
+more than two seconds of nominal 6 Mbps data for an individual keyframe. The extra
+64 KiB at the transport boundaries allows MPEG-TS packet/header expansion. This is
+a conservative admission ceiling, not an estimate of normal occupancy.
+
+For dual-track publishing, the interleaver orders compressed PES by unwrapped
+90 kHz decode ticks, holding the leading track until the other reaches that time.
+It preserves each PTS/DTS and bounds the lead/queued span to two seconds; count,
+byte, time and backward-decode violations fail explicitly. A clean finish drains
+all accepted packets in timestamp order. Abort/clear discards pending data and
+resets the track clocks. Single-track streams emit immediately. This queue aligns
+encoded A/V availability; it grants no quality/throughput credit and does not
+replace receiver-side delivery or fresh-frame evidence. Candidate cost measurement
+uses the same writer and limits, so it must supply both tracks as they advance.
+
+Each consumer can additionally hold one dequeued item. The socket retains no
+second queue: its awaited send holds at most one 2 MiB + 64 KiB payload plus one
+1,316-byte datagram copy. The TS writer constructs
+bounded-size PES/TS arrays and copies before yielding. Socket sending copies only
+one 1,316-byte datagram at a time, preserving order, and yields between datagrams.
+It no longer eagerly creates an array of every datagram for an input buffer.
+
+Actual native startup exposed an overflow in the former eight-item socket queue:
+a valid muxer startup burst could outrun datagram sending on a healthy local link.
+The existing TS consumer now awaits acceptance of each bounded payload. This
+backpressure keeps the existing upstream queue limits and removes the redundant
+socket queue and sender task. Concurrent internal sends fail explicitly instead of
+interleaving packet bytes. Cancellation of a partial send is terminal; close and
+late completions are guarded by socket generation. Success means libsrt accepted
+the bytes, not that a viewer received them.
+
+CMSampleBuffer/AVAudioBuffer object overhead and backing capacity, codec internals,
+framework pools, raw video, operating-system buffers, libSRT queues, producer-owned
+input, array metadata, and other application allocations are outside these numbers.
+The compressed video byte check does not apply to decompressed playback images.
+
+The optional candidate encoder has a separate budget. Its raw ingress queue holds
+at most four inputs. Across queued and native work, it admits at most sixteen
+unresolved inputs and 64 MiB of aggregate raw payload (192 MiB when source
+buffers are at least3840×2160), with each input at most16 MiB. The UHD allowance
+fits sixteen NV12 frames during native startup; it does not raise the raw queue
+count, unresolved-frame count, per-frame limit or deadlines. Count and actual pixel-buffer byte reservations return only when the
+corresponding compressed output is validated and dequeued. Frame evidence records
+admission time and raw payload size so both limits can be independently checked. It
+uses its own 8 × 2 MiB compressed queue and retains at most 121 scalar frame records.
+Admission ends within eight monotonic seconds and spans at most 4.25 seconds of
+source timestamps. These limits do not count producer-owned buffers or bound native
+framework allocations. A failed or cancelled candidate produces no successful
+measurement and cannot terminate either the live publisher or local recording.
+Calling `finish` or `cancel` joins all candidate tasks and captured native completion;
+an admission deadline is not a hard timeout on a blocking native completion call.
+
+The optional candidate transport measurement reuses the same TS writer without a
+socket. It accepts at most 121 compressed video frames and 512 one-packet AAC-LC
+buffers, with a 32 MiB cumulative compressed-input cap and a 4.25-second combined
+source span. Video inputs are at most 2 MiB; AAC inputs are at most 8,184 bytes.
+AAC packets describe 1,024 frames at an exact supported sample rate. H.264 inputs
+start with an IDR keyframe and provide bounded parameter sets and complete four-byte
+NAL lengths, with video slice data in every input. Formats stay fixed and each
+track's timestamps increase. Existing mux startup
+limits still apply. A synchronous sink counts emitted MPEG-TS bytes and the number
+of 1,316-byte SRT payload chunks, rounding separately for each mux write, then
+discards the output. It adds no tasks or output queue. Finish requires both tracks;
+invalid input, overflow, mux failure and cancellation cannot produce success.
+
+These totals include actual mux packaging and padding, but exclude IP/UDP/SRT
+control traffic and retransmissions. They measure application payload, not network
+delivery or spare bandwidth. The optional candidate compressed-output consumer
+runs synchronously after validation, must not retain or mutate the sample or
+reenter the encoder, and may reject it to fail the optional measurement. Native
+failure is checked synchronously at the consumption claim; an already-claimed
+callback may finish if failure arrives afterward, while the overall result fails.
+A fresh aligned audio/video window and independent bandwidth evidence are still required
+before this primitive can support quality admission.
+
+The SRT publishing raw-video input uses the caller's positive frame bound, or a
+default of two when previously unbounded. Dropping a stale raw frame before encoding
+remains allowed. Compressed media is never silently discarded while a session is
+healthy: an exceeded count or per-item cap terminates the publishing session.
+
+## Failure and ownership
+
+`PublishingQueue` uses `bufferingOldest` plus a pre-yield byte check and inspects
+all yield results. An overflow keeps already accepted byte order, rejects the new
+item, finishes that queue, and synchronously records the first `PublishingError`.
+A stopped queue ignores late callbacks. Every new publish creates fresh queues and
+a fresh lock-backed failure latch, so callbacks retaining an old queue cannot write
+into the new session.
+
+The latch has one bounded event stream and no per-output task creation. Its first
+failure wins. One owned failure observer on the stream terminates publishing for
+codec/muxer errors; one owned connection observer handles asynchronous socket
+failure independently of later input. `SRTStream.publishingError` and
+`SRTConnection.publishingError` expose the terminal error. Stream failure remains
+available after close until the next publish; connection failure remains until the
+next connect attempt. The older `muxerError` property retains its reset-on-close
+behavior. Connect failures also remain ordinary thrown connection errors.
+
+The TS writer preflights payload size both before and after the common origin is
+known, before allocating PES copies. AAC payloads also obey the ADTS 13-bit frame
+length limit (8,184 payload bytes). This prevents the previously reproducible
+oversized post-start audio integer-conversion trap. Invalid timestamps, startup
+limit violations, codec creation/conversion errors, and missing/failed compressed
+VideoToolbox callback output fail explicitly.
+
+SRTStream owns its four media consumers and its failure observer. SRTConnection
+owns its socket observer, monitor, and receive task. Closing cancels owned tasks and
+invalidates their generation before awaits. Connection send/failure operations
+also carry a connection generation token. Old consumers cannot send into a new
+connection, and compressed appends after close cannot repopulate the cleared muxer.
+Raw pre-publish append remains available for discovering input formats.
+
+The SDK's general MediaMixer callback API still schedules a task for each input;
+it is outside this bounded direct-ingest contract. Scorebug's production adapter
+uses the separately bounded publishing access path rather than those callbacks.
+
+## Finite network operations and idle failures
+
+Caller connection timeout is capped at 3,000 ms. Send and receive timeouts are capped
+at 500 ms. Smaller positive configured timeouts are preserved; URL options cannot
+restore an infinite timeout. Application attempts to set a larger/infinite timeout
+through the socket API are rejected. The caps apply to the libSRT operations, not
+to a hard end-to-end wall-clock deadline for actor scheduling, DNS, listener accept,
+or all close cleanup. Listener accept runs off the socket actor and is interrupted
+by closing the listener.
+
+One finite synchronous send can occupy the socket actor. Yielding between
+individual sends lets close interleave with a large transport item instead of
+waiting behind every datagram in that item. A failed/partial send records a terminal
+error immediately. The existing owned monitor samples once per second and detects
+broken/closed/nonexistent sockets or a failed statistics read while logically
+running, so idle peer failure becomes observable without another media append.
+Detection starts when libSRT exposes that terminal state; its own peer timeout is
+separate. Intentional stop first marks the socket stopped and is not an error.
+
+libSRT initialization is process-scoped. Per-connection `srt_cleanup()` was proven
+to invalidate another connection's socket; it is no longer called when one
+connection is released. Individual socket deinitialization still closes its own
+descriptor. Process termination releases the library runtime.
+
+## Regression evidence
+
+Run the SDK suite with:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
+  swift test --package-path vendor/HaishinKit
+```
+
+Deterministic tests cover tiny count/byte caps, accepted order, first-failure
+latching, stopped queues versus fresh sessions, real VideoToolbox output limits,
+AAC output limits, nil audio converter creation, post-origin payload rejection,
+shorter timeout preservation, lazy datagram byte order, asynchronous write failure,
+idle failure through the actual owned monitor, stale generation sends, late append
+after close, and releasing an old connection while a fresh socket remains valid.
+Transport seams replace the native send/status functions in those focused tests;
+they do not broadcast externally. Existing startup/timestamp regression tests remain.
+
+Red/green and provenance reconstruction logs are under `artifacts/qa/sdk-*.log`.
+The real-media five-case conformance harness and native device/simulator links are
+separate qualification checks. The final production-stop run at
+`artifacts/qa/dual-output-6FUFL0/results.json` passed offline, normal, nonzero-clock,
+stalled-receiver, and absent-receiver scenarios. All archives retain frames 0–419
+and complete audio; both normal streams retain all 420 frames at 30 fresh fps.
+Its peak process RSS was 97.5 MiB, with no extra post-input probe sleep.
+Original 100 ms coverage/synchronization, 24 fps floor, source-loss, queue, and
+bitrate-change gates remain unchanged. Full ARM64 Simulator and unsigned iPhone
+links pass with iOS 17 deployment (`sdk-bounded-*-final-build.log`).
+
+The SDK suite passes 69 tests, including native grant URL decoding, socket
+backpressure, and graceful finish regressions. The shared adapter retains its
+three PCM clock tests.
+Spec and code-quality reviews approve this scope. Remaining targeted race tests
+include restarting while old codec output is queued. The finish suite now covers
+closing during a deliberately delayed finite libsrt call. Startup-burst backpressure, concurrent-send
+rejection, cancellation and close during chunking now have focused tests. These are separate from
+the passing generic queue, stale-generation, and live overload checks.
+
+Original upstream provenance is recorded in `vendor/HaishinKit/upstream-files.json`;
+`scorebug.patch` includes every changed upstream source/test plus the new queue
+primitive. Added regression tests are maintained alongside it.
+
+Verify the patch independently of repository HEAD with
+`python3 vendor/HaishinKit/verify-scorebug-patch.py`. The verifier reverses the
+maintained patch in a temporary copy, checks all 162 original hashes, reapplies
+it, and checks every copied source/test byte against the current vendor tree.
+
+## Graceful codec and transport acceptance
+
+`SRTStream.finish()` closes raw ingress, drains retained raw video, completes
+VideoToolbox frames off the stream actor while compressed consumers run, drains
+compressed output, and then drains the TS queue through awaited socket sends.
+The existing queue limits are unchanged. Incomplete expected-track startup fails
+explicitly instead of silently discarding retained PES packets. Every finish
+waiter joins one task whose state cleanup completes before any waiter returns.
+
+The two-second cooperative deadline aborts the drain and joins owned tasks;
+`close()` remains the immediate abort path. Native codec completion and
+invalidation still depend on VideoToolbox returning, since those platform calls
+have no hard timeout. They do not run on the capture callback or archive queue.
+The finite slow-send test exceeds its one-millisecond requested deadline only by
+the in-flight native-call delay, then terminates without resurrecting input.
+
+Tests verify final admitted video PTS, a 20-frame encoder-completion burst using
+the unchanged eight-item compressed queue, missing-track failure, concurrent and
+cancelled finish callers, immediate abort, and republishing as soon as a joining
+caller returns. The maintained patch still verifies all 162 original hashes.
+
+This guarantees the tested codec/muxer/libSRT acceptance path, not delivery to a
+remote application. Native qualification exposed subsequent receiver-buffer loss
+at relay shutdown. The app now supplies the remaining portion of its three-second
+total stop budget to SDK finish, then waits for current sender occupancy, negotiated
+peer latency, and a configurable 500 ms downstream allowance. This production policy
+passes [native end-to-end qualification](native-streaming-qualification.md); elapsed
+allowance still does not acknowledge remote delivery.
+
+## UHD probe scheduling
+
+Explicit `.uhd` probes cap accumulated tokens at four messages (5,440 accounted
+wire bytes), and the socket submits at most four per idle opportunity. Every
+message independently rechecks media priority, lease, revocation, native pressure
+and cumulative byte bounds. Standard probes retain one-message pacing. The v4
+wire format and receiver-measured admission are unchanged. See the
+[sender diagnostic](session-logs/2026-09-28-uhd-sender-pacing.md) for timing evidence.

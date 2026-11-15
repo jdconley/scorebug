@@ -1,0 +1,1267 @@
+import { workerProcessingSchema, processingProgresses } from '../src/worker-processing.js';
+import { afterEach, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import type { WorkerObservation } from '@scorebug/protocol';
+import { createApp } from '../src/app.js';
+import { testConfig, phoneAuth } from './helpers.js';
+import type { MatchStore } from '../src/matches-store.js';
+
+const stores: MatchStore[] = [];
+it.each(['decoded-video-v1.json', 'decoded-video-clock-v1.json', 'worker-processing-v1.json'])(
+  'accepts the exact shared Swift observations in %s',
+  async (fixtureName) => {
+    const examples = JSON.parse(
+      readFileSync(
+        new URL(`../../../packages/protocol/fixtures/${fixtureName}`, import.meta.url),
+        'utf8',
+      ),
+    );
+    for (const example of Object.values(examples) as {
+      status: { observation: WorkerObservation };
+    }[]) {
+      const f = await fixture();
+      const observation = example.status.observation;
+      expect((await f.report({ ...f.body, observation })).status).toBe(200);
+      const actual = (await f.status()).status.observation;
+      if (observation.decodedVideo?.completed) {
+        expect(actual.decodedVideo.completed.ageMs).toBeGreaterThanOrEqual(
+          observation.decodedVideo.completed.ageMs,
+        );
+        actual.decodedVideo.completed.ageMs = observation.decodedVideo.completed.ageMs;
+      }
+      expect(actual).toEqual(observation);
+    }
+  },
+);
+afterEach(() => {
+  stores.splice(0).forEach((store) => store.close());
+  vi.useRealTimers();
+});
+async function fixture() {
+  const config = testConfig();
+  const built = createApp(config);
+  const { app, matches } = built;
+  stores.push(matches);
+  const request = (path: string, token = config.HOME_TOKEN, body?: unknown) =>
+    app.request(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { ...phoneAuth(token), 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  const team = { name: 'Team', shortName: 'T', color: '#123456' };
+  matches.create({
+    id: 'match',
+    deviceId: 'scorer',
+    teams: { home: team, away: team },
+    rules: { bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
+  });
+  const scorer = matches.issueCredential('match', 'scorer', 'score');
+  const capture = matches.issueCredential('match', 'phone', 'capture');
+  matches.media.reportRecording('match', 'phone', {
+    recordingId: 'archive',
+    sequence: 0,
+    status: 'recording',
+    startedAt: new Date().toISOString(),
+  });
+  matches.media.execute({
+    commandId: 'start',
+    gameId: 'match',
+    expectedGeneration: 0,
+    issuedAt: new Date().toISOString(),
+    operation: {
+      type: 'start',
+      selection: {
+        workerId: 'mac',
+        outputId: 'sink',
+        captureDeviceId: 'phone',
+        recordingId: 'archive',
+      },
+    },
+  });
+  const registration = await request('/v1/worker/sessions', config.HOME_TOKEN, {
+    workerId: 'mac',
+    runId: 'run',
+  });
+  const session = registration.status === 200 ? await registration.json() : {};
+  const observation = {
+    gameId: 'match',
+    generation: 1,
+    state: 'producing_output',
+    reason: null,
+    attempt: 1,
+    frame: 12,
+    outTimeUs: 1000,
+    scoreRevision: 1,
+  };
+  const body = { workerId: 'mac', sessionId: session.sessionId, sequence: 1, observation };
+  const report = (value: unknown = body, token = config.HOME_TOKEN) =>
+    request('/v1/worker/observations', token, value);
+  const status = async () => (await request('/v1/matches/match/media/status', scorer.token)).json();
+  return {
+    ...built,
+    config,
+    request,
+    scorer,
+    capture,
+    registration,
+    session,
+    body,
+    report,
+    status,
+  };
+}
+it('registers one current session per worker and retires replaced runs permanently', async () => {
+  const f = await fixture();
+  expect(f.registration.status).toBe(200);
+  expect(
+    (
+      await (
+        await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+          workerId: 'mac',
+          runId: 'run',
+        })
+      ).json()
+    ).sessionId,
+  ).toBe(f.session.sessionId);
+  expect((await f.report()).status).toBe(200);
+  const replaced = await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+    workerId: 'mac',
+    runId: 'replacement',
+  });
+  expect(replaced.status).toBe(200);
+  expect((await f.status()).status.state).toBe('unknown');
+  expect(await (await f.report()).json()).toEqual({ error: 'worker_session_retired' });
+  const retired = await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+    workerId: 'mac',
+    runId: 'run',
+  });
+  expect(retired.status).toBe(409);
+  expect(await retired.json()).toEqual({ error: 'worker_session_retired' });
+});
+it('uses scoped reads, worker-only writes, strict public telemetry and no durable mutations', async () => {
+  const f = await fixture();
+  const before = { match: f.matches.get('match'), media: f.matches.media.get('match') };
+  for (const token of [f.config.PHONE_TOKEN, f.scorer.token, f.capture.token, 'bad']) {
+    expect((await f.report(f.body, token)).status).toBe(401);
+    expect(
+      (await f.request('/v1/worker/sessions', token, { workerId: 'mac', runId: 'other' })).status,
+    ).toBe(401);
+  }
+  for (const token of [f.config.PHONE_TOKEN, f.config.HOME_TOKEN, 'bad'])
+    expect((await f.request('/v1/matches/match/media/status', token)).status).toBe(401);
+  expect((await f.request('/v1/matches/other/media/status', f.scorer.token)).status).toBe(401);
+  expect((await f.request('/v1/matches/match/media/status', f.capture.token)).status).toBe(200);
+  expect((await f.report()).status).toBe(200);
+  const result = await f.status();
+  expect(result.status).toMatchObject({
+    gameId: 'match',
+    generation: 1,
+    workerId: 'mac',
+    state: 'producing_output',
+    observation: f.body.observation,
+  });
+  expect(Object.keys(result.status.observation).sort()).toEqual(
+    Object.keys(f.body.observation).sort(),
+  );
+  expect(JSON.stringify(result)).not.toContain(f.session.sessionId);
+  expect({ match: f.matches.get('match'), media: f.matches.media.get('match') }).toEqual(before);
+});
+it('rejects unknown sessions, wrong assignment or generation and unbounded/raw values', async () => {
+  const f = await fixture();
+  const unknown = await f.report({ ...f.body, sessionId: 'unknown' });
+  expect(unknown.status).toBe(409);
+  expect(await unknown.json()).toEqual({ error: 'worker_session_unknown' });
+  for (const patch of [{ gameId: 'other' }, { generation: 2 }]) {
+    const response = await f.report({
+      ...f.body,
+      observation: { ...f.body.observation, ...patch },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'broadcast_changed' });
+  }
+  const otherSession = await (
+    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'other', runId: 'run' })
+  ).json();
+  expect(
+    await (
+      await f.report({ ...f.body, workerId: 'other', sessionId: otherSession.sessionId })
+    ).json(),
+  ).toEqual({ error: 'broadcast_changed' });
+  for (const patch of [
+    { frame: 0 },
+    { outTimeUs: null },
+    { attempt: -1 },
+    { frame: 1.5 },
+    { outTimeUs: Number.MAX_SAFE_INTEGER + 1 },
+    { scoreRevision: -1 },
+    { reason: 'raw stderr secret' },
+    { stderr: 'secret' },
+    { state: 'live' },
+    { gameId: '💥' },
+  ])
+    expect(
+      (await f.report({ ...f.body, observation: { ...f.body.observation, ...patch } })).status,
+    ).toBe(400);
+  expect((await f.report({ ...f.body, rawOutput: 'secret' })).status).toBe(400);
+});
+it('rejects reordered and changed duplicate reports; permits counter resets only on a newer attempt', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  expect((await f.report()).status).toBe(200);
+  for (const value of [
+    { ...f.body, sequence: 0 },
+    { ...f.body, observation: { ...f.body.observation, frame: 13 } },
+    { ...f.body, sequence: 2, observation: { ...f.body.observation, attempt: 0 } },
+    { ...f.body, sequence: 2, observation: { ...f.body.observation, frame: 1 } },
+    { ...f.body, sequence: 2, observation: { ...f.body.observation, outTimeUs: 1 } },
+    { ...f.body, sequence: 2, observation: { ...f.body.observation, scoreRevision: 0 } },
+  ]) {
+    const response = await f.report(value);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'observation_conflict' });
+  }
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: {
+          ...f.body.observation,
+          state: 'retrying',
+          frame: null,
+          outTimeUs: null,
+          scoreRevision: null,
+        },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await f.report({ ...f.body, sequence: 3, observation: { ...f.body.observation, frame: 1 } }))
+      .status,
+  ).toBe(409);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 3,
+        observation: {
+          ...f.body.observation,
+          attempt: 2,
+          frame: 1,
+          outTimeUs: 1,
+          scoreRevision: 0,
+        },
+      })
+    ).status,
+  ).toBe(200);
+});
+it('API restart forgets observations and a stop overrides the previous report', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const restarted = createApp(f.config, { matches: f.matches });
+  expect(
+    (
+      await (
+        await restarted.app.request('/v1/matches/match/media/status', {
+          headers: phoneAuth(f.scorer.token),
+        })
+      ).json()
+    ).status.state,
+  ).toBe('unknown');
+  f.matches.media.execute({
+    commandId: 'stop',
+    gameId: 'match',
+    expectedGeneration: 1,
+    issuedAt: new Date().toISOString(),
+    operation: { type: 'stop' },
+  });
+  expect((await f.status()).status).toMatchObject({
+    state: 'not_requested',
+    observation: null,
+    observedAt: null,
+    expiresAt: null,
+  });
+  expect(await (await f.report()).json()).toEqual({ error: 'broadcast_changed' });
+  expect(f.matches.media.get('match').recordings[0]?.status).toBe('recording');
+});
+
+it('expires at the receipt TTL and duplicate delivery never refreshes freshness', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  expect((await f.status()).status.state).toBe('unknown');
+  expect((await f.report()).status).toBe(200);
+  const initial = await f.status();
+  expect(Date.parse(initial.status.expiresAt) - Date.parse(initial.status.observedAt)).toBe(5000);
+  vi.advanceTimersByTime(4999);
+  expect((await f.status()).status.state).toBe('producing_output');
+  const reversed = Object.fromEntries(Object.entries(f.body).reverse());
+  expect((await f.report(reversed)).status).toBe(200);
+  expect((await f.status()).status.observedAt).toBe(initial.status.observedAt);
+  vi.advanceTimersByTime(1);
+  expect((await f.status()).status).toMatchObject({
+    state: 'stale',
+    observation: f.body.observation,
+    observedAt: initial.status.observedAt,
+  });
+  expect((await f.report({ ...f.body, sequence: 2 })).status).toBe(200);
+  expect((await f.status()).status.state).toBe('producing_output');
+  expect((await f.status()).status.observedAt).not.toBe(initial.status.observedAt);
+});
+it('bounds sessions, sequences and required observation fields before accepting telemetry', async () => {
+  const f = await fixture();
+  for (const value of [
+    { workerId: '', runId: 'run' },
+    { workerId: 'mac', runId: 'x'.repeat(129) },
+    { workerId: 'mac', runId: 'http://secret' },
+    { workerId: 'mac', runId: 'run', token: 'secret' },
+  ])
+    expect((await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, value)).status).toBe(400);
+  for (const sequence of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1])
+    expect((await f.report({ ...f.body, sequence })).status).toBe(400);
+  const { reason: _, ...missingReason } = f.body.observation;
+  expect((await f.report({ ...f.body, observation: missingReason })).status).toBe(400);
+  const { frame: __, ...missingFrame } = f.body.observation;
+  expect((await f.report({ ...f.body, observation: missingFrame })).status).toBe(400);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        observation: {
+          ...f.body.observation,
+          state: 'waiting_source',
+          reason: 'source_unavailable',
+          attempt: 0,
+          frame: null,
+          outTimeUs: null,
+          scoreRevision: null,
+        },
+      })
+    ).status,
+  ).toBe(200);
+});
+
+it('acknowledges both initial receipts and exact duplicates explicitly', async () => {
+  const f = await fixture();
+  expect(await (await f.report()).json()).toMatchObject({ accepted: true });
+  expect(await (await f.report()).json()).toMatchObject({ accepted: true });
+});
+
+it('measures receipt freshness independently of forward and backward wall-clock changes', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const initial = await f.status();
+  const receivedWallTime = Date.parse(initial.status.observedAt);
+  vi.advanceTimersByTime(1000);
+  vi.setSystemTime(receivedWallTime + 60_000);
+  const forward = await f.status();
+  expect(forward.status.state).toBe('producing_output');
+  expect(Date.parse(forward.status.expiresAt) - Date.parse(forward.serverTime)).toBe(4000);
+  expect(forward.status.observedAt).toBe(initial.status.observedAt);
+  vi.setSystemTime(receivedWallTime - 60_000);
+  const backward = await f.status();
+  expect(backward.status.state).toBe('producing_output');
+  expect(Date.parse(backward.status.expiresAt) - Date.parse(backward.serverTime)).toBe(4000);
+  vi.advanceTimersByTime(4000);
+  expect((await f.status()).status.state).toBe('stale');
+  vi.setSystemTime(receivedWallTime - 120_000);
+  const expired = await f.status();
+  expect(expired.status.state).toBe('stale');
+  expect(Date.parse(expired.status.expiresAt)).toBeLessThanOrEqual(Date.parse(expired.serverTime));
+});
+
+it('hides old observations and rejects late reports after replacement of a running generation', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const outcome = f.matches.media.execute({
+    commandId: 'replace',
+    gameId: 'match',
+    expectedGeneration: 1,
+    issuedAt: new Date().toISOString(),
+    operation: {
+      type: 'start',
+      selection: {
+        workerId: 'mac',
+        outputId: 'other-sink',
+        captureDeviceId: 'phone',
+        recordingId: 'archive',
+      },
+    },
+  });
+  expect(outcome.accepted).toBe(true);
+  expect((await f.status()).status).toMatchObject({
+    state: 'unknown',
+    generation: 2,
+    observation: null,
+  });
+  const late = await f.report();
+  expect(late.status).toBe(409);
+  expect(await late.json()).toEqual({ error: 'broadcast_changed' });
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, generation: 2, attempt: 2 },
+      })
+    ).status,
+  ).toBe(200);
+  expect((await f.status()).status).toMatchObject({ state: 'producing_output', generation: 2 });
+});
+
+const decoded = () => ({
+  completed: {
+    sequence: 1,
+    durationMs: 5000,
+    ageMs: 100,
+    firstPTS: 0,
+    lastPTS: 447000,
+    freshFrames: 150,
+    duplicateFrames: 0,
+    reorderedFrames: 0,
+    valid: true,
+  },
+  invalidReason: null,
+  ended: false,
+});
+
+it('carries decoded ingress windows and ages them without changing stored evidence or duplicate freshness', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const body = { ...f.body, observation: { ...f.body.observation, decodedVideo: decoded() } };
+  expect((await f.report(body)).status).toBe(200);
+  expect((await f.status()).status.observation.decodedVideo.completed.ageMs).toBe(100);
+  vi.advanceTimersByTime(1200);
+  vi.setSystemTime(Date.now() - 60_000);
+  const read = await f.status();
+  expect(read.status.observation.decodedVideo.completed.ageMs).toBe(1300);
+  read.status.observation.decodedVideo.completed.freshFrames = 999;
+  expect((await f.report(body)).status).toBe(200);
+  vi.advanceTimersByTime(800);
+  const next = await f.status();
+  expect(next.status.observation.decodedVideo.completed).toMatchObject({
+    ageMs: 2100,
+    freshFrames: 150,
+  });
+});
+
+it('rejects malformed decoded windows and raw data while retaining legacy and unknown observations', async () => {
+  const f = await fixture();
+  const malformed = [
+    { ...decoded(), raw: 'secret' },
+    { ...decoded(), invalidReason: 'secret' },
+    { ...decoded(), ended: 'false' },
+    ...[
+      { sequence: 0 },
+      { durationMs: 4000 },
+      { ageMs: -1 },
+      { ageMs: Number.MAX_SAFE_INTEGER + 1 },
+      { firstPTS: 1.5 },
+      { lastPTS: Number.MAX_SAFE_INTEGER + 1 },
+      { freshFrames: -1 },
+      { duplicateFrames: 0.1 },
+      { reorderedFrames: Number.MAX_SAFE_INTEGER + 1 },
+      { firstPTS: null },
+      { lastPTS: -1 },
+      { freshFrames: 0 },
+      { valid: false },
+      { raw: 'secret' },
+    ].map((patch) => ({ ...decoded(), completed: { ...decoded().completed, ...patch } })),
+  ];
+  for (const decodedVideo of malformed) {
+    expect(
+      (await f.report({ ...f.body, observation: { ...f.body.observation, decodedVideo } })).status,
+    ).toBe(400);
+  }
+  expect((await f.report()).status).toBe(200);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: {
+          ...f.body.observation,
+          decodedVideo: { completed: null, invalidReason: null, ended: false },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 3,
+        observation: {
+          ...f.body.observation,
+          decodedVideo: { completed: null, invalidReason: 'numeric', ended: false },
+        },
+      })
+    ).status,
+  ).toBe(200);
+});
+
+it('rejects changed completed windows, regressions and recovery of terminal decoder evidence within one attempt', async () => {
+  const f = await fixture();
+  const report = (decodedVideo: unknown, sequence = 2, attempt = 1) =>
+    f.report({
+      ...f.body,
+      sequence,
+      observation: { ...f.body.observation, attempt, decodedVideo },
+    });
+  const first = decoded();
+  expect((await report(first, 1)).status).toBe(200);
+  for (const patch of [
+    { freshFrames: 149 },
+    { firstPTS: 1 },
+    { lastPTS: 448000 },
+    { ageMs: 99 },
+    { duplicateFrames: 1 },
+    { reorderedFrames: 1 },
+  ]) {
+    expect((await report({ ...first, completed: { ...first.completed, ...patch } })).status).toBe(
+      409,
+    );
+  }
+  const second = {
+    ...first,
+    completed: { ...first.completed, sequence: 2, ageMs: 0, firstPTS: 450000, lastPTS: 897000 },
+  };
+  expect((await report(second)).status).toBe(200);
+  expect((await report(first, 3)).status).toBe(409);
+  // An absent optional field cannot erase the anti-regression watermark.
+  expect((await f.report({ ...f.body, sequence: 3 })).status).toBe(200);
+  expect((await report(first, 4)).status).toBe(409);
+  const failed = {
+    ...second,
+    invalidReason: 'framing',
+    ended: true,
+    completed: { ...second.completed, valid: false, ageMs: 100 },
+  };
+  expect((await report(failed, 4)).status).toBe(200);
+  expect((await report(second, 5)).status).toBe(409);
+  // New worker attempt gets a new collector and can restart all decoder counters.
+  expect((await report(first, 5, 2)).status).toBe(200);
+});
+
+it('cannot make the same decoder window younger with newer report sequence numbers', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const body = { ...f.body, observation: { ...f.body.observation, decodedVideo: decoded() } };
+  expect((await f.report(body)).status).toBe(200);
+  vi.advanceTimersByTime(1200);
+  expect((await f.report({ ...body, sequence: 2 })).status).toBe(200);
+  expect((await f.status()).status.observation.decodedVideo.completed.ageMs).toBe(1300);
+  // Dropping the optional field must not reset the known window age either.
+  expect((await f.report({ ...f.body, sequence: 3 })).status).toBe(200);
+  vi.advanceTimersByTime(800);
+  expect((await f.report({ ...body, sequence: 4 })).status).toBe(200);
+  expect((await f.status()).status.observation.decodedVideo.completed.ageMs).toBe(2100);
+});
+
+it('preserves nested observations against mutation on both input and direct reads', async () => {
+  const f = await fixture();
+  const body = {
+    ...f.body,
+    observation: {
+      ...f.body.observation,
+      state: 'producing_output' as const,
+      decodedVideo: decoded(),
+    },
+  };
+  f.observations.report(body);
+  body.observation.decodedVideo.completed.freshFrames = 999;
+  const first = f.observations.status('match');
+  expect(first.status.observation?.decodedVideo?.completed?.freshFrames).toBe(150);
+  first.status.observation!.decodedVideo!.completed!.freshFrames = 999;
+  expect(
+    f.observations.status('match').status.observation?.decodedVideo?.completed?.freshFrames,
+  ).toBe(150);
+});
+
+it('retains fresh PTS range across zero-progress windows and rejects a later source rewind', async () => {
+  const f = await fixture();
+  const report = (video: unknown, sequence: number) =>
+    f.report({ ...f.body, sequence, observation: { ...f.body.observation, decodedVideo: video } });
+  expect((await report(decoded(), 1)).status).toBe(200);
+  const empty = {
+    ...decoded(),
+    completed: {
+      ...decoded().completed,
+      sequence: 2,
+      ageMs: 0,
+      firstPTS: null,
+      lastPTS: null,
+      freshFrames: 0,
+    },
+  };
+  expect((await report(empty, 2)).status).toBe(200);
+  const rewind = { ...decoded(), completed: { ...decoded().completed, sequence: 3 } };
+  expect((await report(rewind, 3)).status).toBe(409);
+  const resumed = {
+    ...decoded(),
+    completed: { ...decoded().completed, sequence: 3, firstPTS: 900000, lastPTS: 1347000 },
+  };
+  expect((await report(resumed, 3)).status).toBe(200);
+});
+
+const transportClock = 'mpegts-pts-90k-v1';
+it('advertises the decoded transport clock on initial and idempotent session registration', async () => {
+  const f = await fixture();
+  expect(f.session.decodedVideoClock).toBe(transportClock);
+  const repeat = await (
+    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+      workerId: 'mac',
+      runId: 'run',
+    })
+  ).json();
+  expect(repeat).toMatchObject({
+    sessionId: f.session.sessionId,
+    decodedVideoClock: transportClock,
+  });
+});
+
+it.each([undefined, transportClock, 'future-clock-v2', 'a', 'a'.repeat(64)])(
+  'roundtrips optional bounded decoded clock %s',
+  async (clock) => {
+    const f = await fixture();
+    const decodedVideo = { ...decoded(), ...(clock === undefined ? {} : { clock }) };
+    expect(
+      (await f.report({ ...f.body, observation: { ...f.body.observation, decodedVideo } })).status,
+    ).toBe(200);
+    const actual = (await f.status()).status.observation.decodedVideo;
+    expect(actual.clock).toBe(clock);
+    if (clock === undefined) expect(actual).not.toHaveProperty('clock');
+  },
+);
+
+it.each([
+  null,
+  42,
+  true,
+  {},
+  [],
+  '',
+  'A',
+  '9clock',
+  '-clock',
+  'bad_clock',
+  'bad clock',
+  'clock.v1',
+  'a'.repeat(65),
+])('rejects malformed decoded clock %j without changing accepted state', async (clock) => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const before = await f.status();
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, decodedVideo: { ...decoded(), clock } },
+      })
+    ).status,
+  ).toBe(400);
+  expect(await f.status()).toEqual(before);
+  expect((await f.report({ ...f.body, sequence: 2 })).status).toBe(200);
+});
+
+it.each([undefined, transportClock, 'future-clock-v2'])(
+  'freezes the first decoded snapshot clock %s across omissions and retries, resetting on attempts and sessions',
+  async (clock) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    // Even an incomplete first snapshot fixes the attempt clock.
+    const decodedVideo = {
+      completed: null,
+      invalidReason: null,
+      ended: false,
+      ...(clock === undefined ? {} : { clock }),
+    };
+    const body = {
+      ...f.body,
+      timingToken: f.session.timingToken,
+      observation: { ...f.body.observation, decodedVideo },
+    };
+    expect((await f.report(body)).status).toBe(200);
+    expect((await f.report(body)).status).toBe(200);
+    expect((await f.report({ ...f.body, sequence: 2 })).status).toBe(200);
+    const before = await f.status();
+    const nextClock = clock === transportClock ? undefined : transportClock;
+    const changed = { ...decoded(), ...(nextClock === undefined ? {} : { clock: nextClock }) };
+    const conflict = {
+      ...f.body,
+      timingToken: f.session.timingToken,
+      sequence: 3,
+      observation: { ...f.body.observation, decodedVideo: changed },
+    };
+    expect((await f.report(conflict)).status).toBe(409);
+    expect(await f.status()).toEqual(before);
+    // Same sequence remains available after rejection; the omission retained the original guard.
+    const sameClock = { ...decoded(), ...(clock === undefined ? {} : { clock }) };
+    expect(
+      (
+        await f.report({
+          ...conflict,
+          observation: { ...f.body.observation, decodedVideo: sameClock },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await f.report({
+          ...conflict,
+          sequence: 4,
+          observation: { ...conflict.observation, attempt: 2 },
+        })
+      ).status,
+    ).toBe(200);
+    const replacement = await (
+      await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+        workerId: 'mac',
+        runId: 'new-run',
+      })
+    ).json();
+    expect((await f.report({ ...body, sessionId: replacement.sessionId })).status).toBe(200);
+  },
+);
+
+const publicEpochPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+it('publishes an independent epoch only with a matching report, stable across registration and retries', async () => {
+  const f = await fixture();
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status.workerEpoch;
+  expect(first).toMatch(publicEpochPattern);
+  expect(first).not.toBe(f.session.sessionId);
+  expect(first).not.toBe(f.session.timingToken);
+  const registration = await (
+    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'run' })
+  ).json();
+  expect(registration.sessionId).toBe(f.session.sessionId);
+  expect(registration.workerEpoch).toBeUndefined();
+  expect((await f.report()).status).toBe(200);
+  expect((await f.status()).status.workerEpoch).toBe(first);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, attempt: 2, frame: 1, outTimeUs: 1 },
+      })
+    ).status,
+  ).toBe(200);
+  const status = (await f.status()).status;
+  expect(status.workerEpoch).toBe(first);
+  expect(status.observation.attempt).toBe(2);
+  expect(JSON.stringify(status)).not.toContain(f.session.sessionId);
+  expect(JSON.stringify(status)).not.toContain(f.session.timingToken);
+});
+
+it('retains public epoch on stale status without refreshing duplicate reports', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status;
+  expect(first.workerEpoch).toMatch(publicEpochPattern);
+  vi.advanceTimersByTime(5000);
+  expect((await f.report()).status).toBe(200);
+  const stale = (await f.status()).status;
+  expect(stale.state).toBe('stale');
+  expect(stale.workerEpoch).toBe(first.workerEpoch);
+  expect(stale.observedAt).toBe(first.observedAt);
+});
+
+it('changes public epoch on worker replacement even when attempt repeats, rejecting retired reports', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status;
+  expect(first.workerEpoch).toMatch(publicEpochPattern);
+  const replacement = await (
+    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'next' })
+  ).json();
+  expect((await f.status()).status).toMatchObject({ state: 'unknown', observation: null });
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  expect((await f.report({ ...f.body, sessionId: replacement.sessionId })).status).toBe(200);
+  const next = (await f.status()).status;
+  expect(next.workerEpoch).toMatch(publicEpochPattern);
+  expect(next.workerEpoch).not.toBe(first.workerEpoch);
+  expect(next.observation.attempt).toBe(first.observation.attempt);
+  expect((await f.report()).status).toBe(409);
+  expect((await f.status()).status.workerEpoch).toBe(next.workerEpoch);
+});
+
+it('API replacement allocates a different public epoch for the same worker run and attempt', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status;
+  expect(first.workerEpoch).toMatch(publicEpochPattern);
+  const restarted = createApp(f.config, { matches: f.matches });
+  const request = (path: string, token: string, body?: unknown) =>
+    restarted.app.request(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { ...phoneAuth(token), 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  const status = async () =>
+    (await (await request('/v1/matches/match/media/status', f.scorer.token)).json()).status;
+  expect((await status()).workerEpoch).toBeUndefined();
+  const session = await (
+    await request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'run' })
+  ).json();
+  expect((await request('/v1/worker/observations', f.config.HOME_TOKEN, f.body)).status).toBe(409);
+  expect(
+    (
+      await request('/v1/worker/observations', f.config.HOME_TOKEN, {
+        ...f.body,
+        sessionId: session.sessionId,
+      })
+    ).status,
+  ).toBe(200);
+  const next = await status();
+  expect(next.workerEpoch).toMatch(publicEpochPattern);
+  expect(next.workerEpoch).not.toBe(first.workerEpoch);
+  expect(next.observation.attempt).toBe(first.observation.attempt);
+  expect(JSON.stringify(next)).not.toContain(session.sessionId);
+  expect(JSON.stringify(next)).not.toContain(session.timingToken);
+});
+
+it('omits epoch when stopped or a new generation has no matching report', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status.workerEpoch;
+  expect(first).toMatch(publicEpochPattern);
+  f.matches.media.execute({
+    commandId: 'epoch-stop',
+    gameId: 'match',
+    expectedGeneration: 1,
+    issuedAt: new Date().toISOString(),
+    operation: { type: 'stop' },
+  });
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  f.matches.media.execute({
+    commandId: 'epoch-start',
+    gameId: 'match',
+    expectedGeneration: 2,
+    issuedAt: new Date().toISOString(),
+    operation: {
+      type: 'start',
+      selection: {
+        workerId: 'mac',
+        outputId: 'sink',
+        captureDeviceId: 'phone',
+        recordingId: 'archive',
+      },
+    },
+  });
+  expect((await f.status()).status).toMatchObject({ state: 'unknown', observation: null });
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, generation: 3 },
+      })
+    ).status,
+  ).toBe(200);
+  expect((await f.status()).status.workerEpoch).toBe(first);
+});
+
+it('rejects supplied public epochs and invalid reports without changing the accepted identity', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status.workerEpoch;
+  expect(first).toMatch(publicEpochPattern);
+  for (const body of [
+    { ...f.body, workerEpoch: 'spoofed' },
+    { ...f.body, observation: { ...f.body.observation, workerEpoch: 'spoofed' } },
+  ])
+    expect((await f.report(body)).status).toBe(400);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, generation: 99 },
+      })
+    ).status,
+  ).toBe(409);
+  expect(
+    (await f.report({ ...f.body, observation: { ...f.body.observation, frame: 13 } })).status,
+  ).toBe(409);
+  expect((await f.status()).status.workerEpoch).toBe(first);
+});
+
+function processingObservation() {
+  return {
+    gameId: 'match',
+    generation: 1,
+    state: 'producing_output' as const,
+    reason: null,
+    attempt: 1,
+    frame: 300,
+    outTimeUs: 10_000_000,
+    scoreRevision: 1,
+    decodedVideo: {
+      clock: 'mpegts-pts-90k-v1',
+      ended: false,
+      invalidReason: null,
+      completed: {
+        sequence: 2,
+        durationMs: 5000 as const,
+        ageMs: 0,
+        firstPTS: 3000,
+        lastPTS: 450000,
+        freshFrames: 150,
+        duplicateFrames: 0,
+        reorderedFrames: 0,
+        valid: true,
+      },
+    },
+    processing: {
+      scopeID: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      encoder: 'software' as const,
+      previousSequence: 1,
+      sequence: 2,
+      firstPTS: 3000,
+      interval: {
+        sourceStartExclusive: 0,
+        sourceEndInclusive: 450000,
+        decodedFrames: 150,
+        submittedFrames: 150,
+        completedFrames: 149,
+        pendingFrames: 1,
+        omittedBeforeEncoderFrames: 0,
+        filterDuration: { meanMs: 1, maximumMs: 2 },
+        processingDuration: null as { meanMs: number; maximumMs: number } | null,
+      },
+    },
+  };
+}
+it('negotiates processing and accepts pending-to-complete reports without changing decoder identity', async () => {
+  const f = await fixture();
+  expect(f.session.workerProcessing).toBe('source-processing-v1');
+  expect(f.session.workerFrameCapOmissions).toBe('tokenbucket-90k-v1');
+  const o = processingObservation();
+  const report = (sequence: number) =>
+    f.report({ ...f.body, sequence, timingToken: f.session.timingToken, observation: o });
+  expect((await report(1)).status).toBe(200);
+  const pending = await f.status();
+  expect(pending.status.observation.processing).toEqual(o.processing);
+  Object.assign(o.processing.interval, {
+    completedFrames: 150,
+    pendingFrames: 0,
+    processingDuration: { meanMs: 4, maximumMs: 8 },
+  });
+  expect((await report(2)).status).toBe(200);
+  const complete = await f.status();
+  expect(complete.status.observation.processing).toEqual(o.processing);
+  expect(complete.status.decodedVideoAgeUpperBoundMs).toBeGreaterThanOrEqual(0);
+});
+it('accepts missing processing and does not restore omitted public evidence', async () => {
+  const f = await fixture(),
+    o = processingObservation();
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+  const { processing, ...without } = o;
+  expect((await f.report({ ...f.body, sequence: 2, observation: without })).status).toBe(200);
+  expect((await f.status()).status.observation).not.toHaveProperty('processing');
+  const changed = structuredClone(o);
+  changed.processing.interval.completedFrames--;
+  changed.processing.interval.pendingFrames++;
+  expect((await f.report({ ...f.body, sequence: 3, observation: changed })).status).toBe(409);
+  expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(200);
+});
+it.each([
+  'scope',
+  'encoder',
+  'sequence',
+  'first',
+  'end',
+  'count',
+  'pending',
+  'omitted',
+  'duration',
+  'pendingDuration',
+  'unknownKey',
+  'state',
+  'clock',
+  'ended',
+  'duplicates',
+])('rejects malformed processing correspondence: %s', async (kind) => {
+  const f = await fixture(),
+    o: any = processingObservation();
+  if (kind === 'scope') o.processing.scopeID = 'bad';
+  if (kind === 'encoder') o.processing.encoder = 'other';
+  if (kind === 'sequence') o.processing.previousSequence = 0;
+  if (kind === 'first') o.processing.firstPTS++;
+  if (kind === 'end') o.processing.interval.sourceEndInclusive++;
+  if (kind === 'count') o.processing.interval.decodedFrames++;
+  if (kind === 'pending') o.processing.interval.pendingFrames++;
+  if (kind === 'omitted') o.processing.interval.omittedBeforeEncoderFrames++;
+  if (kind === 'duration') o.processing.interval.filterDuration = { meanMs: 3, maximumMs: 2 };
+  if (kind === 'pendingDuration')
+    o.processing.interval.processingDuration = { meanMs: 1, maximumMs: 1 };
+  if (kind === 'unknownKey') o.processing.secret = 'never';
+  if (kind === 'state') o.state = 'stopping';
+  if (kind === 'clock') delete o.decodedVideo.clock;
+  if (kind === 'ended') o.decodedVideo.ended = true;
+  if (kind === 'duplicates') o.decodedVideo.completed.duplicateFrames = 1;
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(400);
+});
+it.each(['scope', 'encoder', 'filter', 'regression', 'frozen', 'reuse'])(
+  'rejects conflicting processing progression: %s',
+  async (kind) => {
+    const f = await fixture(),
+      o = processingObservation();
+    if (kind === 'frozen')
+      Object.assign(o.processing.interval, { completedFrames: 150, pendingFrames: 0 });
+    expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+    if (kind === 'scope') o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    if (kind === 'encoder') o.processing.encoder = 'videotoolbox' as 'software';
+    if (kind === 'filter') o.processing.interval.filterDuration.meanMs = 0;
+    if (kind === 'regression')
+      Object.assign(o.processing.interval, { completedFrames: 148, pendingFrames: 2 });
+    if (kind === 'frozen') o.processing.interval.processingDuration = { meanMs: 1, maximumMs: 1 };
+    if (kind === 'reuse') o.attempt = 2;
+    expect((await f.report({ ...f.body, sequence: 2, observation: o })).status).toBe(409);
+  },
+);
+it('accepts a fresh processing scope for a new attempt and rejects adjacent source-anchor changes', async () => {
+  const f = await fixture(),
+    o = processingObservation();
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+  const next = structuredClone(o);
+  Object.assign(next.decodedVideo.completed, { sequence: 3, firstPTS: 453000, lastPTS: 900000 });
+  Object.assign(next.processing, { previousSequence: 2, sequence: 3, firstPTS: 453000 });
+  Object.assign(next.processing.interval, {
+    sourceStartExclusive: 449999,
+    sourceEndInclusive: 900000,
+  });
+  expect((await f.report({ ...f.body, sequence: 2, observation: next })).status).toBe(409);
+  next.processing.interval.sourceStartExclusive = 450000;
+  expect((await f.report({ ...f.body, sequence: 2, observation: next })).status).toBe(200);
+  o.attempt = 2;
+  o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(200);
+});
+
+it.each(['old', 'replacement'])(
+  'processing attempt ownership survives generation changes and omission (%s scope)',
+  async (scope) => {
+    const f = await fixture(),
+      o = processingObservation();
+    expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+    f.matches.media.execute({
+      commandId: 'replace-processing',
+      gameId: 'match',
+      expectedGeneration: 1,
+      issuedAt: new Date().toISOString(),
+      operation: {
+        type: 'start',
+        selection: {
+          workerId: 'mac',
+          outputId: 'other-sink',
+          captureDeviceId: 'phone',
+          recordingId: 'archive',
+        },
+      },
+    });
+    o.generation = 2;
+    const { processing, ...without } = o;
+    expect((await f.report({ ...f.body, sequence: 2, observation: without })).status).toBe(200);
+    if (scope === 'replacement') {
+      o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+      o.processing.encoder = 'videotoolbox' as 'software';
+    }
+    expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(409);
+    o.attempt = 2;
+    o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(200);
+  },
+);
+
+it('rejected processing does not consume read IDs, scopes, sequences or timing tokens', async () => {
+  const f = await fixture(),
+    o = processingObservation();
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+  const register = () =>
+    f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'run' });
+  const before = await (await register()).json();
+  o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  const body = {
+    ...f.body,
+    sequence: 2,
+    timingToken: before.timingToken,
+    pipelineReadId: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    observation: o,
+  };
+  expect((await f.report(body)).status).toBe(409);
+  expect((await (await register()).json()).timingToken).toBe(before.timingToken);
+  o.attempt = 2;
+  expect((await f.report(body)).status).toBe(200);
+  expect((await f.status()).status.observation.processing.scopeID).toBe(o.processing.scopeID);
+});
+
+const deliveryFull = (n = 3) => ({
+  formatVersion: 1 as const,
+  scopeID: '11111111-1111-4111-8111-111111111111',
+  sampledAtMs: n * 40 + 10,
+  coverageAtMs: 0,
+  afterOrdinal: 0,
+  lastOrdinal: n,
+  arrivals: Array.from({ length: n }, (_, i) => [i * 3000, (i + 1) * 40]),
+  invalidReason: null,
+  ended: false,
+});
+it('authenticates and reconstructs delivery deltas, with opt-in status and server timing provenance', async () => {
+  const f = await fixture();
+  expect(f.session.decoderDelivery).toBe('decoder-delivery-delta-v1');
+  const body: any = {
+    ...f.body,
+    timingToken: f.session.timingToken,
+    pipelineReadId: '22222222-2222-4222-8222-222222222222',
+    observation: {
+      ...f.body.observation,
+      decodedVideo: {
+        clock: 'mpegts-pts-90k-v1',
+        completed: null,
+        invalidReason: null,
+        ended: false,
+      },
+      decoderDelivery: deliveryFull(),
+    },
+  };
+  expect((await f.report(body, 'bad')).status).toBe(401);
+  const response = await f.report(body);
+  expect(response.status).toBe(200);
+  const ack = await response.json();
+  expect((await f.status()).status.observation).not.toHaveProperty('decoderDelivery');
+  const get = async (query = 'decoderDelivery=decoder-delivery-delta-v1') =>
+    (await f.request('/v1/matches/match/media/status?' + query, f.scorer.token)).json();
+  const first = await get();
+  expect(first.status.observation.decoderDelivery).toEqual(deliveryFull());
+  expect(first.status.decoderDeliveryAgeUpperBoundMs).toBeGreaterThanOrEqual(0);
+  const next = deliveryFull(6);
+  next.afterOrdinal = 3;
+  next.arrivals = next.arrivals.slice(3);
+  const second = {
+    ...body,
+    sequence: 2,
+    timingToken: ack.timingToken,
+    observation: { ...body.observation, decoderDelivery: next },
+  };
+  expect((await f.report(second)).status).toBe(200);
+  expect((await get()).status.observation.decoderDelivery).toEqual(deliveryFull(6));
+  const delta = await get(
+    'decoderDelivery=decoder-delivery-delta-v1&deliveryScope=' + next.scopeID + '&deliveryAfter=3',
+  );
+  expect(delta.status.observation.decoderDelivery).toEqual(next);
+  const damaged = structuredClone(second);
+  damaged.sequence = 3;
+  damaged.observation.decoderDelivery.arrivals[0][0]++;
+  expect((await f.report(damaged)).status).toBe(409);
+  const omitted = { ...body, sequence: 3 };
+  delete omitted.observation.decoderDelivery;
+  expect((await f.report(omitted)).status).toBe(200);
+  expect((await get()).status).not.toHaveProperty('decoderDeliveryAgeUpperBoundMs');
+  expect((await get()).status.observation).not.toHaveProperty('decoderDelivery');
+});
+it('rejects malformed delivery queries and cross-attempt reuse, and leaves unproven sample age unknown', async () => {
+  const f = await fixture();
+  const body: any = {
+    ...f.body,
+    pipelineReadId: '22222222-2222-4222-8222-222222222222',
+    observation: {
+      ...f.body.observation,
+      decodedVideo: {
+        clock: 'mpegts-pts-90k-v1',
+        completed: null,
+        invalidReason: null,
+        ended: false,
+      },
+      decoderDelivery: deliveryFull(),
+    },
+  };
+  expect((await f.report(body)).status).toBe(200);
+  const url = '/v1/matches/match/media/status?decoderDelivery=decoder-delivery-delta-v1';
+  const status = await (await f.request(url, f.scorer.token)).json();
+  expect(status.status).not.toHaveProperty('decoderDeliveryAgeUpperBoundMs');
+  for (const query of [
+    'decoderDelivery=future',
+    'deliveryAfter=1',
+    'decoderDelivery=decoder-delivery-delta-v1&deliveryAfter=1',
+    'decoderDelivery=decoder-delivery-delta-v1&deliveryScope=bad&deliveryAfter=1',
+  ])
+    expect(
+      (await f.request('/v1/matches/match/media/status?' + query, f.scorer.token)).status,
+    ).toBe(400);
+  body.sequence = 2;
+  body.pipelineReadId = '33333333-3333-4333-8333-333333333333';
+  body.observation.attempt = 2;
+  expect((await f.report(body)).status).toBe(409);
+});
+
+it('a new token cannot refresh or retrospectively date a frozen delivery sample', async () => {
+  const { WorkerObservations } = await import('../src/worker-observations.js');
+  for (const withInitialToken of [true, false]) {
+    const f = await fixture();
+    let clock = 0;
+    const store = new WorkerObservations(f.matches.media, Date.now, () => clock);
+    const registered = store.register({ workerId: 'mac', runId: 'frozen' });
+    clock = 100;
+    const body: any = {
+      ...f.body,
+      sessionId: registered.sessionId,
+      ...(withInitialToken ? { timingToken: registered.timingToken } : {}),
+      pipelineReadId: '22222222-2222-4222-8222-222222222222',
+      observation: {
+        ...f.body.observation,
+        decodedVideo: {
+          clock: 'mpegts-pts-90k-v1',
+          completed: null,
+          invalidReason: null,
+          ended: false,
+        },
+        decoderDelivery: deliveryFull(),
+      },
+    };
+    const ack = store.report(body);
+    clock = 400;
+    store.report({ ...body, sequence: 2, timingToken: ack.timingToken });
+    const age = store.status('match', true).status.decoderDeliveryAgeUpperBoundMs;
+    if (withInitialToken) expect(age).toBe(400);
+    else expect(age).toBeUndefined();
+    const omitted = { ...body, sequence: 3, observation: { ...body.observation } };
+    delete omitted.observation.decoderDelivery;
+    clock = 500;
+    const omissionAck = store.report(omitted);
+    clock = 600;
+    store.report({ ...body, sequence: 4, timingToken: omissionAck.timingToken });
+    expect(store.status('match', true).status.decoderDeliveryAgeUpperBoundMs).toBeUndefined();
+  }
+});
+
+it('validates optional cap attribution and prevents its mutation inside a fixed source window', () => {
+  const report = processingObservation().processing;
+  report.interval.submittedFrames = 149;
+  report.interval.completedFrames = 148;
+  report.interval.omittedBeforeEncoderFrames = 1;
+  const cap = { ...report, interval: { ...report.interval, intentionalFrameCapOmissions: 1 } };
+  expect(workerProcessingSchema.safeParse(cap).success).toBe(true);
+  expect(workerProcessingSchema.safeParse(report).success).toBe(true);
+  for (const invalid of [-1, 2, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(
+      workerProcessingSchema.safeParse({
+        ...cap,
+        interval: { ...cap.interval, intentionalFrameCapOmissions: invalid },
+      }).success,
+    ).toBe(false);
+  }
+  expect(
+    processingProgresses(cap, {
+      ...cap,
+      interval: { ...cap.interval, intentionalFrameCapOmissions: 0 },
+    }),
+  ).toBe(false);
+});

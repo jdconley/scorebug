@@ -1,0 +1,128 @@
+{
+  "creation": {
+    "id": "fixture-game",
+    "deviceId": "fixture-phone",
+    "teams": {
+      "home": {
+        "name": "Spikers",
+        "shortName": "SPK",
+        "color": "#112233"
+      },
+      "away": {
+        "name": "Diggers",
+        "shortName": "DIG",
+        "color": "#445566"
+      }
+    },
+    "rules": {
+      "bestOf": 3,
+      "pointsToWin": 25,
+      "decidingPointsToWin": 15,
+      "winBy": 2,
+      "pointCap": null
+    }
+  },
+  "command": {
+    "commandId": "fixture-point",
+    "gameId": "fixture-game",
+    "deviceId": "fixture-phone",
+    "expectedRevision": 0,
+    "scorerEpoch": 1,
+    "issuedAt": "2026-09-14T01:00:00.000Z",
+    "operation": {
+      "type": "award_point",
+      "side": "home"
+    }
+  },
+  "snapshot": {
+    "id": "fixture-game",
+    "createdAt": "2026-09-14T01:00:00.000Z",
+    "revision": 0,
+    "teams": {
+      "home": {
+        "name": "Spikers",
+        "shortName": "SPK",
+        "color": "#112233"
+      },
+      "away": {
+        "name": "Diggers",
+        "shortName": "DIG",
+        "color": "#445566"
+      }
+    },
+    "rules": {
+      "bestOf": 3,
+      "pointsToWin": 25,
+      "decidingPointsToWin": 15,
+      "winBy": 2,
+      "pointCap": null
+    },
+    "score": {
+      "home": 0,
+      "away": 0,
+      "set": 1,
+      "homeSets": 0,
+      "awaySets": 0
+    },
+    "completedSets": [],
+    "status": "active",
+    "endReason": null,
+    "canUndo": false,
+    "scorer": {
+      "deviceId": "fixture-phone",
+      "epoch": 1
+    },
+    "broadcast": {
+      "desired": "stopped",
+      "generation": 0
+    }
+  },
+  "outcome": {
+    "commandId": "fixture-point",
+    "accepted": true,
+    "error": null,
+    "snapshot": {
+      "id": "fixture-game",
+      "createdAt": "2026-09-14T01:00:00.000Z",
+      "revision": 1,
+      "teams": {
+        "home": {
+          "name": "Spikers",
+          "shortName": "SPK",
+          "color": "#112233"
+        },
+        "away": {
+          "name": "Diggers",
+          "shortName": "DIG",
+          "color": "#445566"
+        }
+      },
+      "rules": {
+        "bestOf": 3,
+        "pointsToWin": 25,
+        "decidingPointsToWin": 15,
+        "winBy": 2,
+        "pointCap": null
+      },
+      "score": {
+        "home": 1,
+        "away": 0,
+        "set": 1,
+        "homeSets": 0,
+        "awaySets": 0
+      },
+      "completedSets": [],
+      "status": "active",
+      "endReason": null,
+      "canUndo": true,
+      "scorer": {
+        "deviceId": "fixture-phone",
+        "epoch": 1
+      },
+      "broadcast": {
+        "desired": "stopped",
+        "generation": 0
+      }
+    }
+  }
+}

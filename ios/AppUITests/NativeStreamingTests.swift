@@ -1,0 +1,293 @@
+import XCTest
+
+final class NativeStreamingTests: XCTestCase {
+    @MainActor func testNativePublishScoreAndStopPreservesRecording() throws {
+        continueAfterFailure = false
+        let endpoint = try XCTUnwrap(ProcessInfo.processInfo.environment["SCOREBUG_TEST_API_URL"])
+        XCTAssertTrue(endpoint.hasPrefix("http://127.0.0.1:"))
+        let app = XCUIApplication()
+        app.launchEnvironment["SCOREBUG_TEST_API_URL"] = endpoint
+        app.launchEnvironment["SCOREBUG_TEST_TOKEN"] = "qa-phone-token-not-production"
+        app.launchEnvironment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] = "1"
+        let fileFlag = ProcessInfo.processInfo.environment["SCOREBUG_TEST_FILE_CAPTURE"] ?? ""
+        if !fileFlag.isEmpty {
+            XCTAssertEqual(fileFlag, "1")
+            XCTAssertTrue((ProcessInfo.processInfo.environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? "").isEmpty)
+            app.launchEnvironment["SCOREBUG_TEST_FILE_CAPTURE"] = fileFlag
+        }
+        let rawHold = ProcessInfo.processInfo.environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] ?? ""
+        var holdSeconds = 12
+        if !rawHold.isEmpty {
+            let parsed = try XCTUnwrap(Int(rawHold))
+            XCTAssertEqual(String(parsed), rawHold)
+            XCTAssertTrue((12...600).contains(parsed))
+            holdSeconds = parsed
+            app.launchEnvironment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = rawHold
+        }
+        let motionFlag = ProcessInfo.processInfo.environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? ""
+        if !motionFlag.isEmpty {
+            XCTAssertTrue(["1", "blocks16"].contains(motionFlag), "Malformed native motion fixture flag")
+            app.launchEnvironment["SCOREBUG_TEST_MOTION_FIXTURE"] = motionFlag
+        }
+        let qualityFlag = ProcessInfo.processInfo.environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? ""
+        if !qualityFlag.isEmpty {
+            XCTAssertEqual(qualityFlag, "1"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
+            app.launchEnvironment["SCOREBUG_TEST_NATIVE_QUALITY"] = qualityFlag
+        }
+        let liveProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_LIVE_PROFILE"] ?? ""
+        if !liveProfile.isEmpty {
+            XCTAssertTrue(["540p30", "360p30", "240p30"].contains(liveProfile)); XCTAssertTrue(qualityFlag.isEmpty)
+            XCTAssertTrue((fileFlag == "1" && motionFlag.isEmpty) || (fileFlag.isEmpty && motionFlag == "blocks16"))
+            XCTAssertGreaterThanOrEqual(holdSeconds, 90)
+            app.launchEnvironment["SCOREBUG_TEST_LIVE_PROFILE"] = liveProfile
+        }
+        let transitions = ProcessInfo.processInfo.environment["SCOREBUG_TEST_PROFILE_TRANSITIONS"] ?? ""
+        if !transitions.isEmpty {
+            XCTAssertTrue(["1", "low240"].contains(transitions)); XCTAssertTrue(qualityFlag.isEmpty && liveProfile.isEmpty)
+            XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
+            app.launchEnvironment["SCOREBUG_TEST_PROFILE_TRANSITIONS"] = transitions
+        }
+        let uplinkPort = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] ?? ""
+        let uplinkProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? ""
+        let capacityRecovery = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? ""
+        let ownedMeasurement = ProcessInfo.processInfo.environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] ?? ""
+        let timingProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_TIMING_PROFILE"] ?? ""
+        let timingBudgets = ["strict1500-v1": "1500", "broadcast-reliability2000-v1": "2000", "broadcast-reliability3000-v1": "3000", "broadcast-reliability3000-v3": "3000"]
+        let expectedMeasuredDeadline = timingProfile.isEmpty ? "1500" : try XCTUnwrap(timingBudgets[timingProfile])
+        if !timingProfile.isEmpty {
+            XCTAssertEqual(ownedMeasurement, "1"); XCTAssertEqual(capacityRecovery, "1")
+            XCTAssertEqual(uplinkProfile, "capacity750k-retry"); XCTAssertEqual(holdSeconds, 270)
+            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CAPACITY_EVIDENCE"], "token-budget-v1")
+            app.launchEnvironment["SCOREBUG_TEST_TIMING_PROFILE"] = timingProfile
+            app.launchEnvironment["SCOREBUG_TEST_CAPACITY_EVIDENCE"] = "token-budget-v1"
+        }
+        let capacityHolds = ["capacity550k": 180, "capacity750k": 210, "capacity750k-retry": 270]
+        if !ownedMeasurement.isEmpty || uplinkProfile == "capacity750k-retry" {
+            XCTAssertEqual(ownedMeasurement, "1")
+            XCTAssertEqual(uplinkProfile, "capacity750k-retry")
+            app.launchEnvironment["SCOREBUG_TEST_OWNED_MEASUREMENT"] = ownedMeasurement
+        }
+        if !capacityRecovery.isEmpty || capacityHolds[uplinkProfile] != nil {
+            XCTAssertEqual(capacityRecovery, "1")
+            let expectedHold = try XCTUnwrap(capacityHolds[uplinkProfile])
+            XCTAssertEqual(fileFlag, "1"); XCTAssertEqual(holdSeconds, expectedHold)
+            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_PROBE_POLICY"], "recovery-budget-v1")
+            app.launchEnvironment["SCOREBUG_TEST_CAPACITY_RECOVERY"] = capacityRecovery
+        }
+        if !uplinkProfile.isEmpty { XCTAssertFalse(uplinkPort.isEmpty) }
+        if !uplinkPort.isEmpty {
+            XCTAssertTrue(transitions.isEmpty)
+            let parsed = try XCTUnwrap(Int(uplinkPort))
+            XCTAssertEqual(String(parsed), uplinkPort); XCTAssertTrue((1...65535).contains(parsed))
+            XCTAssertTrue(qualityFlag == "1" || ["540p30", "360p30", "240p30"].contains(liveProfile))
+            if fileFlag == "1" {
+                XCTAssertTrue(motionFlag.isEmpty)
+                XCTAssertTrue((capacityRecovery == "1" ? Array(capacityHolds.keys) : ["passthrough", "loss0p2-delay30"]).contains(uplinkProfile))
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_MEASURED_TRIAL"], "1")
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"], "staged")
+                app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROFILE"] = uplinkProfile
+            } else { XCTAssertEqual(motionFlag, "blocks16"); XCTAssertTrue(uplinkProfile.isEmpty) }
+            app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = uplinkPort
+        }
+        let adaptive = ProcessInfo.processInfo.environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] ?? ""
+        if !adaptive.isEmpty {
+            XCTAssertEqual(adaptive, "1"); XCTAssertEqual(qualityFlag, "1")
+            XCTAssertTrue(transitions.isEmpty && liveProfile.isEmpty && !uplinkPort.isEmpty)
+            XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 240)
+            app.launchEnvironment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] = adaptive
+        }
+        let pacing = ProcessInfo.processInfo.environment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] ?? ""
+        if !pacing.isEmpty {
+            XCTAssertEqual(pacing, "1"); XCTAssertEqual(adaptive, "1")
+            app.launchEnvironment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] = pacing
+        }
+        let candidateHeadroom = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] ?? ""
+        if !candidateHeadroom.isEmpty {
+            XCTAssertEqual(candidateHeadroom, "1")
+            XCTAssertEqual(liveProfile, "240p30")
+            XCTAssertTrue(["staged", "repeated"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""))
+            XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""))
+            XCTAssertTrue((90...600).contains(holdSeconds))
+            XCTAssertTrue((fileFlag == "1" && motionFlag.isEmpty) || (fileFlag.isEmpty && motionFlag == "blocks16"))
+            for key in ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
+                "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_DECODER_STALL"] {
+                XCTAssertTrue((ProcessInfo.processInfo.environment[key] ?? "").isEmpty)
+            }
+            XCTAssertTrue(uplinkPort.isEmpty || (fileFlag == "1" && !uplinkProfile.isEmpty))
+            app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] = candidateHeadroom
+        }
+        let probe = ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""
+        if !probe.isEmpty {
+            XCTAssertTrue(["renew", "expire", "staged", "repeated"].contains(probe)); XCTAssertEqual(liveProfile, candidateHeadroom == "1" ? "240p30" : "540p30")
+            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && pacing.isEmpty)
+            if probe == "repeated" {
+                XCTAssertEqual(candidateHeadroom, "1"); XCTAssertEqual(holdSeconds, 180)
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_MEASURED_TRIAL"], "1")
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"], "360p30")
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"], "1500")
+            }
+            app.launchEnvironment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = probe
+        }
+        let candidate = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""
+        if !candidate.isEmpty {
+            XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(candidate))
+            XCTAssertTrue(["240p30", "360p30", "540p30"].contains(liveProfile))
+            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && (probe.isEmpty || candidateHeadroom == "1") &&
+                (uplinkPort.isEmpty || (fileFlag == "1" && candidateHeadroom == "1" && !uplinkProfile.isEmpty)))
+            XCTAssertTrue((90...600).contains(holdSeconds))
+            app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_PROFILE"] = candidate
+        }
+        let cadenceReports = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CADENCE_REPORTS"] ?? ""
+        let measuredTrial = ProcessInfo.processInfo.environment["SCOREBUG_TEST_MEASURED_TRIAL"] ?? ""
+        if !measuredTrial.isEmpty {
+            XCTAssertEqual(measuredTrial, "1"); XCTAssertEqual(candidateHeadroom, "1")
+            XCTAssertEqual(candidate, "360p30"); XCTAssertEqual(liveProfile, "240p30")
+            XCTAssertTrue(["staged", "repeated"].contains(probe)); XCTAssertTrue(cadenceReports.isEmpty)
+            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"], "1")
+            app.launchEnvironment["SCOREBUG_TEST_MEASURED_TRIAL"] = measuredTrial
+            app.launchEnvironment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"] = "1"
+        }
+        if !cadenceReports.isEmpty {
+            XCTAssertEqual(cadenceReports, "1"); XCTAssertEqual(liveProfile, "240p30")
+            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && probe.isEmpty && uplinkPort.isEmpty)
+            XCTAssertTrue((90...120).contains(holdSeconds))
+            app.launchEnvironment["SCOREBUG_TEST_CADENCE_REPORTS"] = cadenceReports
+        }
+        let decoderStall = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DECODER_STALL"] ?? ""
+        if !decoderStall.isEmpty {
+            XCTAssertTrue(["1", "reset540"].contains(decoderStall)); XCTAssertEqual(cadenceReports, "1")
+            app.launchEnvironment["SCOREBUG_TEST_DECODER_STALL"] = decoderStall
+        }
+        let deliveryDeadline = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] ?? ""
+        if !deliveryDeadline.isEmpty {
+            if measuredTrial == "1" { XCTAssertEqual(deliveryDeadline, expectedMeasuredDeadline) }
+            else {
+                XCTAssertTrue(["1000", "1500"].contains(deliveryDeadline)); XCTAssertFalse(decoderStall.isEmpty)
+                XCTAssertEqual(cadenceReports, "1")
+            }
+            app.launchEnvironment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = deliveryDeadline
+        }
+        let deadlineResets = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DEADLINE_RESETS"] ?? ""
+        if !deadlineResets.isEmpty {
+            XCTAssertEqual(deadlineResets, "1"); XCTAssertTrue(["1", "reset540"].contains(decoderStall))
+            XCTAssertEqual(deliveryDeadline, "1500"); XCTAssertEqual(cadenceReports, "1")
+            app.launchEnvironment["SCOREBUG_TEST_DEADLINE_RESETS"] = deadlineResets
+        }
+        let probePolicy = ProcessInfo.processInfo.environment["SCOREBUG_TEST_PROBE_POLICY"] ?? ""
+        if !probePolicy.isEmpty {
+            XCTAssertEqual(probePolicy, "recovery-budget-v1")
+            XCTAssertEqual(fileFlag, "1"); XCTAssertTrue(motionFlag.isEmpty)
+            XCTAssertEqual(measuredTrial, "1"); XCTAssertEqual(probe, "staged")
+            XCTAssertEqual(candidateHeadroom, "1"); XCTAssertEqual(candidate, "360p30")
+            XCTAssertEqual(liveProfile, "240p30"); XCTAssertEqual(deliveryDeadline, expectedMeasuredDeadline)
+            XCTAssertTrue((capacityRecovery == "1" ? Array(capacityHolds.keys) : ["passthrough", "loss0p2-delay30"]).contains(uplinkProfile))
+            XCTAssertFalse(uplinkPort.isEmpty)
+            app.launchEnvironment["SCOREBUG_TEST_PROBE_POLICY"] = probePolicy
+        }
+        app.launch()
+        app.swipeUp()
+        tap(app.buttons["streaming.setup"])
+        replace(app.textFields["streaming.endpoint"], endpoint)
+        replace(app.secureTextFields["streaming.token"], "qa-phone-token-not-production")
+        replace(app.textFields["streaming.worker"], "mac")
+        replace(app.textFields["streaming.output"], "local-sink")
+        app.swipeUp()
+        tap(app.buttons["streaming.connect"])
+        XCTAssertTrue(app.staticTexts["streaming.connected"].waitForExistence(timeout: 20), app.debugDescription)
+        tap(app.buttons["streaming.closeSetup"])
+        app.swipeDown()
+        tap(app.buttons["film.start"])
+        duration(app, atLeast: 2)
+        app.swipeUp()
+        tap(app.buttons["streaming.start"])
+        value(app.staticTexts["streaming.localStatus"], equals: "publishing", timeout: 30)
+        value(app.staticTexts["streaming.workerStatus"], equals: "producing_output", timeout: 45)
+        attach(app, "Native camera sending and worker producing output")
+        app.tabBars.buttons["Score"].tap()
+        tap(app.buttons["scoring.connect"])
+        tap(app.buttons["scoring.takeover"])
+        tap(app.buttons["scoring.homePoint"])
+        value(app.buttons["scoring.homePoint"], equals: "1")
+        app.tabBars.buttons["Film"].tap()
+        // The explicit longer hold exercises simultaneous recording and streaming.
+        app.swipeDown()
+        let elapsed = try XCTUnwrap(Double(try XCTUnwrap(app.staticTexts["film.duration"].value as? String)))
+        XCTAssertTrue(elapsed.isFinite && elapsed >= 0)
+        duration(app, atLeast: elapsed + Double(holdSeconds), timeout: Double(holdSeconds) + 23, minimumElapsed: Double(holdSeconds))
+        app.swipeUp()
+        // Preserve the original live checks, but finish the local recording
+        // before reporting a live failure that would abort this UI test.
+        let publishingAtEnd = matches(app.staticTexts["streaming.localStatus"], equals: "publishing")
+        let producingAtEnd = matches(app.staticTexts["streaming.workerStatus"], equals: "producing_output")
+        let localAtEnd = app.staticTexts["streaming.localStatus"].value as? String ?? "missing"
+        let workerAtEnd = app.staticTexts["streaming.workerStatus"].value as? String ?? "missing"
+        // Preserve these checks even if a later archive stop/export fails.
+        let liveChecks: [String: Any] = [
+            "phase": "beforeFinalization", "publishingAtEnd": publishingAtEnd, "producingAtEnd": producingAtEnd,
+            "localAtEnd": String(localAtEnd.prefix(128)), "workerAtEnd": String(workerAtEnd.prefix(128))
+        ]
+        let liveEvidence = XCTAttachment(data: try JSONSerialization.data(withJSONObject: liveChecks, options: [.sortedKeys]),
+                                         uniformTypeIdentifier: "public.json")
+        liveEvidence.name = "NativeStreamingLiveChecks"; liveEvidence.lifetime = .keepAlways; add(liveEvidence)
+        let stop = app.buttons["streaming.stop"]
+        let stopAvailable = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: stop)], timeout: 20) == .completed
+        var reachedIdle = false
+        if stopAvailable {
+            stop.tap()
+            reachedIdle = matches(app.staticTexts["streaming.localStatus"], equals: "idle")
+        }
+        app.swipeDown()
+        let stoppedAt = try XCTUnwrap(Double(try XCTUnwrap(app.staticTexts["film.duration"].value as? String)))
+        XCTAssertTrue(stoppedAt.isFinite && stoppedAt >= 0)
+        duration(app, atLeast: stoppedAt + 3)
+        attach(app, "Local recording continues after streaming stops")
+        tap(app.buttons["film.stop"])
+        XCTAssertTrue(app.buttons["film.start"].waitForExistence(timeout: 20))
+        app.tabBars.buttons["Recordings"].tap()
+        let export = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recordings.export.")).firstMatch
+        tap(export)
+        XCTAssertTrue(app.staticTexts["recordings.exportReady"].waitForExistence(timeout: 45), app.debugDescription)
+        attach(app, "Recording exported after native streaming")
+        let finalization: [String: Any] = [
+            "publishingAtEnd": publishingAtEnd, "producingAtEnd": producingAtEnd,
+            "localAtEnd": String(localAtEnd.prefix(128)), "workerAtEnd": String(workerAtEnd.prefix(128)),
+            "stopAvailable": stopAvailable, "reachedIdle": reachedIdle,
+            "recordingStopped": true, "exportReady": true
+        ]
+        let evidence = XCTAttachment(data: try JSONSerialization.data(withJSONObject: finalization, options: [.sortedKeys]),
+                                     uniformTypeIdentifier: "public.json")
+        evidence.name = "NativeStreamingFinalization"; evidence.lifetime = .keepAlways; add(evidence)
+        XCTAssertTrue(publishingAtEnd && producingAtEnd && stopAvailable && reachedIdle,
+                      "Live qualification failed; local recording was stopped and exported. Local: \(localAtEnd), worker: \(workerAtEnd)")
+    }
+    @MainActor private func tap(_ element: XCUIElement) {
+        let ready = NSPredicate(format: "exists == true AND enabled == true AND hittable == true")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: element)], timeout: 20), .completed)
+        element.tap()
+    }
+    @MainActor private func replace(_ element: XCUIElement, _ text: String) {
+        tap(element)
+        let old = element.value as? String ?? ""
+        element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + text)
+    }
+    @MainActor private func value(_ element: XCUIElement, equals text: String, timeout: Double = 20) {
+        XCTAssertTrue(matches(element, equals: text, timeout: timeout))
+    }
+    @MainActor private func matches(_ element: XCUIElement, equals text: String, timeout: Double = 20) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", text), object: element)], timeout: timeout) == .completed
+    }
+    @MainActor private func duration(_ app: XCUIApplication, atLeast seconds: Double, timeout: Double = 35, minimumElapsed: Double = 0) {
+        let started = ContinuousClock.now
+        let predicate = NSPredicate { _, _ in
+            (Double(app.staticTexts["film.duration"].value as? String ?? "") ?? 0) >= seconds &&
+                started.duration(to: .now) >= .seconds(minimumElapsed)
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: timeout), .completed, app.debugDescription)
+        XCTAssertTrue(app.buttons["film.stop"].isEnabled)
+    }
+    @MainActor private func attach(_ app: XCUIApplication, _ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+}

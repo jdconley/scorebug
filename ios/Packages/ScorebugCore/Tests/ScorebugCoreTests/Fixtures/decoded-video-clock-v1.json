@@ -1,0 +1,112 @@
+{
+  "known": {
+    "status": {
+      "gameId": "match",
+      "generation": 1,
+      "workerId": "mac",
+      "observation": {
+        "gameId": "match",
+        "generation": 1,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1,
+        "decodedVideo": {
+          "completed": {
+            "sequence": 1,
+            "durationMs": 5000,
+            "ageMs": 120.5,
+            "firstPTS": -126000,
+            "lastPTS": 321000,
+            "freshFrames": 150,
+            "duplicateFrames": 0,
+            "reorderedFrames": 0,
+            "valid": true
+          },
+          "invalidReason": null,
+          "ended": false,
+          "clock": "mpegts-pts-90k-v1"
+        }
+      },
+      "observedAt": "2026-09-14T04:00:00.000Z",
+      "expiresAt": "2026-09-14T04:00:05.000Z",
+      "state": "producing_output"
+    },
+    "serverTime": "2026-09-14T04:00:00.000Z"
+  },
+  "legacy": {
+    "status": {
+      "gameId": "match",
+      "generation": 1,
+      "workerId": "mac",
+      "observation": {
+        "gameId": "match",
+        "generation": 1,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1,
+        "decodedVideo": {
+          "completed": {
+            "sequence": 1,
+            "durationMs": 5000,
+            "ageMs": 120.5,
+            "firstPTS": -126000,
+            "lastPTS": 321000,
+            "freshFrames": 150,
+            "duplicateFrames": 0,
+            "reorderedFrames": 0,
+            "valid": true
+          },
+          "invalidReason": null,
+          "ended": false
+        }
+      },
+      "observedAt": "2026-09-14T04:00:00.000Z",
+      "expiresAt": "2026-09-14T04:00:05.000Z",
+      "state": "producing_output"
+    },
+    "serverTime": "2026-09-14T04:00:00.000Z"
+  },
+  "unknown": {
+    "status": {
+      "gameId": "match",
+      "generation": 1,
+      "workerId": "mac",
+      "observation": {
+        "gameId": "match",
+        "generation": 1,
+        "state": "producing_output",
+        "reason": null,
+        "attempt": 1,
+        "frame": 12,
+        "outTimeUs": 400000,
+        "scoreRevision": 1,
+        "decodedVideo": {
+          "completed": {
+            "sequence": 1,
+            "durationMs": 5000,
+            "ageMs": 120.5,
+            "firstPTS": -126000,
+            "lastPTS": 321000,
+            "freshFrames": 150,
+            "duplicateFrames": 0,
+            "reorderedFrames": 0,
+            "valid": true
+          },
+          "invalidReason": null,
+          "ended": false,
+          "clock": "future-clock-v2"
+        }
+      },
+      "observedAt": "2026-09-14T04:00:00.000Z",
+      "expiresAt": "2026-09-14T04:00:05.000Z",
+      "state": "producing_output"
+    },
+    "serverTime": "2026-09-14T04:00:00.000Z"
+  }
+}

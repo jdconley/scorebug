@@ -1,32 +1,25 @@
-# MediaMTX config for Scorebug ingest.
-# Only SRT is enabled; HLS/RTSP/WebRTC are off because the home daemon
-# pulls via SRT and we don't expose viewer playback from the relay.
-
+# The native API creates generation-scoped paths with distinct publish/read SRT
+# encryption passphrases. No wildcard path or legacy shell hook is required.
 logLevel: info
-logDestinations: [stdout]
-
-# Disable everything we don't use
-api: no
-rtsp: no
-rtmp: no
-hls: no
-webrtc: no
-
-srt: yes
+api: true
+apiAddress: :9997
+rtsp: false
+rtmp: false
+hls: false
+webrtc: false
+moq: false
+srt: true
 srtAddress: :8890
-
-paths:
-  # Per-game paths named `game_<uuid>`. Stream IDs control which secret
-  # is required: `publish:game_<uuid>:<publishSecret>` to publish,
-  # `read:game_<uuid>` to read. SRT passphrase is enforced separately
-  # by the publishing/reading client.
-  '~^game_.+$':
-    source: publisher
-    runOnReady: >
-      sh -c '
-      curl -sS -X POST
-      -H "Authorization: Bearer $MTX_INTERNAL_TOKEN"
-      -H "Content-Type: application/json"
-      -d "{\"path\":\"$MTX_PATH\"}"
-      http://127.0.0.1:8787/internal/stream-ready
-      '
+authInternalUsers:
+  - user: any
+    permissions:
+      - action: publish
+        path: '~^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$'
+      - action: read
+        path: '~^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$'
+  - user: scorebug-admin
+    # Compose requires and overrides this field. Do not launch this file alone.
+    pass: overridden-by-required-compose-environment
+    permissions:
+      - action: api
+paths: {}

@@ -1,0 +1,12 @@
+.git
+**/node_modules
+**/dist
+**/.build
+**/DerivedData
+**/*.xcodeproj
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+artifacts
+data
