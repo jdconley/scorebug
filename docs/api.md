@@ -29,7 +29,9 @@ scorebug://join?server=<https-url>&code=<invite-code>
 ```
 
 Query values are percent-encoded (`server=https%3A%2F%2Fscorebug.example.com`).
-`server` is the API base URL (`PUBLIC_URL`, set by `infra/install.sh`). Setup
+`server` is always the configured `PUBLIC_URL` (written by `infra/install.sh`,
+required by the Compose file), never the request's Host header. Without it the
+link-minting endpoints answer `503 public_url_not_configured`. Setup
 codes are 24 URL-safe characters. Invite codes in links are six characters
 without the dash.
 

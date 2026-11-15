@@ -593,3 +593,35 @@ it('reports pendingSetEnd at set point and keeps points after it allowed', async
   expect(snapshot.score).toMatchObject({ set: 2, homeSets: 1, home: 0, away: 0 });
   expect(snapshot.pendingSetEnd).toBeNull();
 });
+
+it('mints links only from PUBLIC_URL, never from the request Host header', async () => {
+  const config = testConfig();
+  const value = createApp(config);
+  apps.push(value);
+  const created = await value.app.request('/v1/matches', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${config.PHONE_TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: 'game-1',
+      deviceId: 'p',
+      teams: { home: team('Home'), away: team('Away') },
+      rules,
+    }),
+  });
+  expect(created.status).toBe(201);
+  for (const path of ['/v1/setup/links', '/v1/matches/game-1/invites']) {
+    const response = await value.app.request(path, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${config.PHONE_TOKEN}`,
+        host: 'attacker.example',
+        'x-forwarded-host': 'attacker.example',
+      },
+    });
+    expect(response.status).toBe(503);
+    const text = await response.text();
+    expect(JSON.parse(text).error).toBe('public_url_not_configured');
+    expect(text).not.toContain('attacker');
+  }
+  expect(value.matches.listInvites('game-1')).toHaveLength(0);
+});

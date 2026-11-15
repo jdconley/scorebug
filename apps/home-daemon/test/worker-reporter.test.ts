@@ -20,6 +20,9 @@ function gate() {
   });
   return { promise, release };
 }
+// Deadline tests use budgets of hundreds of milliseconds: the steps meant to fit
+// keep several hundred ms of headroom for slow, shared CI runners, and the steps
+// meant to overrun still exceed the budget by a wide margin.
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0)) await close();
@@ -156,9 +159,9 @@ it('uses one total deadline for registration plus observation, not a fresh timeo
   const f = await fixture(
     (path) => ({
       body: path.endsWith('sessions') ? { sessionId: 'one' } : { accepted: true },
-      delay: 40,
+      delay: 400,
     }),
-    65,
+    650,
   );
   await expect(f.reporter.report(() => observation)).rejects.toThrow('worker_report_unavailable');
   expect(f.requests).toHaveLength(2);
@@ -381,8 +384,8 @@ it('rejects invalid acknowledgement tokens without replacing the cached marker',
 it('does not sample when registration exceeds the deadline', async () => {
   let samples = 0;
   const f = await fixture(
-    () => ({ body: { sessionId: 'one', timingToken: 'marker-1' }, delay: 80 }),
-    20,
+    () => ({ body: { sessionId: 'one', timingToken: 'marker-1' }, delay: 800 }),
+    200,
   );
   await expect(
     f.reporter.report(() => {
@@ -399,12 +402,12 @@ it.each([false, true])(
   async (idle) => {
     const f = await fixture(
       (path) => ({ body: path.endsWith('sessions') ? { sessionId: 'one' } : { accepted: true } }),
-      30,
+      300,
     );
     await f.reporter.report(() => null);
     await expect(
       f.reporter.report(() => {
-        const end = performance.now() + 60;
+        const end = performance.now() + 600;
         while (performance.now() < end) {
           /* synchronous decoder work */
         }
@@ -421,9 +424,12 @@ it('uses the original deadline for replacement registration and resampling', asy
   const f = await fixture(
     (path) =>
       path.endsWith('sessions')
-        ? { body: { sessionId: `session-${++registrations}` }, delay: registrations === 1 ? 0 : 80 }
-        : { status: 409, body: { error: 'worker_session_unknown' }, delay: 40 },
-    90,
+        ? {
+            body: { sessionId: `session-${++registrations}` },
+            delay: registrations === 1 ? 0 : 800,
+          }
+        : { status: 409, body: { error: 'worker_session_unknown' }, delay: 400 },
+    900,
   );
   await expect(
     f.reporter.report(() => {
@@ -1010,11 +1016,11 @@ it('includes registration and fresh challenge in a single deadline', async () =>
   const f = await fixture(
     (path) =>
       path.endsWith('sessions')
-        ? { body: { sessionId: 'one', sampleTiming }, delay: 40 }
+        ? { body: { sessionId: 'one', sampleTiming }, delay: 400 }
         : path.endsWith('sample-timing')
-          ? { body: { timingToken: 'fresh' }, delay: 90 }
+          ? { body: { timingToken: 'fresh' }, delay: 900 }
           : { body: { accepted: true } },
-    100,
+    1000,
   );
   await expect(
     f.reporter.report(() => {
@@ -1098,12 +1104,12 @@ it('keeps the original deadline through challenge session recovery', async () =>
       path.endsWith('sessions')
         ? {
             body: { sessionId: `s${++registrations}`, sampleTiming },
-            delay: registrations === 1 ? 0 : 90,
+            delay: registrations === 1 ? 0 : 900,
           }
         : path.endsWith('sample-timing')
-          ? { status: 409, body: { error: 'worker_session_unknown' }, delay: 40 }
+          ? { status: 409, body: { error: 'worker_session_unknown' }, delay: 400 }
           : { body: { accepted: true } },
-    100,
+    1000,
   );
   await expect(
     f.reporter.report(() => {

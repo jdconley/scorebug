@@ -6,7 +6,6 @@ import {
   bearerToken,
   clientKey,
   ownerAuth,
-  publicBase,
   resolveOwner,
   type Owner,
   type OwnerEnv,
@@ -35,6 +34,11 @@ async function body<T>(c: Context, schema: z.ZodType<T>, optional = false): Prom
   return parsed.success ? parsed.data : null;
 }
 const invalid = (c: Context) => c.json({ error: 'invalid_request' }, 400);
+/**
+ * Links always use the configured PUBLIC_URL, never the request's Host header,
+ * so a spoofed Host cannot point a shared link at another server.
+ */
+const publicUrlMissing = (c: Context) => c.json({ error: 'public_url_not_configured' }, 503);
 
 const statusFor: Record<string, 400 | 401 | 404 | 409 | 410> = {
   setup_code_invalid: 401,
@@ -117,13 +121,11 @@ export function setupRoutes(config: Config, store: MatchStore, guard: RedeemGuar
       true,
     );
     if (!input) return invalid(c);
+    if (!config.PUBLIC_URL) return publicUrlMissing(c);
     const minted = store.account.mintSetupCode(
       input.expiresInHours === undefined ? undefined : input.expiresInHours * 3_600_000,
     );
-    return c.json(
-      { ...minted, link: setupLink(publicBase(c, config.PUBLIC_URL), minted.code) },
-      201,
-    );
+    return c.json({ ...minted, link: setupLink(config.PUBLIC_URL, minted.code) }, 201);
   });
   app.onError(storeError);
   return app;
@@ -273,6 +275,7 @@ export function inviteRoutes(config: Config, store: MatchStore) {
       true,
     );
     if (!input) return invalid(c);
+    if (!config.PUBLIC_URL) return publicUrlMissing(c);
     const { invite, code } = store.issueInvite(
       c.req.param('id')!,
       c.get('issuer'),
@@ -282,7 +285,7 @@ export function inviteRoutes(config: Config, store: MatchStore) {
       {
         invite,
         code: formatInviteCode(code),
-        link: joinLink(publicBase(c, config.PUBLIC_URL), code),
+        link: joinLink(config.PUBLIC_URL, code),
         expiresAt: invite.expiresAt,
       },
       201,

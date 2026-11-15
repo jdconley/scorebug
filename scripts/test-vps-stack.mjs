@@ -19,6 +19,7 @@ await chmod(artifact, 0o700);
 const environment = {
   ...process.env,
   CADDY_DOMAIN: 'qa.invalid',
+  PUBLIC_URL: 'https://qa.invalid',
   INGEST_HOST: 'ingest.invalid',
   INGEST_PORT: '8890',
   CADDY_IMAGE: 'caddy:2-alpine',

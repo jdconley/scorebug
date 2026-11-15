@@ -25,7 +25,11 @@ const schema = z
     /** Comma-separated origins for CORS. `*` allows any. Default `*` for personal-scale use. */
     CORS_ORIGINS: z.string().default('*'),
     DATABASE_PATH: z.string().min(1).default('data/scorebug.sqlite'),
-    /** Public HTTPS base for setup and invite links, e.g. https://scorebug.example.com. */
+    /**
+     * Public HTTPS base for setup and invite links, e.g. https://scorebug.example.com.
+     * Required to mint links (the request's Host header is never used); compose
+     * requires it and install.sh always writes it.
+     */
     PUBLIC_URL: z
       .string()
       .url()

@@ -64,13 +64,3 @@ export function clientKey(c: Context): string {
   const forwarded = c.req.header('x-forwarded-for');
   return forwarded?.split(',').at(-1)?.trim() || 'direct';
 }
-
-/** Public base URL for links: PUBLIC_URL, else the request's forwarded origin. */
-export function publicBase(c: Context, configured: string | undefined): string {
-  if (configured) return configured.replace(/\/+$/, '');
-  const url = new URL(c.req.url);
-  const proto =
-    c.req.header('x-forwarded-proto')?.split(',')[0]?.trim() || url.protocol.slice(0, -1);
-  const host = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? url.host;
-  return `${proto}://${host}`;
-}
