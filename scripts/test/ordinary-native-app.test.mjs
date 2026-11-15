@@ -529,6 +529,8 @@ class Harness {
   var recoveryRecordingDeadline: Double = 0
   var deadline = Date.distantPast
   var scorerNetworkPermissionOnly = false
+  var physicalHour = false
+  var quality2160 = false
   func enforceScorerPermissionPolicy() throws {
     guard scorerNetworkPermissionOnly else { return }
     fatalError("Scorer permission handling is outside this ordinary/recovery harness")

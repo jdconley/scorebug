@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { existsSync, readdirSync } from 'node:fs';
+
+// artifacts/ is git-ignored, so a fresh checkout (CI) has no qa directory yet.
+function nativeAppArtifacts() {
+  const directory = new URL('../../artifacts/qa/', import.meta.url);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory).filter((name) => name.startsWith('native-app-'));
+}
 const implementation = await import('../native-capacity-recovery.mjs').catch((e) => {
   if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
   return {};
@@ -138,10 +146,7 @@ test('capacity selection composes existing native file and measured source parse
 
 test('native harness rejects incomplete capacity qualification before artifacts or resources', async () => {
   const { spawnSync } = await import('node:child_process');
-  const { readdirSync } = await import('node:fs');
-  const before = readdirSync(new URL('../../artifacts/qa/', import.meta.url)).filter((name) =>
-    name.startsWith('native-app-'),
-  );
+  const before = nativeAppArtifacts();
   const result = spawnSync(process.execPath, ['scripts/test-native-app.mjs', '--streaming'], {
     cwd: new URL('../../', import.meta.url),
     env: { ...process.env, ...capacityEnvironment(), SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '0' },
@@ -153,19 +158,12 @@ test('native harness rejects incomplete capacity qualification before artifacts 
     result.stderr,
     /Extended hold requires native streaming and the direct RTMP recorder/,
   );
-  assert.deepEqual(
-    readdirSync(new URL('../../artifacts/qa/', import.meta.url)).filter((name) =>
-      name.startsWith('native-app-'),
-    ),
-    before,
-  );
+  assert.deepEqual(nativeAppArtifacts(), before);
 });
 
 test('native entry point rejects ledger selection outside capacity before creating artifacts', async () => {
   const { spawnSync } = await import('node:child_process');
-  const { readdirSync } = await import('node:fs');
-  const directory = new URL('../../artifacts/qa/', import.meta.url);
-  const names = () => readdirSync(directory).filter((name) => name.startsWith('native-app-'));
+  const names = nativeAppArtifacts;
   const before = names();
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('SCOREBUG_TEST_')),
@@ -368,9 +366,7 @@ for (const latency of ['700', '1000'])
 for (const latency of ['700', '1000'])
   test(`${latency}ms owned runner still rejects passing qualification before resources`, async () => {
     const { spawnSync } = await import('node:child_process');
-    const { readdirSync } = await import('node:fs');
-    const directory = new URL('../../artifacts/qa/', import.meta.url);
-    const names = () => readdirSync(directory).filter((name) => name.startsWith('native-app-'));
+    const names = nativeAppArtifacts;
     const before = names();
     const inherited = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => !key.startsWith('SCOREBUG_TEST_')),
