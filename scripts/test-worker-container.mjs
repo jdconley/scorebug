@@ -37,6 +37,13 @@ try {
       name,
       '--network',
       'none',
+      // Same unprivileged settings as infra/vps: bundled fonts/assets must be readable.
+      '--user',
+      '1000:1000',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges:true',
       '-e',
       'CONTROL_PLANE_URL=http://127.0.0.1:9',
       '-e',
