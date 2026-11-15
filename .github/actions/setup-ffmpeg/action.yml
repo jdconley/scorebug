@@ -1,0 +1,18 @@
+name: Set up ffmpeg
+description: Install Ubuntu's ffmpeg (with SRT) from a cached apt package set instead of downloading it every run.
+runs:
+  using: composite
+  steps:
+    # Restores the unpacked .debs from the Actions cache; only a cache miss
+    # (first run, or a bump of `version`) runs apt. Bump `version` to refresh.
+    - uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+      with:
+        packages: ffmpeg
+        version: '1'
+
+    - name: verify ffmpeg
+      shell: bash
+      run: |
+        sudo ldconfig
+        ffmpeg -hide_banner -version | head -1
+        ffmpeg -hide_banner -protocols 2>/dev/null | grep -qw srt || { echo "ffmpeg lacks SRT"; exit 1; }

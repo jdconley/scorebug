@@ -28,8 +28,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: install software media tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: set up ffmpeg (cached)
+        uses: ./.github/actions/setup-ffmpeg
 
       - name: typecheck
         run: pnpm -r typecheck
@@ -60,8 +60,8 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - name: install software media tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: set up ffmpeg (cached)
+        uses: ./.github/actions/setup-ffmpeg
       - name: build maintained relay with bounded drain
         run: docker build -t scorebug/ingest:drain-v1 vendor/MediaMTX
       - name: exercise real relay media and credentials
