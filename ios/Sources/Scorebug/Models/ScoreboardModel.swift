@@ -57,6 +57,9 @@ import ScorebugCore
     var canUndo: Bool { canScore && (snapshot?.canUndo ?? false) }
     var scoringElsewhere: Bool { isActive && snapshot != nil && !ownsScoring }
 
+    /// Nothing queued or being sent.
+    var isIdle: Bool { queue.isEmpty && !draining }
+
     func team(on side: CourtSide) -> TeamSlot { layout.team(on: side) }
     func info(_ slot: TeamSlot) -> MatchTeam? { snapshot?.teams[slot] }
     func points(_ slot: TeamSlot) -> Int { snapshot?.score.points(slot) ?? 0 }

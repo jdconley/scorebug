@@ -24,12 +24,15 @@ import XCTest
         board.feedback = { [unowned self] in feedback.append($0) }
         board.onLayoutChange = { [unowned self] in savedLayouts.append($0) }
         await board.start()
-        await board.drain()
+        await settle(board)
         return board
     }
 
+    /// Waits until every queued change has been sent (CI machines can be slow).
     private func settle(_ board: ScoreboardModel) async {
         for _ in 0..<50 { await Task.yield() }
+        let deadline = Date().addingTimeInterval(10)
+        while !board.isIdle, Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
         await board.drain()
     }
 
