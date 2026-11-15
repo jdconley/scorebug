@@ -123,18 +123,20 @@ public struct QualityLadder: Sendable, Equatable {
     public mutating func observe(_ sample: Sample, thermal newThermal: Thermal) -> Rung? {
         let before = current
         let now = sample.time
-        if let previous, now <= previous.time { return nil }
+        // Thermal applies on every call, even when the stats sample is a repeat.
+        let worsened = newThermal >= .serious && newThermal > thermal
+        thermal = newThermal
+        if worsened { stepDown(at: max(now, previous?.time ?? now)) }
+        if current > cap { current = cap; markStepDown(at: max(now, previous?.time ?? now)) }
+        let changed: Rung? = current == before ? nil : current
+
+        if let previous, now <= previous.time { return changed }
         if let previous, sample.sentPackets < previous.sentPackets || sample.retransmittedPackets < previous.retransmittedPackets
             || sample.droppedPackets < previous.droppedPackets {
             // Counters reset (new connection): start a fresh interval.
             self.previous = sample
-            return nil
+            return changed
         }
-
-        let worsened = newThermal >= .serious && newThermal > thermal
-        thermal = newThermal
-        if worsened { stepDown(at: now) }
-        if current > cap { current = cap; markStepDown(at: now) }
 
         let condition = self.condition(of: sample, after: previous)
         previous = sample

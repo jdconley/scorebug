@@ -19,7 +19,6 @@ struct ContentView: View {
                 phoneWatch.resume(); connectivity.activate()
             }
             .task(id: scenePhase) { await monitorStreamingControl() }
-            .task(id: scenePhase) { await monitorWorkerStatus() }
             .task(id: scenePhase) { await monitorStreamingHealth() }
             .onChange(of: film.state) { _, state in updateIdleTimer(state) }
             .onChange(of: scenePhase) { _, phase in stopIfBackgrounded(phase) }
@@ -56,11 +55,6 @@ struct ContentView: View {
         await streaming.restore()
         await ControlPollSchedule.run(interval: { streaming.controlPollInterval },
             poll: { await streaming.pollBackgroundControl() })
-    }
-    @MainActor private func monitorWorkerStatus() async {
-        guard scenePhase == .active else { return }
-        await ControlPollSchedule.run(interval: { streaming.controlPollInterval },
-            poll: { await streaming.pollWorkerStatus() })
     }
     @MainActor private func monitorStreamingHealth() async {
         guard scenePhase == .active else { return }
@@ -107,14 +101,14 @@ private struct FilmView: View {
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Saved on this device", systemImage: "internaldrive")
-                        Picker("Recording quality", selection: Binding(get: { model.recordingQuality }, set: { model.selectQuality($0) })) {
-                            ForEach(RecordingQuality.allCases) { quality in Text(quality.label).tag(quality) }
-                        }
-                        .pickerStyle(.segmented)
-                        .disabled(!model.canStart)
-                        .accessibilityIdentifier("film.recordingQuality")
+                        Toggle("Record in 4K", isOn: Binding(get: { model.recordsIn4K },
+                            set: { model.selectQuality($0 ? .uhd2160 : .hd1080) }))
+                            .disabled(!model.canStart)
+                            .accessibilityIdentifier("film.recordIn4K")
                         Text("\(model.recordingQuality.label) · 30 fps · Audio included").foregroundStyle(.secondary)
-                        Text("Streaming quality adapts independently.").font(.caption).foregroundStyle(.secondary)
+                        Text(model.recordsIn4K ? "4K runs the phone hotter. The live stream stays at 1080p or lower."
+                             : "The live stream adjusts its quality to your connection.")
+                            .font(.caption).foregroundStyle(.secondary)
                         if let bytes = model.freeBytes {
                             Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) available")
                                 .font(.caption).foregroundStyle(.secondary)

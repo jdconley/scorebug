@@ -2,26 +2,27 @@ import AVFoundation
 import Foundation
 import ScorebugMedia
 import ScorebugCore
-import ScorebugStreaming
 import XCTest
 
 @MainActor final class FilmModelTests: XCTestCase {
-    func testUHDRequiresFreshMatchingWorkerOutputAndRealSourceGeometry() throws {
-        func response(_ profile: String) throws -> WorkerCapabilitiesResponse {
-            try JSONDecoder().decode(WorkerCapabilitiesResponse.self, from: Data("""
-            {"workerId":"mac","state":"fresh","serverTime":"now","validForMs":5000,
-             "capabilities":{"version":1,"outputId":"main","encoder":"software","outputProfile":"\(profile)",
-             "outputMode":"rtmp+record","startup":"passed","sustainedPerformance":"unqualified"}}
-            """.utf8))
-        }
-        let uhd = try response("2160p30")
-        XCTAssertTrue(uhd.permitsUHDInput(worker: "mac", output: "main", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .milliseconds(20)))
-        XCTAssertFalse(uhd.permitsUHDInput(worker: "mac", output: "other", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .milliseconds(20)))
-        XCTAssertFalse(uhd.permitsUHDInput(worker: "mac", output: "main", sourceWidth: 1920, sourceHeight: 1080, requestDuration: .milliseconds(20)))
-        XCTAssertFalse(uhd.permitsUHDInput(worker: "mac", output: "main", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .seconds(5)))
-        XCTAssertFalse(try response("1080p30").permitsUHDInput(worker: "mac", output: "main", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .milliseconds(20)))
+    func testRecordingQualityDefaultsTo1080pAndPersistsThe4KSetting() throws {
         XCTAssertEqual(RecordingQuality.uhd2160.profile.captureQueueScale, 4)
         XCTAssertEqual(RecordingQuality.hd1080.profile.captureQueueScale, 1)
+        XCTAssertEqual(RecordingQuality.hd1080.profile, ArchiveProfile())
+        XCTAssertEqual(ArchiveProfile().height, 1080)
+        XCTAssertEqual(ArchiveProfile().framesPerSecond, 30)
+        let suite = "scorebug.film.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = FilmModel(preferences: defaults, configuredSourceFactory: { _ in FilmTestSource() })
+        XCTAssertFalse(first.recordsIn4K, "4K is opt-in")
+        XCTAssertEqual(first.profile, RecordingQuality.hd1080.profile)
+        XCTAssertTrue(first.selectQuality(.uhd2160))
+        let relaunched = FilmModel(preferences: defaults, configuredSourceFactory: { _ in FilmTestSource() })
+        XCTAssertTrue(relaunched.recordsIn4K)
+        XCTAssertEqual(relaunched.profile, RecordingQuality.uhd2160.profile)
+        XCTAssertTrue(relaunched.selectQuality(.hd1080))
+        XCTAssertFalse(FilmModel(preferences: defaults, configuredSourceFactory: { _ in FilmTestSource() }).recordsIn4K)
     }
 
     func testRecordingQualityConfiguresSourceAndArchiveAndLocksDuringCapture() async throws {
@@ -388,212 +389,4 @@ extension FilmModelTests {
             to: root.appendingPathComponent("native-export.json"), options: .atomic)
         XCTAssertTrue(FileManager.default.fileExists(atPath: exported.path))
     }
-
-    func testHeadlessLocalStreamingDiagnostic() async throws {
-        guard let path = ProcessInfo.processInfo.environment["SCOREBUG_HEADLESS_CONFIG"] else {
-            throw XCTSkip("Run scripts/test-headless-streaming.mjs to enable real local media")
-        }
-        struct Configuration: Decodable {
-            struct Setup: Decodable {
-                let endpoint: String, installationToken: String, workerId: String, outputId: String
-            }
-            let setup: Setup
-            let source: String, artifact: String
-            let duration: Double
-            let uhd: Bool
-            let timingAudit: Bool?
-            let expectReconnect: Bool?
-            let fixedUHD: Bool?
-            let fixedUHDTransition: Bool?
-            let ownedUHDTransition: Bool?
-            let warmUHDCandidate: Bool?
-            let warmUHDProbe: Bool?
-            let directUHD: Bool?
-            let freezeUHDPolling: Bool?
-        }
-        let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
-        // Bound the diagnostic run; finite delivery audit limits remain unchanged.
-        guard (10...(config.timingAudit == false ? 1200.0 : 600.0)).contains(config.duration) else { throw URLError(.badURL) }
-        let artifact = URL(fileURLWithPath: config.artifact)
-        let streaming = CaptureStreamingModel(storage: CaptureMemoryStorage(nil), pendingStore: CaptureMemoryPending())
-        streaming.endpoint = config.setup.endpoint; streaming.installationToken = config.setup.installationToken
-        streaming.workerId = config.setup.workerId; streaming.outputId = config.setup.outputId
-        let fixedUHD = config.fixedUHD == true
-        guard !fixedUHD || (config.uhd && config.duration <= 60 && config.timingAudit == false && config.expectReconnect != true) else { throw URLError(.badURL) }
-        streaming.nativeFixedUHDForDiagnostics = fixedUHD
-        let fixedUHDTransition = config.fixedUHDTransition == true
-        guard !fixedUHDTransition || fixedUHD else { throw URLError(.badURL) }
-        streaming.nativeUHDTransitionForDiagnostics = fixedUHDTransition
-        let ownedUHDTransition = config.ownedUHDTransition == true
-        guard !ownedUHDTransition || fixedUHDTransition else { throw URLError(.badURL) }
-        streaming.nativeOwnedUHDTransitionForDiagnostics = ownedUHDTransition
-        let warmUHDCandidate = config.warmUHDCandidate == true
-        guard !warmUHDCandidate || ownedUHDTransition else { throw URLError(.badURL) }
-        streaming.nativeWarmUHDCandidateForDiagnostics = warmUHDCandidate
-        let warmUHDProbe = config.warmUHDProbe == true
-        guard !warmUHDProbe || ownedUHDTransition else { throw URLError(.badURL) }
-        streaming.nativeWarmUHDProbeForDiagnostics = warmUHDProbe
-        let directUHD = config.directUHD == true
-        guard !directUHD || (config.uhd && !fixedUHD && config.duration <= 120 && config.timingAudit == false && config.expectReconnect != true) else { throw URLError(.badURL) }
-        streaming.nativeDirectUHDForDiagnostics = directUHD
-        let freezeUHDPolling = config.freezeUHDPolling == true
-        guard !freezeUHDPolling || (directUHD && config.duration <= 60) else { throw URLError(.badURL) }
-        streaming.nativeFreezeUHDPollingForDiagnostics = freezeUHDPolling
-        let nativeBoundaries = HeadlessNativeBoundaries()
-        if config.uhd {
-            streaming.nativeHealthFixtureObserver = { nativeBoundaries.health($0) }
-            streaming.nativeSubmissionFixtureObserver = { nativeBoundaries.submission($0) }
-        }
-        let timingAudit = config.timingAudit ?? true
-        if timingAudit {
-            streaming.cadenceReportFixtureWriter = { data in
-                try? data.write(to: artifact.appendingPathComponent("cadence.json"), options: .atomic)
-            }
-        }
-        let film = FilmModel(library: RecordingLibrary(rootDirectory: artifact.appendingPathComponent("archive")),
-            profile: config.uhd ? RecordingQuality.uhd2160.profile : RecordingQuality.hd1080.profile,
-            configuredSourceFactory: { FileFixtureCameraSource(url: URL(fileURLWithPath: config.source), profile: $0) })
-        film.onCaptureChanged = { streaming.captureChanged($0) }
-        film.onCaptureFinished = { streaming.captureFinished($0, interrupted: $1) }
-        await streaming.connect()
-        await film.start()
-        await streaming.startStreaming()
-        let started = ContinuousClock.now
-        try Data("ready".utf8).write(to: artifact.appendingPathComponent("native-ready.json"), options: .atomic)
-        var lifecycle: [[String: String]] = []
-        let worker = Task { await ControlPollSchedule.run(interval: { streaming.controlPollInterval }, poll: { await streaming.pollWorkerStatus() }) }
-        let control = Task { await ControlPollSchedule.run(interval: { streaming.controlPollInterval }, poll: { await streaming.pollBackgroundControl() }) }
-        let health = Task {
-            while !Task.isCancelled {
-                streaming.pollLocalHealth()
-                do { try await Task.sleep(for: CaptureStreamingModel.publishingHealthInterval) } catch { return }
-            }
-        }
-        var samples: [[String: String]] = []
-        var boundaries: [[String: String]] = []
-        var diagnosticError: Error?
-        var lastProfileState: String?
-        var transitionReceipt: PublishingVideoProfileChange?
-        do {
-            while ContinuousClock.now < started + .seconds(config.duration), film.state == .recording,
-                  (config.expectReconnect == true || streaming.localState == .publishing) {
-                await film.pollHealth()
-                if fixedUHDTransition, transitionReceipt == nil, ContinuousClock.now >= started + .seconds(5) {
-                    transitionReceipt = try await streaming.performNativeUHDTransitionDiagnostic()
-                    print("HEADLESS_FIXED_UHD_TRANSITION acknowledged")
-                }
-                if lifecycle.last?["state"] != streaming.localState.rawValue {
-                    lifecycle.append(["state": streaming.localState.rawValue,
-                        "recording": streaming.activeRecordingID ?? "none",
-                        "attempt": streaming.videoObservation?.scope.publishingAttemptID.uuidString ?? "none",
-                        "generation": streaming.videoObservation.map { String($0.scope.broadcastGeneration) } ?? "none",
-                        "elapsedSeconds": String(started.duration(to: .now).components.seconds)])
-                }
-                if config.uhd {
-                    var row = nativeBoundaries.snapshot()
-                    row["adaptivePollingFrozen"] = String(streaming.nativeUHDPollingIsFrozen)
-                    row["at"] = String(ProcessInfo.processInfo.systemUptime)
-                    row["profile"] = streaming.qualityDiagnostic.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String] }?["policyAppliedProfile"]
-                    if let ingress = streaming.ingressObservation {
-                        row["attempt"] = ingress.scope.publishingAttemptID.uuidString
-                        row["appVideoAdmitted"] = String(ingress.totalDispositions[.admitted]?[.video]?.count ?? 0)
-                        row["appVideoDequeued"] = String(ingress.totalDispositions[.dequeued]?[.video]?.count ?? 0)
-                        row["appVideoEvicted"] = String(ingress.totalDispositions[.overflowEvicted]?[.video]?.count ?? 0)
-                        row["appVideoRejected"] = String(ingress.totalDispositions.reduce(UInt64(0)) { sum, entry in
-                            if case .rejected = entry.key { return sum + (entry.value[.video]?.count ?? 0) }; return sum
-                        })
-                    }
-                    if let video = streaming.videoObservation {
-                        let windows = video.completed + [video.current]
-                        row["retainedCaptureCallbacks"] = String(windows.reduce(UInt64(0)) { $0 + $1.captureVideo.callbackCount })
-                        row["retainedEncodedCallbacks"] = String(windows.reduce(UInt64(0)) { $0 + $1.encodedVideo.callbackCount })
-                        row["omittedVideoWindows"] = String(video.omittedCompletedWindowCount)
-                    }
-                    if fixedUHD {
-                        row["profile"] = fixedUHDTransition && transitionReceipt == nil
-                            ? (ownedUHDTransition ? "240p30-fixed-diagnostic" : "1080p30-fixed-diagnostic") : "2160p30-fixed-diagnostic"
-                    }
-                    boundaries.append(row)
-                }
-                if let text = streaming.qualityDiagnostic,
-                   let fields = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String] {
-                    samples.append(fields)
-                    let profileState = "\(fields["policyAppliedProfile"] ?? "unknown") trial=\(fields["policyTrialActive"] ?? "unknown")"
-                    if profileState != lastProfileState {
-                        print("HEADLESS_QUALITY \(profileState) elapsed=\(started.duration(to: .now).components.seconds)s")
-                        if let transition = fields["appliedTransition"],
-                           let cause = (try? JSONSerialization.jsonObject(with: Data(transition.utf8))) as? [String: String] {
-                            print("HEADLESS_TRANSITION kind=\(cause["kind"] ?? "unknown") input=\(cause["input"] ?? "unknown") reasons=\(cause["reasons"] ?? "unknown")")
-                        }
-                        lastProfileState = profileState
-                    }
-                }
-                try await Task.sleep(for: .milliseconds(500))
-            }
-        } catch { diagnosticError = error }
-        let wasRecording = film.state == .recording, wasPublishing = streaming.localState == .publishing
-        worker.cancel(); control.cancel(); health.cancel()
-        await worker.value; await control.value; await health.value
-        await streaming.stopStreaming()
-        await film.stop()
-        let result: [String: Any] = ["scope": "headless-native-diagnostic-v1", "samples": samples, "lifecycle": lifecycle,
-            "recordingAtEnd": wasRecording, "publishingAtEnd": wasPublishing,
-            "timingAuditEnabled": timingAudit, "fixedUHD": fixedUHD, "boundarySampleCount": boundaries.count,
-            "fixedUHDTransition": fixedUHDTransition, "transitionAcknowledged": transitionReceipt != nil,
-            "ownedUHDTransition": ownedUHDTransition,
-            "warmUHDCandidate": warmUHDCandidate, "warmedCandidateInputCount": streaming.nativeWarmedCandidateInputCount ?? 0,
-            "warmUHDProbe": warmUHDProbe, "warmedProbeBytes": streaming.nativeWarmedProbeBytes ?? 0,
-            "directUHD": directUHD,
-            "freezeUHDPolling": freezeUHDPolling,
-            "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
-        try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
-            to: artifact.appendingPathComponent("diagnostic.json"), options: .atomic)
-        if config.uhd {
-            try JSONSerialization.data(withJSONObject: ["scope": "Sequential local boundary observations, not atomic delivery proof", "samples": boundaries], options: [.sortedKeys]).write(
-                to: artifact.appendingPathComponent("native-boundaries.json"), options: .atomic)
-        }
-        if let diagnosticError { throw diagnosticError }
-        XCTAssertTrue(wasRecording, "Native archive stopped early")
-        XCTAssertTrue(wasPublishing, "Native publisher stopped early")
-        if fixedUHDTransition {
-            XCTAssertEqual(transitionReceipt?.width, 3840)
-            XCTAssertEqual(transitionReceipt?.height, 2160)
-        }
-        if freezeUHDPolling { XCTAssertTrue(boundaries.contains { $0["adaptivePollingFrozen"] == "true" }) }
-        if warmUHDCandidate { XCTAssertGreaterThanOrEqual(streaming.nativeWarmedCandidateInputCount ?? 0, 97) }
-        if warmUHDProbe { XCTAssertGreaterThan(streaming.nativeWarmedProbeBytes ?? 0, 0) }
-        if fixedUHD { XCTAssertFalse(boundaries.isEmpty, "Expected native boundary diagnostics") }
-        else { XCTAssertFalse(samples.isEmpty, "Expected real quality diagnostics") }
-        XCTAssertEqual(film.state, .idle, "Archive finalization must complete")
-        XCTAssertEqual(streaming.localState, .idle, "Native publisher must join")
-    }
-}
-
-/// Scalar headless diagnostics only. No media retained and no publishing decisions.
-private final class HeadlessNativeBoundaries: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fields: [String: String] = [:]
-    private var submitted = 0, failed = 0
-    private var maximumSubmissionSeconds = 0.0
-    func health(_ value: SRTPublisher.HealthSnapshot) {
-        lock.withLock {
-            fields["healthAt"] = String(ProcessInfo.processInfo.systemUptime)
-            fields["sdkRawVideoDropped"] = value.rawVideoFramesDropped.map(String.init)
-        }
-    }
-    func submission(_ value: SRTPublisher.EncoderSubmission) {
-        lock.withLock {
-            submitted += 1
-            if value.status != noErr { failed += 1 }
-            maximumSubmissionSeconds = max(maximumSubmissionSeconds, value.returnedAt - value.startedAt)
-            fields["nativeSubmitted"] = String(submitted)
-            fields["nativeSubmitErrors"] = String(failed)
-            fields["maximumNativeSubmissionSeconds"] = String(maximumSubmissionSeconds)
-            fields["lastNativeSubmissionSeconds"] = String(value.returnedAt - value.startedAt)
-            fields["submissionAt"] = String(value.returnedAt)
-            fields["encoder"] = value.encoderSessionID.uuidString
-            fields["encoderHardwareSelection"] = value.selectionQueriedAfterPreparation.map { String(describing: $0) } ?? "unavailable"
-        }
-    }
-    func snapshot() -> [String: String] { lock.withLock { fields } }
 }

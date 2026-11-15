@@ -39,7 +39,7 @@ struct ScorebugApp: App {
         _phoneWatch = StateObject(wrappedValue: phoneWatch)
         let streaming = CaptureStreamingModel()
         #if DEBUG && targetEnvironment(simulator)
-        let film = FilmModel(configuredSourceFactory: { profile in
+        let film = FilmModel(preferences: .standard, configuredSourceFactory: { profile in
             try SimulatorCaptureSource.make(environment: ProcessInfo.processInfo.environment,
                 supportDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0], profile: profile)
         }, sinkFactory: { directory, profile in
@@ -47,7 +47,7 @@ struct ScorebugApp: App {
                 environment: ProcessInfo.processInfo.environment)
         }, durationReader: { SimulatorCaptureSource.acceptedDuration($0) })
         #else
-        let film = FilmModel(configuredSourceFactory: { IOSCameraCaptureSource(profile: $0) })
+        let film = FilmModel(preferences: .standard, configuredSourceFactory: { IOSCameraCaptureSource(profile: $0) })
         #endif
         film.onCaptureChanged = { [weak streaming] context in streaming?.captureChanged(context, terminalStatus: nil) }
         film.onCaptureFinished = { [weak streaming] context, interrupted in streaming?.captureFinished(context, interrupted: interrupted) }

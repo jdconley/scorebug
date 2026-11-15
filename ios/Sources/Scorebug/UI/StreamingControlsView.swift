@@ -11,37 +11,32 @@ struct StreamingControlsView: View {
                 Spacer()
                 Button("Setup") { showSetup = true }.accessibilityIdentifier("streaming.setup")
             }
-            Text(localStatus).accessibilityIdentifier("streaming.localStatus")
-                .accessibilityValue(model.localState.rawValue)
-            Text(workerStatus).font(.callout).foregroundStyle(.secondary)
-                .accessibilityIdentifier("streaming.workerStatus").accessibilityValue(model.workerState.rawValue)
-            if let applied = model.appliedPublishingSettings {
-                Text("Sending: \(applied.profileID) · \(applied.videoBitrate / 1_000) kbps")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("streaming.appliedQuality")
-                    .accessibilityValue(Text(verbatim: "\(applied.profileID):\(applied.videoBitrate)"))
-            }
-            #if DEBUG
-            PublishingQualityDiagnosticView(display: model.qualityDiagnosticDisplay)
-            #endif
-            if let game = model.connectedGameID {
-                Text("Match: \(game)").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(statusText).font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("streaming.localStatus")
+                    .accessibilityValue(model.localState.rawValue)
+                if let quality = model.streamQuality {
+                    Text(quality.label).font(.caption.weight(.semibold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.thinMaterial, in: Capsule())
+                        .accessibilityIdentifier("streaming.quality")
+                }
             }
             if model.canStopStreaming {
-                Button("Stop streaming", role: .destructive) { Task { await model.stopStreaming() } }
+                Button("Stop live", role: .destructive) { Task { await model.stopStreaming() } }
                     .buttonStyle(.bordered).accessibilityIdentifier("streaming.stop")
             } else {
-                Button("Start streaming") { model.requestStartStreaming() }
+                Button("Go live") { model.requestStartStreaming() }
                     .buttonStyle(.bordered).disabled(!model.canStart)
                     .accessibilityIdentifier("streaming.start")
             }
-            Text("Recording stays on this device when streaming stops or loses its connection.")
+            Text("Your recording stays on this device even if the stream drops.")
                 .font(.caption).foregroundStyle(.secondary)
             if let message = model.message {
                 Text(message).font(.callout).accessibilityIdentifier("streaming.message")
             }
             if model.commandState?.pending != nil || model.needsStorageRetry || model.message != nil {
-                Button("Retry connection and pending status") { Task { await model.pollControl() } }
+                Button("Retry") { Task { await model.pollControl() } }
                     .disabled(model.busy).accessibilityIdentifier("streaming.retry")
             }
         }
@@ -53,54 +48,42 @@ struct StreamingControlsView: View {
                 .onDisappear { model.isSetupPresented = false }
         }
     }
-    private var localStatus: String {
-        if model.isReconnecting { return "Camera publishing: reconnecting…" }
-        return switch model.localState {
-        case .idle: "Camera publishing: off"
-        case .starting: "Camera publishing: starting…"
-        case .publishing: "Camera publishing: sending media"
-        case .failed: "Camera publishing: failed"
-        }
-    }
-    private var workerStatus: String {
-        switch model.workerState {
-        case .producingOutput: "Worker: producing output (recent report)"
-        case .unknown: "Worker: no current observation"
-        case .stale: "Worker: observation expired"
-        case .notRequested, .idle: "Worker: output not requested"
-        case .waitingSource: "Worker: waiting for camera media"
-        case .starting: "Worker: starting output"
-        case .stopping: "Worker: stopping output"
-        case .retrying: "Worker: retrying output"
-        case .failed: "Worker: output failed"
-        case .closed: "Worker: closed"
+    private var statusText: String {
+        switch model.status {
+        case .live: "Live"
+        case .reconnecting: "Reconnecting…"
+        case .starting: "Going live…"
+        case .recordingOnly: "Recording only"
+        case .off: "Not live"
         }
     }
     private var setup: some View {
         NavigationStack {
             Form {
-                Section("Capture connection") {
+                Section("Server") {
                     TextField("Server URL", text: $model.endpoint)
                         .textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .accessibilityIdentifier("streaming.endpoint")
                     SecureField("Installation token", text: $model.installationToken)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("streaming.token")
-                    TextField("Worker ID", text: $model.workerId)
+                }.disabled(!model.canChangeSetup)
+                Section("Advanced") {
+                    TextField("Encoder", text: $model.workerId)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("streaming.worker")
-                    TextField("Output ID", text: $model.outputId)
+                    TextField("Destination", text: $model.outputId)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("streaming.output")
                 }.disabled(!model.canChangeSetup)
                 Section {
-                    Button("Save and connect to active match") { Task { await model.connect() } }
+                    Button("Save and connect") { Task { await model.connect() } }
                         .disabled(model.busy).accessibilityIdentifier("streaming.connect")
                     if model.busy { ProgressView("Connecting…") }
-                    if let game = model.connectedGameID { Text("Capture joined \(game)").accessibilityIdentifier("streaming.connected") }
+                    if model.connectedGameID != nil { Text("Connected to the active match").accessibilityIdentifier("streaming.connected") }
                     if let message = model.message { Text(message).font(.callout) }
                     if !model.canChangeSetup {
-                        Text("Finish recording and reconcile pending streaming status before changing the saved connection.").font(.caption)
+                        Text("Stop recording and let pending streaming requests finish before changing the server.").font(.caption)
                     }
                 } footer: {
-                    Text("Capture uses its own device identity and secure Keychain setup. Your Score setup is separate. Streaming uses the selected server worker and output.")
+                    Text("Saved securely on this device, separately from your Score setup.")
                 }
             }
             .navigationTitle("Streaming setup")
@@ -110,16 +93,3 @@ struct StreamingControlsView: View {
         }
     }
 }
-
-#if DEBUG
-private struct PublishingQualityDiagnosticView: View {
-    @ObservedObject var display: PublishingQualityDiagnosticDisplay
-    var body: some View {
-        if let diagnostic = display.value {
-            Text("Adaptive quality checks").font(.caption).foregroundStyle(.secondary)
-                .accessibilityIdentifier("streaming.qualityDiagnostic")
-                .accessibilityValue(Text(verbatim: diagnostic))
-        }
-    }
-}
-#endif

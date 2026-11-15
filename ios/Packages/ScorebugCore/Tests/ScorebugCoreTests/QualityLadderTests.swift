@@ -180,6 +180,15 @@ final class QualityLadderTests: XCTestCase {
         XCTAssertEqual(ladder.current, .p720)
     }
 
+    func testThermalAppliesEvenWhenTheStatsSampleRepeats() {
+        var ladder = QualityLadder()
+        var feed = Feed()
+        let sample = feed.next()
+        XCTAssertNil(ladder.observe(sample, thermal: .nominal))
+        XCTAssertEqual(ladder.observe(sample, thermal: .serious), .p540)
+        XCTAssertNil(ladder.observe(sample, thermal: .serious))
+    }
+
     func testReconnectBackoffIsOneTwoFourEightThenTenSeconds() {
         XCTAssertEqual((1...7).map { StreamReconnectBackoff.delay(afterFailures: $0) }, [1, 2, 4, 8, 10, 10, 10])
         XCTAssertEqual(StreamReconnectBackoff.delay(afterFailures: 0), 0)
