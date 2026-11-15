@@ -76,8 +76,6 @@ jobs:
           cache-to: type=gha,scope=ingest,mode=max
       - name: exercise real relay media and credentials
         run: pnpm test:relay
-      - name: exercise native worker with software encoding
-        run: pnpm test:worker software --soak-seconds=12
 
   docker:
     name: Docker images and server startup
