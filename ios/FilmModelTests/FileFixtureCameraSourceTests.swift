@@ -313,18 +313,26 @@ final class FileFixtureCameraSourceTests: XCTestCase {
     }
 
     func testAdapterRecordsThroughNativeArchiveUntilExplicitStop() async throws {
-        let movie = try await FileSourceTestMovie.make(frames: 60)
+        // Paced delivery never exceeds 30 fps, so after the 10th frame the 90-frame
+        // file needs ~2.7 s more to reach its end (which reports .interrupted).
+        let frames = 90
+        let movie = try await FileSourceTestMovie.make(frames: frames)
         defer { movie.remove() }
         let source = FileFixtureCameraSource(url: movie.url, profile: profile)
         let writer = try SegmentedArchiveWriter(directory: movie.root.appendingPathComponent("archive"), profile: profile)
         let session = try RecordingSession(sink: SegmentedArchiveSink(writer: writer))
         let recording = CaptureRecording(source: source, session: session)
         try await recording.start()
-        try await Task.sleep(for: .milliseconds(450))
+        // Wait on delivered frames, not wall-clock time: slow runners deliver later, never fewer.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while source.statistics.videoFrames < 10, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertGreaterThanOrEqual(source.statistics.videoFrames, 10)
         let recovered = try await recording.stop()
         let export = try await ArchiveExporter().export(recovered, to: movie.root.appendingPathComponent("export.mp4"))
         XCTAssertGreaterThanOrEqual(export.videoFrames, 10)
-        XCTAssertLessThan(export.videoFrames, 60)
+        XCTAssertLessThan(export.videoFrames, Int64(frames))
         XCTAssertEqual(export.videoFrames, source.statistics.videoFrames)
         XCTAssertEqual(session.snapshot.state, .finished)
         XCTAssertNil(session.snapshot.failure)
