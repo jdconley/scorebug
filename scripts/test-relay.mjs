@@ -31,9 +31,20 @@ async function availablePort(protocol) {
   return port;
 }
 function start(args) {
-  const child = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+  const child = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   owned.add(child);
-  const result = { child, exited: false, code: null, signal: null, frames: false, frameCount: 0 };
+  const result = {
+    child,
+    exited: false,
+    code: null,
+    signal: null,
+    frames: false,
+    frameCount: 0,
+    stderr: '',
+  };
+  child.stderr.on('data', (chunk) => {
+    result.stderr = (result.stderr + chunk.toString()).slice(-4096);
+  });
   let progress = '';
   child.stdout.on('data', (chunk) => {
     progress = (progress + chunk.toString()).slice(-2048);
@@ -209,7 +220,10 @@ try {
   console.log('Relay provisioning and rejected publishing credentials verified.');
   const publisher = start(publishArgs(grant.publishUrl));
   await until(async () => {
-    if (publisher.exited) throw new Error('Valid publisher exited before relay readiness');
+    if (publisher.exited)
+      throw new Error(
+        `Valid publisher exited before relay readiness (code ${publisher.code}, signal ${publisher.signal}): ${publisher.stderr.trim()}`,
+      );
     const state = await relay.status(grant.path);
     return state.ready && state.tracks.includes('H264') && state.tracks.includes('MPEG-4 Audio');
   }, 'real audio/video source');
