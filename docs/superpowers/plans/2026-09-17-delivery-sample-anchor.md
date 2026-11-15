@@ -59,22 +59,22 @@ sample time S satisfies `requestStart - A <= S <= responseReceived`.
 ## Steps
 
 - [x] Core agent: tests first for stable classification across local delay, expiry,
-  future/malformed bounds, maturity/coverage, frozen sample preservation, legacy
-  omission, and request-clock reversal. Parent runs focused RED, agent implements,
-  parent runs focused GREEN and Core regression. Agent owns only Core source/tests.
+      future/malformed bounds, maturity/coverage, frozen sample preservation, legacy
+      omission, and request-clock reversal. Parent runs focused RED, agent implements,
+      parent runs focused GREEN and Core regression. Agent owns only Core source/tests.
 - [x] Parent native tests: tracker timing passed by capture; classifier receives exact
-  bound; report/audit export carries it with the receipt; stale proof still rejects.
-  Implement in CaptureStreamingModel, PublishingDeliveryObservation,
-  PublishingDeliveryMonitor and WorkerCadenceReportAudit with their FilmModel tests.
+      bound; report/audit export carries it with the receipt; stale proof still rejects.
+      Implement in CaptureStreamingModel, PublishingDeliveryObservation,
+      PublishingDeliveryMonitor and WorkerCadenceReportAudit with their FilmModel tests.
 - [x] Parent replay tests: reconstruct exact anchors, reject changed/forged/future/
-  expired bounds, preserve frozen identities and legacy fixtures. Update
-  scripts/native-delivery-deadlines.mjs and scripts/test/native-delivery-deadlines.test.mjs.
-  Verify independent arrival, coverage and maturity arithmetic and failure signals.
+      expired bounds, preserve frozen identities and legacy fixtures. Update
+      scripts/native-delivery-deadlines.mjs and scripts/test/native-delivery-deadlines.test.mjs.
+      Verify independent arrival, coverage and maturity arithmetic and failure signals.
 - [x] Independent spec/quality review, affected Core/Film/tool regressions, unsigned
-  phone/Watch build and fresh native media recovery run. Preserve original failures,
-  rehash frozen evidence and commit the tested result with remaining limits stated.
+      phone/Watch build and fresh native media recovery run. Preserve original failures,
+      rehash frozen evidence and commit the tested result with remaining limits stated.
 - [ ] Continue recovery-driven fresh candidate scheduling and repeated native cycles;
-  then physical phone/Watch and portable-host qualification. Goal remains active.
+      then physical phone/Watch and portable-host qualification. Goal remains active.
 
 ## Verification commands
 
@@ -115,7 +115,6 @@ teardown completed successfully.
 Production automatic upgrades remain disabled. Repeated campaign scheduling,
 two complete native ramp/reset/recovery cycles, physical phone/Watch verification
 and additional proxy-host qualification remain subsequent work.
-
 
 ## Fresh native pass
 

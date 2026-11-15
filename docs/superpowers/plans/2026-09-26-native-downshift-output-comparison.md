@@ -33,5 +33,4 @@ Harness: one case per process,360frames/12seconds,20,000scalar-event cap. Native
 
 Reviewed candidate: one existing downward-resolution application and original deadline; old verified receipt → target bitrate on old encoder → resize using that new receipt → final verified rate → one final Core acknowledgment. Treat any successful native write as a native effect: later refusal/failure/cancellation must stop and join, never settle as untouched. Host data alone do not enable this path.
 
-
 Completed candidate and acceptance outcome: [guarded downshift experiment](2026-09-26-guarded-downshift-experiment.md). The simulator's fourteen-frame flush remains unresolved; preliminary-rate acceptance alone neither drains it nor guarantees smaller pending frames. [Simulator and adjacent-phase evidence](../../session-logs/2026-09-26-simulator-downshift-comparison.md).

@@ -92,8 +92,8 @@ alone is not saved-media acceptance. Reuse the retained acceptance above for unc
 | Default FFmpeg   | 8.1.2; has VideoToolbox, but lacks SRT and drawtext                                    |
 | Full FFmpeg      | `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`, 8.1.2; SRT, drawtext, VideoToolbox present |
 | XcodeGen         | 2.46.0 installed during milestone 0                                                    |
-| iOS runtimes     | 26.2 currently used; 17.5/18.5 results retained, runtimes may have been removed                                                              |
-| watchOS runtimes | 26.2 currently used; query installed runtimes before selecting others                                                    |
+| iOS runtimes     | 26.2 currently used; 17.5/18.5 results retained, runtimes may have been removed        |
+| watchOS runtimes | 26.2 currently used; query installed runtimes before selecting others                  |
 | Device types     | iPhone 14, Ultra 2, Series 7 41 mm, and newer devices available                        |
 
 A three-second synthetic 1080p/30 VideoToolbox job completed 90 frames at about 8.9x
@@ -273,17 +273,17 @@ alone does not prove a correct broadcast.
 These are planned interfaces unless explicitly described above. Milestones 1–5
 expand the current foundation into media, scoring, and watch qualification.
 
-| Planned command                                               | Behavior                                                                     |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `pnpm run doctor`                                             | Report exact tools, protocol/filter support, usable encoders, and runtimes   |
-| `pnpm test:integration`                                       | API + SQLite + real worker WebSocket + native client game/recovery contracts |
-| `pnpm test:media -- --profile=1080p30 --encoder=videotoolbox` | Fixture → SRT → overlay → local sink → analysis                              |
-| `pnpm test:media -- --profile=1080p30 --encoder=software`     | Same assertions with CPU backend                                             |
-| `pnpm test:media -- --profile=2160p30 --encoder=videotoolbox` | 4K capability/quality qualification on this host                             |
-| `pnpm test:network`                                           | UDP impairment matrix, report quality transitions and archive continuity     |
-| `pnpm test:archive`                                           | Native shared media harness, forced termination, recovery, full decode       |
-| `pnpm test:apple`                                             | Swift/model tests, native scoring UI and builds; use `--ui-only` for focused UI runs        |
-| `pnpm test:soak -- --minutes=120`                             | Sustained run with metrics and output artifacts                              |
+| Planned command                                               | Behavior                                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `pnpm run doctor`                                             | Report exact tools, protocol/filter support, usable encoders, and runtimes           |
+| `pnpm test:integration`                                       | API + SQLite + real worker WebSocket + native client game/recovery contracts         |
+| `pnpm test:media -- --profile=1080p30 --encoder=videotoolbox` | Fixture → SRT → overlay → local sink → analysis                                      |
+| `pnpm test:media -- --profile=1080p30 --encoder=software`     | Same assertions with CPU backend                                                     |
+| `pnpm test:media -- --profile=2160p30 --encoder=videotoolbox` | 4K capability/quality qualification on this host                                     |
+| `pnpm test:network`                                           | UDP impairment matrix, report quality transitions and archive continuity             |
+| `pnpm test:archive`                                           | Native shared media harness, forced termination, recovery, full decode               |
+| `pnpm test:apple`                                             | Swift/model tests, native scoring UI and builds; use `--ui-only` for focused UI runs |
+| `pnpm test:soak -- --minutes=120`                             | Sustained run with metrics and output artifacts                                      |
 
 Each runner allocates its own state/ports or fails clearly on conflict; writes evidence
 under ignored `artifacts/qa/<run-id>/`; returns nonzero when a requirement fails; and
@@ -534,7 +534,6 @@ Direct runs additionally reject any missing encoded tail, decoder/saved frame-co
 difference, incomplete terminal evidence or forced recorder shutdown; actual worker
 termination is reported distinctly. The 180-second iPhone 14/iOS 17.5 run passes; see
 [measurements and limits](superpowers/plans/2026-09-14-native-sustained-validation.md).
-
 
 ### Separate scorer Watch simulator
 

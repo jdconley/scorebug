@@ -42,8 +42,7 @@ lifecycle and complete media qualification afterward.
 
 ## Results and remaining work
 
-The first paired attempt (`device-lab-mmTL6h`) joined: Watch exit 0, phone exit
-65. The Watch passed real setup, takeover, HOME point, undo, AWAY point and match
+The first paired attempt (`device-lab-mmTL6h`) joined: Watch exit 0, phone exit 65. The Watch passed real setup, takeover, HOME point, undo, AWAY point and match
 end. The server command ledger independently contains that sequence and the
 ended 0–1 score. The phone waited for a status confirmation even though its
 screen recording visibly showed “Watch reports connected.” XCTest selected the

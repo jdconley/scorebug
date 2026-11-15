@@ -32,9 +32,10 @@ Representative integration shape:
 
 ```js
 const proxy = await createUDPImpairmentProxy({
-  receiverHost: '127.0.0.1', receiverPort: receiver.address().port,
-  forward: { recordTimeline: true, recordRateLedger: true },
-  forwardRateControl: { rateBitsPerSecond: 750000 },
+    receiverHost: '127.0.0.1',
+    receiverPort: receiver.address().port,
+    forward: { recordTimeline: true, recordRateLedger: true },
+    forwardRateControl: { rateBitsPerSecond: 750000 },
 });
 // Send and observe the actual first publisher datagram before this call.
 const limited = proxy.constrainForward();

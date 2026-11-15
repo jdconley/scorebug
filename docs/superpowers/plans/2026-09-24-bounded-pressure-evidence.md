@@ -30,7 +30,6 @@ Alternatives: dropping old histories would remove replay evidence; compressing t
 - [x] Run focused/full app-model and tooling suites, independent review, and commit verified checkpoint.
 - [ ] Exercise a fresh sustained-pressure native export before claiming that long impaired media workflows pass. Continue causal capacity/outage, production integration, wider profiles and physical Watch work afterward.
 
-
 ## Verification checkpoint
 
 Behavioral red/green logs cover host decoding, Swift interning, recovery driver format selection, whole-trial integration and mutable Foundation string/signed-zero defects. All 542 app-model tests pass. The whole-trial test reconstructs the same synthetic recovery input and obtains the identical complete qualification; wrong policy and corrupted sender-drop evidence still fail. These fixtures are not new network evidence.

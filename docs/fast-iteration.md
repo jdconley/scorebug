@@ -9,15 +9,15 @@ reuse the accepted simulator/Watch workflows unless their contracts change.
 
 ## Choose one check for the change
 
-| Change | Check after the batch |
-| --- | --- |
-| Documentation | Review the diff and local links; no app tests |
-| Node fixture | `node --test scripts/test/<affected-file>.test.mjs` |
-| API or worker behavior | Relevant Vitest file; typecheck the affected package if types changed |
-| Native model | Affected XCTest class with existing DerivedData |
-| Native UI | Affected simulator workflow, using an installed runtime |
-| Contract spanning apps/API/worker | One full vertical checkpoint below |
-| Encoder/transport/media behavior | One targeted native media run answering a specific question; inspect saved media |
+| Change                            | Check after the batch                                                            |
+| --------------------------------- | -------------------------------------------------------------------------------- |
+| Documentation                     | Review the diff and local links; no app tests                                    |
+| Node fixture                      | `node --test scripts/test/<affected-file>.test.mjs`                              |
+| API or worker behavior            | Relevant Vitest file; typecheck the affected package if types changed            |
+| Native model                      | Affected XCTest class with existing DerivedData                                  |
+| Native UI                         | Affected simulator workflow, using an installed runtime                          |
+| Contract spanning apps/API/worker | One full vertical checkpoint below                                               |
+| Encoder/transport/media behavior  | One targeted native media run answering a specific question; inspect saved media |
 
 For example, select one existing test file with
 `pnpm --filter @scorebug/home-daemon exec vitest run <test-file>`.

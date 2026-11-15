@@ -28,7 +28,6 @@ Next runtime fix: use instantaneous native queue statistics for pressure checks 
 
 Current WebRTC source uses bounded probe clusters and waits for feedback; the inspected configuration has15ms minimum probe duration and100ms initial duration, rather than our staged0.8-second holds. This is evidence to review probe-induced congestion, not a drop-in SRT tuning value or claim about Facebook/YouTube mobile apps. [Probe controller](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/congestion_controller/goog_cc/probe_controller.cc) (blob4589173f128721571eb8cc5acd6cb76d43ca63cd), [bitrate prober](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/pacing/bitrate_prober.cc). The direct statistics mismatch is the smaller, evidenced change to test first.
 
-
 The controlled statistics experiment also passes against the bundled macOS SRT1.5.4 static archive (same dependency version as the app), with source and binary retained separately: compileexit0,run9506exit0. At packet44,current512ms versus average127ms; maxima985ms/current and380ms/average. `bundled-provenance.json` records the library hash and result. This strengthens the API diagnosis; no phone or media-loss fix is claimed.
 
 Runtime implementation is now assigned to switch the native call boundary to instantaneous sampling, preserve clear flags0(demand)/1(periodic), add selection/failure/cancellation regression tests, and compile/test the bundled target. No buffer/rate thresholds are being changed. Reviews and a fresh native replay must follow.

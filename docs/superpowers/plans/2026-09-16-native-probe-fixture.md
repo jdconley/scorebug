@@ -99,7 +99,6 @@ accounting before testing higher-quality admission. The previously failing
 adaptive runs remain unresolved; physical devices, Watch routes, other hosts
 and long soaks remain unqualified.
 
-
 The subsequent [renewal and pressure qualification](2026-09-16-native-probe-renewal.md)
 passes both actual iOS 17.5 media scenarios. Renewal remains healthy for roughly
 50 seconds; the constrained run reports pressure withdrawal while archive/live

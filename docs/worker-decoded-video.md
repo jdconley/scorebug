@@ -252,7 +252,6 @@ The owned native and worker-processing fixtures use the validated
 `SCOREBUG_TEST_DECODER_THREADING` override and save the selected mode in their
 configuration evidence.
 
-
 ## Publishing recovery delay
 
 The API accepts optional `SRT_PUBLISH_PEER_LATENCY_MS` (integer 120–2000).
@@ -270,7 +269,6 @@ latency and can exhaust the source-evidence freshness budget; qualify the comple
 media path before choosing a value. It does not itself repair missing media or
 qualify adaptation.
 
-
 ## Local uplink timeline diagnostics
 
 The owned native fixture records payload-free 100-ms event bins for each UDP
@@ -281,7 +279,6 @@ are reported separately. These are send attempts on the proxy clock, not continu
 occupancy sampling or native frame/packet causality. The independent qualifier
 rejects impossible chronological balances and missing/inconsistent byte evidence.
 Queue limits, rate schedule and packet delivery behavior are unchanged.
-
 
 ## Native sender pacing experiment
 
@@ -298,13 +295,11 @@ statistics collection. Missing remains unknown and zero is preserved. These
 pacing diagnostics do not enter quality decisions or establish available network
 capacity; delivered video identity/cadence and audio coverage remain the gates.
 
-
 ## Native compressed-frame diagnostics
 
 DEBUG profile fixtures now retain at most 25000 scalar pre-mux records containing source PTS, native observation time, actual compressed sample byte count and CoreMedia sync metadata. Evidence versions 4 (fixed) and 5 (adaptive) require every raw record to reconcile with phase counts, endpoints and maximum gaps; malformed, missing, overflow or non-sync phase-start evidence fails. Fresh native runs require these versions and enforce an 8 MiB serialized input cap; older completed evidence remains readable through the legacy qualifier.
 
 Sync follows the actual NotSync attachment value (absent/false means sync); invalid samples have no sync evidence. No video payload is retained, no new timer is introduced, and this metadata changes no transport or quality decision. It is not an independent H.264 bitstream parse or receiver picture-integrity proof. Compressed-output bins use observer time, not a network-capacity estimate. See the [measured drain batches and receiver recovery](superpowers/plans/2026-09-16-compressed-frame-evidence.md) for current failures and the next pacing experiment.
-
 
 ## Opt-in native source-cadence pacing
 
@@ -313,7 +308,6 @@ The adaptive DEBUG simulator fixture accepts exact `SCOREBUG_TEST_SOURCE_CADENCE
 This mode uses at most sixteen queued compressed samples plus one consumer-held sample, with the existing 2 MiB per-item limit and terminal overflow failure. Transport queue limits are unchanged. Raw frame evidence adds actual `dequeuedAt` and `sourceCadencePaced`; dequeue time is distinct from encoder completion and post-pacing observation. Enabled experiments require independent mode, chronological and source-eligibility checks across all phases. Existing completed raw-frame evidence without these fields remains readable.
 
 The [native measurement](superpowers/plans/2026-09-16-source-cadence-pacing.md) confirms drain-batch smoothing and an intact archive, but live still fails during constrained-link adaptation. The mode remains experimental and does not establish capacity or qualify production streaming.
-
 
 ### Native packet-pair bandwidth estimate
 
@@ -325,7 +319,6 @@ This local estimate cannot qualify upward admission. Archive media passes again
 (8200 frames / 136 markers); live identity, cadence (15 fps) and A/V coverage fail.
 The next experiment is a bounded, receiver-observed capacity probe; production
 adaptation remains disabled.
-
 
 ### Bounded delivered-traffic probe
 

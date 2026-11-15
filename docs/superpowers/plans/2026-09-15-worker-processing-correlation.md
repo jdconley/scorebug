@@ -47,19 +47,19 @@ completions must never appear as healthy completed output.
 ## Tasks
 
 - [x] Add shared scope to encoder history and an exact safe 90k conversion helper;
-  add `decoded-frame-history.ts` with bounded validated decoder record snapshots.
-  Red/green tests cover source duplicates/order, clocks, eviction, framing/closure,
-  wide/nonintegral projections and preserved prior snapshots.
+      add `decoded-frame-history.ts` with bounded validated decoder record snapshots.
+      Red/green tests cover source duplicates/order, clocks, eviction, framing/closure,
+      wide/nonintegral projections and preserved prior snapshots.
 - [x] Add `worker-processing.ts` pure interval join. Red/green tests cover complete
-  matching, FPS-cap omissions, pending completions, unknown/negative arrival timing,
-  exact missing bounds, mismatched scopes, invalid histories and source mismatch.
+      matching, FPS-cap omissions, pending completions, unknown/negative arrival timing,
+      exact missing bounds, mismatched scopes, invalid histories and source mismatch.
 - [x] Wire both histories into the existing opt-in pipeline; expose combined snapshots
-  and terminal decoder-history evidence. Ensure decoded-pipe errors cannot escape or
-  relabel processing evidence as valid. Add real-child isolation/lifecycle tests.
+      and terminal decoder-history evidence. Ensure decoded-pipe errors cannot escape or
+      relabel processing evidence as valid. Add real-child isolation/lifecycle tests.
 - [x] Run full worker/tooling/typecheck checks and actual CPU/VideoToolbox production
-  pipeline probes. Replay saved native decoded/pre/post records independently.
-  Add a reusable local host-qualification command for this same pipeline fixture.
-  Review, hash evidence, update docs and commit verified changes.
+      pipeline probes. Replay saved native decoded/pre/post records independently.
+      Add a reusable local host-qualification command for this same pipeline fixture.
+      Review, hash evidence, update docs and commit verified changes.
 
 Commands: `pnpm --filter @scorebug/home-daemon test`,
 `pnpm --filter @scorebug/home-daemon typecheck`, `pnpm test:tools` plus the new
@@ -84,13 +84,13 @@ both now have independent expectations and the final review approves the harness
 
 The final production-pipeline fixtures pass:
 
-| Backend | Source fps | Decoded / output frames | Artifact |
-| --- | --- | --- | --- |
-| CPU | 25 | 75 / 75 | `worker-processing-ZzjQrd` |
-| CPU | 30 | 90 / 90 | `worker-processing-14undD` |
-| CPU | 60 | 180 / 90 | `worker-processing-RWTFgC` |
-| VideoToolbox | 30 | 90 / 90 | `worker-processing-aTOSKL` |
-| VideoToolbox | 60 | 180 / 90 | `worker-processing-C67mAk` |
+| Backend      | Source fps | Decoded / output frames | Artifact                   |
+| ------------ | ---------- | ----------------------- | -------------------------- |
+| CPU          | 25         | 75 / 75                 | `worker-processing-ZzjQrd` |
+| CPU          | 30         | 90 / 90                 | `worker-processing-14undD` |
+| CPU          | 60         | 180 / 90                | `worker-processing-RWTFgC` |
+| VideoToolbox | 30         | 90 / 90                 | `worker-processing-aTOSKL` |
+| VideoToolbox | 60         | 180 / 90                | `worker-processing-C67mAk` |
 
 Each fixture checks exact independent input PTS, expected selection (even source
 indices for 60-to-30 fps), output barcodes, complete A/V decoding, audio presence,

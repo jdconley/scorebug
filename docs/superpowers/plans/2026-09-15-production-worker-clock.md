@@ -41,37 +41,37 @@ and local-validation authorization covers this step; no external destination is 
 `apps/home-daemon/test/pipeline.test.ts`.
 
 - [x] Add a failing command contract test across software, VideoToolbox and NVENC,
-  with/without an explicit profile: exactly one input `-copyts`, output
-  `-fps_mode passthrough`, `-avoid_negative_ts make_zero` after input and before
-  output format/URL; no start-at-zero/setpts/CFR output-rate options. Retain
-  decoder-before-cap and cap-presence assertions for explicit profiles.
+      with/without an explicit profile: exactly one input `-copyts`, output
+      `-fps_mode passthrough`, `-avoid_negative_ts make_zero` after input and before
+      output format/URL; no start-at-zero/setpts/CFR output-rate options. Retain
+      decoder-before-cap and cap-presence assertions for explicit profiles.
 - [x] Run `pnpm --filter @scorebug/home-daemon exec vitest run test/pipeline.test.ts`
-  and retain the expected failure before implementation.
+      and retain the expected failure before implementation.
 - [x] Add `'-copyts'` before input options, change the existing FPS mode to
-  `'passthrough'`, and add `'-avoid_negative_ts', 'make_zero'` before `'-f', 'flv'`.
-  Update the comment to explain wrap-frame preservation and output normalization.
+      `'passthrough'`, and add `'-avoid_negative_ts', 'make_zero'` before `'-f', 'flv'`.
+      Update the comment to explain wrap-frame preservation and output normalization.
 - [x] Run focused/full worker tests and worker type checking. Keep guardian,
-  credential logging, API schema, app and local archive behavior unchanged.
+      credential logging, API schema, app and local archive behavior unchanged.
 
 ## Task 2: Production qualification
 
 **Modify:** `scripts/test-transport-clock.mjs`.
 
 - [x] Run the `production` case with the exact array returned by
-  `buildFfmpegArgs`, without test-added preserving flags. Retain `legacy`,
-  `copyts`, and wrap-only `copyts-make-zero` controls by explicitly removing the
-  promoted flags and restoring VFR before their existing candidate transforms.
+      `buildFfmpegArgs`, without test-added preserving flags. Retain `legacy`,
+      `copyts`, and wrap-only `copyts-make-zero` controls by explicitly removing the
+      promoted flags and restoring VFR before their existing candidate transforms.
 - [x] Make `chosenCandidate` be `production`; require six fixtures, unchanged
-  independent wire/identity/cadence/audio/exit gates and a successful production
-  mapping+media result in every fixture. Remove stale experiment-only result names.
+      independent wire/identity/cadence/audio/exit gates and a successful production
+      mapping+media result in every fixture. Remove stale experiment-only result names.
 - [x] Before changing production code, run calibration and observe the production
-  wire-mapping gate fail. Afterward rerun on Mac and the existing Linux CPU image
-  with mounted current sources. Retain exact commands, terminal outcomes and media.
+      wire-mapping gate fail. Afterward rerun on Mac and the existing Linux CPU image
+      with mounted current sources. Retain exact commands, terminal outcomes and media.
 - [x] Run `test:worker-timestamps` on Mac software and VideoToolbox and Linux CPU:
-  retain 30/60/25 fps, real source gaps and unequal A/V acquisition coverage.
+      retain 30/60/25 fps, real source gaps and unequal A/V acquisition coverage.
 - [x] Run the full tooling suite and independent specification then quality review.
-  Record results in this plan and `docs/worker-decoded-video.md` /
-  `docs/adaptive-telemetry.md`. Commit the verified production change.
+      Record results in this plan and `docs/worker-decoded-video.md` /
+      `docs/adaptive-telemetry.md`. Commit the verified production change.
 
 ## Remaining boundary
 
@@ -79,7 +79,6 @@ Clock preservation is a prerequisite for correlation, not a loss estimate. App
 anchor export, worker convention negotiation, matching source-interval counts,
 applied-profile boundaries, usable capacity/pressure and impairment traces remain.
 Physical camera/Watch networking and other GPU/cloud hosts remain separately tested.
-
 
 ## Implementation evidence
 
@@ -112,7 +111,6 @@ five timestamp fixtures also pass; results are `native-worker-software/timestamp
 Previous software-worker artifacts were preserved before this run.
 
 Evidence paths above are under `artifacts/qa/`; command logs use `production-clock-`.
-
 
 The five acquisition/cadence fixtures also exit 0 on Mac VideoToolbox and Linux CPU
 (`production-clock-videotoolbox-timestamps.log`,

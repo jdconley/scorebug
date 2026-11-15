@@ -36,16 +36,16 @@ and diagnostics rather than weaken the gates. Then test constrained uplink recov
 ## Work
 
 - [x] Add typed profile/receipt values and constructor tests, preserving profile
-  settings and default1080 behavior.
+      settings and default1080 behavior.
 - [x] Add adapter profile mutation with cancellation/stop ownership and mutual
-  exclusion with bitrate; test rejected state, late native results and error privacy.
+      exclusion with bitrate; test rejected state, late native results and error privacy.
 - [x] Add PublishingSession profile admission, two-second deadline, receipt/scope
-  validation and joined shutdown; preserve existing bitrate tests.
+      validation and joined shutdown; preserve existing bitrate tests.
 - [x] Add the controlled app fixture and runner/verifier options with strict flag
-  prerequisites, real phase receipts and bounded scalar evidence.
+      prerequisites, real phase receipts and bounded scalar evidence.
 - [x] Run Mac packages and app-model tests, unsigned iPhone/Watch build, then the
-  owned simulator full-pipeline experiment sequentially. Inspect actual decoded
-  output and archive evidence before claiming the transition qualified.
+      owned simulator full-pipeline experiment sequentially. Inspect actual decoded
+      output and archive evidence before claiming the transition qualified.
 - [x] Review, record terminal evidence hashes and commit this controlled transition slice.
 - [ ] Continue into pressure, recovery and remaining physical/device/other-host gates.
 

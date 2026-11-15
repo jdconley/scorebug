@@ -21,11 +21,11 @@ Files: `scripts/device-lab.mjs`, `scripts/scoring-test-server.mjs`, new `scripts
 
 ```js
 const uplink = await createUDPImpairmentProxy({
-  receiverHost: options.host,
-  receiverPort: ingestPort,
-  forward: { recordTimeline: true, recordRateLedger: true },
-  reverse: { recordTimeline: true },
-  forwardRateControl: { rateBitsPerSecond: 750000 },
+    receiverHost: options.host,
+    receiverPort: ingestPort,
+    forward: { recordTimeline: true, recordRateLedger: true },
+    reverse: { recordTimeline: true },
+    forwardRateControl: { rateBitsPerSecond: 750000 },
 });
 ```
 

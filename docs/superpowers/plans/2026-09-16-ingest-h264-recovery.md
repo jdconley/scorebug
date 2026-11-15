@@ -76,7 +76,6 @@ Unified patch context has intentional marker-space-before-tab and blank context
 lines; whitespace checks pass on actual Go source and other repository changes.
 The separate image/binary version is `recovery-v1`; clock-v2 remains available.
 
-
 The first new-image clock run (`relay-clock-Wglefu`) preserved all 180 acquired
 pictures and their decoder timestamps, but correctly failed its unchanged warning
 gate: normal startup waiting was logged as lost timing. The integrated writer test
@@ -93,7 +92,6 @@ native AMD64 hardware. Exact immutable image IDs are in
 `ingest-recovery-images.json`. The actual adaptive pressure run uses the final
 ARM64 image with unchanged 240-second hold and qualification gates; its artifact
 is `native-app-JD0l78`, with an exact pre-run changed-source snapshot.
-
 
 ## Native pressure follow-up
 
@@ -128,7 +126,6 @@ closure. Its zero exit code alone does not establish stream health. The uplink
 schedule also fails its unchanged recovery-traffic coverage check because the
 publisher closed before that phase; same-reader recovery is not full recovery
 qualification. No reconnect behavior was tested by this one-worker run.
-
 
 The retained live MP4 also decodes completely with FFmpeg `-xerror`, but decode
 success does not remove its gaps or qualify its frame rate. Final source and

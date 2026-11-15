@@ -107,16 +107,16 @@ with a production `.now` default; do not add another timer or sleep-based gate.
 `apps/control-plane/test/worker-report-age.test.ts`.
 
 - [x] Write failing deterministic API/HTTP tests. Example: issue at 100 ms, sample
-  age 50 ms, receive at 400 ms, status at 600 ms => upper bound 550 ms. Change wall
-  time independently and require identical elapsed age.
+      age 50 ms, receive at 400 ms, status at 600 ms => upper bound 550 ms. Change wall
+      time independently and require identical elapsed age.
 - [x] Cover current/previous rotation, repeated lost acknowledgments, exact retry,
-  unknown token, legacy omission, same-window/new-sequence no rejuvenation, omitted
-  telemetry, new windows/attempts, retired sessions, restart, malformed token,
-  rejected reports not rotating, caller/read mutation, clock faults and overflow.
+      unknown token, legacy omission, same-window/new-sequence no rejuvenation, omitted
+      telemetry, new windows/attempts, retired sessions, restart, malformed token,
+      rejected reports not rotating, caller/read mutation, clock faults and overflow.
 - [x] Run `pnpm --filter @scorebug/control-plane test -- test/worker-report-age.test.ts`
-  and retain a failing log, then implement the bounded protocol and server logic.
+      and retain a failing log, then implement the bounded protocol and server logic.
 - [x] Run the focused tests, full control-plane suite, protocol build and typecheck;
-  obtain specification then quality review before committing this checkpoint.
+      obtain specification then quality review before committing this checkpoint.
 
 Checkpoint 1 passes 33 focused tests and 240 total API tests. Protocol build and
 API/protocol type checking pass. Both reviews approve the final implementation,
@@ -131,11 +131,11 @@ Logs: `artifacts/qa/worker-report-age-api-{red,green,suite,protocol-build,typech
 `rg 'reporter\.report|\.report\(.*observation' scripts apps`.
 
 - [x] Add failing tests with HTTP registration held until the fixture changes;
-  the report must contain the later observation sampled after token receipt.
+      the report must contain the later observation sampled after token receipt.
 - [x] Cover missing-session resampling/new sequence, lost ACK token recovery,
-  legacy responses, null/supplier failure, coalescing and nested-copy ownership.
+      legacy responses, null/supplier failure, coalescing and nested-copy ownership.
 - [x] Implement supplier-based reporting with optional tokens and preserved total
-  timeout. Run focused/full worker tests and TypeScript checking. Review and commit.
+      timeout. Run focused/full worker tests and TypeScript checking. Review and commit.
 
 Checkpoint 2 passes 25 reporter tests and 132 total worker tests, with worker and
 protocol type checking. Both reviews approve the implementation. The production
@@ -153,13 +153,13 @@ Logs: `artifacts/qa/worker-report-age-sampling-*`.
 the shared protocol fixture's Swift copy.
 
 - [x] Add shared wire round-trip and deterministic native age tests. Server bound
-  550 ms + 200 ms request + 300 ms residence => 1050 ms, independent of wall time.
+      550 ms + 200 ms request + 300 ms residence => 1050 ms, independent of wall time.
 - [x] Test invalid/legacy/stale/mismatched evidence, monotonic reversal at read,
-  overflow, epoch changes in Film model (late success and failure), expiration of
-  previously valid evidence, and no extension from repeated reads.
+      overflow, epoch changes in Film model (late success and failure), expiration of
+      previously valid evidence, and no extension from repeated reads.
 - [x] Implement optional wire field, native age value, and scoped model ownership.
 - [x] Run Core/Film regressions, build Core for arm64_32 watchOS 10 and the combined
-  unsigned iPhone/Watch Release target. Review and commit this native boundary.
+      unsigned iPhone/Watch Release target. Review and commit this native boundary.
 
 Checkpoint 3 passes 119 Core tests and 50 Film model tests, the arm64_32 watchOS 10
 Core build, and the combined unsigned iPhone/Watch Release build. Specification
@@ -218,13 +218,13 @@ ages, one unmatched latest proof, and no independent matches. Prefer a separate
 `worker-report-age-qualification.mjs` validator so existing frame gates stay intact.
 
 - [x] Export bounded, credential-free evidence that the actual native helper accepts
-  a scoped server upper bound and adds request/residence time. Reuse the explicit
-  DEBUG simulator flag and joined shutdown export; no per-frame I/O or new UI.
+      a scoped server upper bound and adds request/residence time. Reuse the explicit
+      DEBUG simulator flag and joined shutdown export; no per-frame I/O or new UI.
 - [x] Require bounded-age evidence in the maintained native fixture while preserving
-  all current media gates. Run focused regressions and relevant builds before one
-  isolated native streaming qualification, with no concurrent media/build jobs.
+      all current media gates. Run focused regressions and relevant builds before one
+      isolated native streaming qualification, with no concurrent media/build jobs.
 - [x] Record exact outcomes and remaining adaptive gates in the telemetry contract,
-  worker decoder documentation, and parent plan. Review and commit.
+      worker decoder documentation, and parent plan. Review and commit.
 
 Checkpoint 4 source passes 58 Film model tests, all 135 tooling tests (including
 41 focused age-qualification cases), the combined unsigned iPhone/Watch Release

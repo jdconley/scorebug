@@ -34,21 +34,20 @@ bounded tradeoff and initial-gap rule before implementing.
 ## Work and gates
 
 - [x] Replay the measured source/ack/evaluation timeline as a failing Core regression.
-  Add exact first-window-start and deadline boundaries, no-receiver rollback,
-  sticky invalidation and late-evidence checks.
+      Add exact first-window-start and deadline boundaries, no-receiver rollback,
+      sticky invalidation and late-evidence checks.
 - [x] Implement named coverage/deadline constants and the bounded initial-gap rule.
-  Update actor tests and the independent JavaScript verifier consistently; its
-  timing assertions remain independent of claimed exported deadlines.
+      Update actor tests and the independent JavaScript verifier consistently; its
+      timing assertions remain independent of claimed exported deadlines.
 - [x] Add a fixture-only requirement for at least one confirmed native trial, so
-  the previous timeout-only pass cannot satisfy this gate. Preserve basic trial/
-  rollback qualification for explicitly requested older scenarios.
+      the previous timeout-only pass cannot satisfy this gate. Preserve basic trial/
+      rollback qualification for explicitly requested older scenarios.
 - [x] Run Core, FilmModel and tooling tests, then an actual native simulator trial
-  with raw pressure/source replay, full saved A/V decode, score and archive checks.
+      with raw pressure/source replay, full saved A/V decode, score and archive checks.
 - [x] If confirmation passes, run the structured-motion fixture with the same
-  adaptive-control and recording gates. Preserve failures and diagnose them.
+      adaptive-control and recording gates. Preserve failures and diagnose them.
 - [x] Run relevant Apple builds, obtain source review, retain evidence hashes and
-  commit a verified checkpoint. Physical phone/Watch and remote hosts remain open.
-
+      commit a verified checkpoint. Physical phone/Watch and remote hosts remain open.
 
 ## Review and deterministic evidence
 
@@ -67,7 +66,6 @@ trial deadline rollback alone does not cover bitrate reduction outside an active
 trial when no fresh matched receiver window is available. Any local-pressure
 fallback requires its own aligned evidence, review and native impairment proof.
 
-
 ## Barcode confirmation pass
 
 `native-app-3Tq0lq` passes the complete 90-second confirmation-required fixture on
@@ -82,7 +80,6 @@ with the live file reaching the final encoded source frame. Both fully decode at
 processing, raw pressure, publication/age and archive gates pass. The recorded
 configuration explicitly requires confirmation. Structured-motion qualification
 also passes below with the same controls and unchanged workload/continuity gates.
-
 
 ## Structured-motion confirmation pass
 

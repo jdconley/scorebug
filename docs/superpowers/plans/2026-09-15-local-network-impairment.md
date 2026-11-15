@@ -41,47 +41,51 @@ Node’s timer range. Configured bitrate is a ceiling plus the documented burst,
 Files: `scripts/udp-impairment.mjs`, `scripts/test/udp-impairment.test.mjs`.
 
 - [x] Write failing tests for FIFO delay, IPv4/UDP byte accounting, token refill,
-  capped idle credits, packet/byte/oversize bounds, deterministic loss, clock reversal,
-  configuration validation and terminal close. Example:
-  ```js
-  const queue = new DatagramImpairmentQueue({rateBitsPerSecond: 1024,
-    burstBytes: 256, maxDatagramBytes: 128, delayMilliseconds: 100});
-  queue.enqueue(Buffer.alloc(100), 0);
-  assert.equal(queue.takeReady(99), null);
-  assert.equal(queue.takeReady(100).length, 100);
-  ```
+      capped idle credits, packet/byte/oversize bounds, deterministic loss, clock reversal,
+      configuration validation and terminal close. Example:
+    ```js
+    const queue = new DatagramImpairmentQueue({
+        rateBitsPerSecond: 1024,
+        burstBytes: 256,
+        maxDatagramBytes: 128,
+        delayMilliseconds: 100,
+    });
+    queue.enqueue(Buffer.alloc(100), 0);
+    assert.equal(queue.takeReady(99), null);
+    assert.equal(queue.takeReady(100).length, 100);
+    ```
 - [x] Implement queue/snapshot conservation and verify deterministic rate-envelope
-  tests over multiple windows with burst allowance; no real timers in pure tests.
+      tests over multiple windows with burst allowance; no real timers in pure tests.
 
 ## Task 2: Owned sockets
 
 Files: same module and tests.
 
 - [x] Add `createUDPImpairmentProxy({receiverPort, forward, reverse})`, returning
-  `{port, snapshot(), close()}`. Bind only 127.0.0.1; use one timer and at most 16
-  pending datagrams per direction. Ignore foreign frontend endpoints.
+      `{port, snapshot(), close()}`. Bind only 127.0.0.1; use one timer and at most 16
+      pending datagrams per direction. Ignore foreign frontend endpoints.
 - [x] Real UDP tests verify bidirectional payload preservation, distinct directional
-  loss/delay, foreign-peer rejection, bounded queue accounting and idempotent joined
-  cleanup. Force cleanup with test hooks even when an assertion fails.
+      loss/delay, foreign-peer rejection, bounded queue accounting and idempotent joined
+      cleanup. Force cleanup with test hooks even when an assertion fails.
 
 ## Task 3: Native qualification
 
 Files: `scripts/test-dual-output.mjs`, `package.json`, documentation.
 
 - [x] Add explicit `--impairment` mode and `test:native-network` command. Reuse
-  source/build/archive helpers. Scenarios: transparent bounded proxy, recoverable
-  rate/delay/loss on both directions, and sender overload below initial bitrate.
+      source/build/archive helpers. Scenarios: transparent bounded proxy, recoverable
+      rate/delay/loss on both directions, and sender overload below initial bitrate.
 - [x] Keep all archive gates and normal live frame/A/V/clock/bitrate/statistics gates
-  for transparent/recoverable cases. Require actual bidirectional proxy traffic and
-  injected effects; record exact proxy configuration and terminal queue conservation.
+      for transparent/recoverable cases. Require actual bidirectional proxy traffic and
+      injected effects; record exact proxy configuration and terminal queue conservation.
 - [x] For deliberate overload require bounded shaping with actual queue pressure or
-  drops and complete archive; inspect and report acquired live decode/frame/cadence
-  results separately. Do not label degraded live output qualified or relax normal
-  acceptance gates. Automatic quality is still disabled.
+      drops and complete archive; inspect and report acquired live decode/frame/cadence
+      results separately. Do not label degraded live output qualified or relax normal
+      acceptance gates. Automatic quality is still disabled.
 - [x] Run full tooling suite and real native network scenarios. Review, document
-  results with source/evidence hashes, and commit verified work. Use failures to
-  determine the next capacity/control implementation; do not turn estimates into
-  usable video capacity merely because a short local test passes.
+      results with source/evidence hashes, and commit verified work. Use failures to
+      determine the next capacity/control implementation; do not turn estimates into
+      usable video capacity merely because a short local test passes.
 
 Commands: `node --test scripts/test/udp-impairment.test.mjs`, `pnpm test:tools`, and
 `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer pnpm test:native-network`.

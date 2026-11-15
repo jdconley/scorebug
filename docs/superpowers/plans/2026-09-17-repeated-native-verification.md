@@ -30,7 +30,6 @@ Use bounded version-aware verification instead of cloning or rewriting old artif
 
 Base commit: `cbbbc8d`. Previous goal turn: progress (native repeatable scheduling, 3,200 passing tests and Release build). Use unique `artifacts/qa/repeated-native-verification-*` files; preserve old raw evidence. Whole-run success is not implied by a component replay pass.
 
-
 ## Replay foundation checkpoint
 
 Tasks 1–3 are implemented. The native replay preserves two original campaign
@@ -68,7 +67,6 @@ Production upgrade permission remains disabled.
 
 Independent specification and code-quality reviews approved tasks 1–3 with no
 remaining actionable findings. The unsigned iPhone/Watch Release build also passed.
-
 
 ## Task 4 execution boundaries
 
@@ -227,7 +225,6 @@ headroom, exact native trial request/receipt ownership and decision deadlines.
 This completes the admission portion only; health confirmation, both faults,
 recovery and the complete repeated native harness remain separate required gates.
 
-
 ## 2026-09-17: receiver intervals and admission implementation
 
 The explicit repeated receiver route now replays raw native, receiver,
@@ -311,7 +308,6 @@ For Task 6, native quality JSON is currently written at stop, so causal live fau
 injection needs a bounded confirmation checkpoint referencing the original event
 and candidate. A fixed pause delay is insufficient for the repeated harness.
 
-
 Quality review additionally established a real causal ordering: the native
 candidate snapshot refreshes its current probe after freezing the completed
 measurement diagnostic. Symmetric pacing alone allowed that current probe to
@@ -319,7 +315,6 @@ regress below the candidate's final accepted count. A failing-first combined
 regression reproduced the issue. The gate now enforces nonregressing count,
 last-acceptance time and lease from final measurement to admission, without
 inventing an exact read timestamp. The focused checkpoint passes 186 tests.
-
 
 The final ordering check also compares candidate/admission snapshot upper bounds
 with actual interval read brackets. Only provably ordered reads receive
@@ -360,7 +355,6 @@ that actual policy health history. This avoids assuming that a ten-second
 recovery must begin at the next five-second grid boundary. The current compact
 fault fixture is only a causality component contract, not this full-policy proof.
 
-
 The fault checkpoint now rejects confirmation/fault pairs that agree with each
 other but differ from the original applied trial. Candidate and confirmation
 application, encoder receipt, profile receipt, acknowledgement, revision and
@@ -372,7 +366,6 @@ source changed and no new native build or repeated A/V run is claimed. Task 5
 remains open until the global policy/recovery replay and readiness joins exist.
 Evidence: `artifacts/qa/repeated-policy-replay-*` and
 `artifacts/qa/repeated-policy-fault-*`.
-
 
 ## Task 5: global policy, readiness and raw composition
 
@@ -420,7 +413,6 @@ and `artifacts/qa/repeated-global-policy-*`. The historical raw recordings and
 exports remain immutable. Task 5 remains open for complete raw integration;
 Task 6 still needs causal live confirmation checkpoints and both owned pauses.
 
-
 The complete tool suite passes 3,016 tests, including 113 new policy, readiness
 and integration/boundary cases. Source-suffix regressions preserve the original
 native shutdown semantics without weakening leading/interior coverage. The stop
@@ -429,7 +421,6 @@ indistinguishable from a source interval that the controller never consumed.
 A future native terminal checkpoint can make that distinction explicit. This
 checkpoint grants no extra tail health and does not claim complete native
 qualification. All 269,319 prior frozen evidence files remain unchanged.
-
 
 ## Resumed freshness review and next harness boundary
 
@@ -459,7 +450,6 @@ unchanged. Terminal evidence must reconcile each live checkpoint with the final
 quality history; live checkpoints alone grant no qualification. Connect the
 raw repeated composition and retain every existing archive, live A/V, scoring,
 ownership and teardown gate before attempting the full simulator run.
-
 
 ## Task 6 checkpoint: live history before fault-runner wiring
 
@@ -496,7 +486,6 @@ sources. All 269,407 earlier evidence files and both supplied original videos
 were verified unchanged. Evidence is under `artifacts/qa/repeated-live-checkpoint-*`.
 This is a harness foundation checkpoint; full repeated native A/V qualification
 and the real-match network test remain open.
-
 
 ## Task 6 wiring checkpoint — September 23
 
@@ -540,7 +529,6 @@ Build the relay first with the pinned recipe in `vendor/MediaMTX/README.md`.
 Do not infer a physical-device or production upgrade pass from this command's
 unit tests or build alone.
 
-
 ### Native run and original-scope correction
 
 `native-app-fNvViE` stopped before app launch because the UI-test boundary still
@@ -577,7 +565,6 @@ All 3,167 tool tests pass after this correction, and independent scope review
 approved it. Source hashes and diagnostic evidence use `repeated-harness-*`;
 failed run artifacts are retained unchanged.
 
-
 ### Final-stage scheduling verified; telemetry delay remains open
 
 The repeated-only final-stage scheduling fix is implemented: 12 seconds and 120
@@ -613,7 +600,6 @@ or classify stale reports as decoder stalls.
 Tasks 5 and 6 above now describe implemented/reviewed code. Their checkmarks do
 not imply completion of task 7’s full repeated native media gate, which remains
 open. Production automatic upgrade permission is still disabled.
-
 
 ### September 24: two observed cycles and exact stale-report diagnosis
 
@@ -677,7 +663,6 @@ and timings are saved in `repeated-evaluation-diagnostic-native-assessment.json`
   raw reconstructed cycles before claiming repeated qualification. Production
   upgrade permission remains disabled.
 
-
 #### Repeated cadence audit capacity — September 24
 
 The longer simulator route now has an explicit cadence-audit contract: version 2,
@@ -703,7 +688,6 @@ then passed. The arm64 iPhone simulator build also passes. Independent review
 approved the JavaScript routing and reran all ten new capacity tests. No telemetry freshness
 or health credit rules have changed, and this capacity fix does not qualify repeated
 recovery. The narrow recovery-time invalidation replay above is still required.
-
 
 #### Recovery invalidation replay — component implementation, fresh native result below
 
@@ -746,7 +730,6 @@ begin invalidates old readiness even if its event was exported after begin.
 The joined unavailable row must be accounted for explicitly in cadence/fault
 validation; all other gaps, stalls, identities and freshness checks remain.
 
-
 The implementation now proves each supported rejection from the complete raw
 version-2 audit and quality history. Both the repeated policy and fault entry
 replay that proof independently. Cadence continuity accepts only the exact
@@ -765,7 +748,6 @@ The earlier native failure remains failed. Independent spec and quality reviews
 are approved and each reran all 114 focused tests. All 3,262 tool tests pass. A
 fresh frozen-source native run is next; production upgrades stay disabled.
 
-
 Review found and reproduced two false acceptance cases before a new native run:
 a diagnostic age could be fresh or younger than the same receipt's earlier audit,
 and multiple rejected calls could have overlapping timing that regressed the
@@ -782,7 +764,6 @@ A regression with rejection near 170.75 seconds and replacement at 171.05 now
 requires the complete 172–182 interval. The prior native `healthySince` is never
 rewritten. This handles the explicitly joined stale receipt and its replacement;
 it does not claim to reconstruct every possible unlogged later rejection.
-
 
 #### Fresh native result — September 24, `native-app-ApmZnO`
 
@@ -817,22 +798,22 @@ The native byte cap then stopped the owner after 79/121 candidate inputs.
 Next bounded implementation and verification:
 
 - [ ] Add a repeated-only wait after stage two is retired and joined, before
-  allocating stage three. Poll current valid readiness finitely within the
-  original 60-second campaign deadline; spend no probe bytes while inactive.
+      allocating stage three. Poll current valid readiness finitely within the
+      original 60-second campaign deadline; spend no probe bytes while inactive.
 - [ ] Require the same immutable publication/configuration/revision as the
-  campaign. A new `healthySince` may represent legitimate recovered readiness;
-  pin that fresh context across allocation and use the existing strict
-  `sameConfiguration` check afterward. Do not weaken its shared semantics.
+      campaign. A new `healthySince` may represent legitimate recovered readiness;
+      pin that fresh context across allocation and use the existing strict
+      `sameConfiguration` check afterward. Do not weaken its shared semantics.
 - [ ] Preserve origin, cumulative 16 MiB budget, 300 ms leases, 0.5-second
-  maturity, stage-three 12-second ceiling and exactly two campaigns. Own every
-  returned allocation before cancellation or revalidation, and join on failure.
+      maturity, stage-three 12-second ceiling and exactly two campaigns. Own every
+      returned allocation before cancellation or revalidation, and join on failure.
 - [ ] First reproduce absent readiness, resumed readiness with a new health
-  start, bounded exhaustion, cancellation and allocation-time context changes
-  in behavioral tests. Run focused tests, full FilmModel tests, simulator build
-  and independent spec/quality reviews before another frozen native run.
+      start, bounded exhaustion, cancellation and allocation-time context changes
+      in behavioral tests. Run focused tests, full FilmModel tests, simulator build
+      and independent spec/quality reviews before another frozen native run.
 - [ ] Independently specify any broader telemetry replay needed for the newly
-  observed stale-at-selection/adjacent-stale/unknown-pressure sequence. No
-  threshold expansion, health credit for unavailable data, or invented rows.
+      observed stale-at-selection/adjacent-stale/unknown-pressure sequence. No
+      threshold expansion, health credit for unavailable data, or invented rows.
 
 The stage scheduling change is an evidence-backed hypothesis, not a guaranteed
 native pass. Full repeated qualification and production upgrades remain closed.
@@ -876,7 +857,6 @@ recovery (revisions 2/4); trial, fault, ownership, ordinal and legacy checks sta
 strict. The failed run cannot pass regardless of this extension because its
 second candidate/trial/fault/recovery never completed.
 
-
 #### Stage-three readiness checkpoint
 
 Implemented the repeated-only joined-stage wait and post-allocation revalidation.
@@ -896,7 +876,6 @@ spend about 2.5 MB, leaving roughly 9.52 seconds at 12 Mbps within 16 MiB. If th
 0.5-second maturity requirement misses a fresh source-health slot, measurement
 and admission could still arrive too late. The next frozen native run tests this
 scheduling hypothesis; no budget, health requirement or verifier is weakened.
-
 
 #### Fresh stage-readiness native run — September 24, `native-app-LeTozN`
 
@@ -984,7 +963,6 @@ propagation, explicit opt-in isolation, scoped sanitized collection and log-size
 bounds. Run focused and relevant full suites, typecheck/build and independent
 reviews before one new diagnostic native run. Preserve the 100 ms coverage gate.
 
-
 The bounded worker trace is implemented behind both exact test flags. Its parser
 passes 32 focused cases and parses the installed FFmpeg's actual sampled output
 without malformed, oversized or incomplete rows. Integration tests first failed
@@ -998,7 +976,6 @@ Next run uses `SCOREBUG_TEST_WORKER_PACKET_TIMING=1` on the same repeated fixtur
 Treat the debug output as diagnostic: it can affect scheduling and does not
 qualify health or throughput. Keep source hashes frozen, retain all failed
 artifacts, and compare native mux, worker demux/mux, and recorder timestamps.
-
 
 #### Worker packet-trace native run — September 24, `native-app-hB7NWJ`
 
@@ -1077,7 +1054,6 @@ simulator build and independent reviews. Preserve the overflowed failed artifact
 no truncated historical run can qualify after this change. Broader policy replay
 and startup acquisition remain separate open issues.
 
-
 The repeated deadline-audit correction is implemented. Seven native regressions
 cover full prefix/count retention, unchanged legacy and phase bounds, exact
 fixture prerequisites, serialized byte exhaustion, serialization failure and
@@ -1093,7 +1069,6 @@ Synthetic repeated fixtures use the new envelope, while original native artifact
 remain untouched. The arm64 iPhone simulator build passes. Independent native/JS
 specification and quality reviews approve. Next is one fresh frozen native run
 with complete audit retention; no component pass grants production upgrades.
-
 
 #### Complete audit native run — September 24, `native-app-yB8xre`
 

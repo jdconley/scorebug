@@ -46,6 +46,7 @@ window values but freshWindow(at:maximumAge:) returns nil. Its freshness uses th
 window end and the existing scalar freshness guard. New trackers start empty.
 
 Public interface:
+
 ```swift
 public struct PublishingTransportWindow: Equatable, Sendable {
     public let publishingGeneration: UInt64
@@ -75,16 +76,16 @@ existing `PublishingTransportStatistics.swift`, new
 `ios/Packages/ScorebugMedia/Tests/ScorebugMediaTests/PublishingTransportWindowTests.swift`.
 
 - [x] Write tests and compile a nil-returning window stub; capture behavioral red.
-  Nonuniform sample times 10, 11, 13 with gauges 100, 400, 0 must yield mean 300,
-  not the arithmetic sample mean. Exact large counters must subtract before Double
-  conversion. Cover duration boundaries, two-second gap, ring eviction, cached/nil
-  reads, fresh/future/stale/closed, contradictions, and finite extreme RTTs.
+      Nonuniform sample times 10, 11, 13 with gauges 100, 400, 0 must yield mean 300,
+      not the arithmetic sample mean. Exact large counters must subtract before Double
+      conversion. Cover duration boundaries, two-second gap, ring eviction, cached/nil
+      reads, fresh/future/stale/closed, contradictions, and finite extreme RTTs.
 - [x] Implement fixed-ring insertion only after scalar validation, reset on gaps,
-  and bounded scanning for actual endpoints. Use exact counter subtraction and
-  normalized left-hold weights. Run focused tests then the complete Media suite:
-  ```sh
-  DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer swift test --package-path ios/Packages/ScorebugMedia
-  ```
+      and bounded scanning for actual endpoints. Use exact counter subtraction and
+      normalized left-hold weights. Run focused tests then the complete Media suite:
+    ```sh
+    DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer swift test --package-path ios/Packages/ScorebugMedia
+    ```
 
 ## Task 2: Session and native evidence
 
@@ -93,29 +94,29 @@ Files: existing `PublishingTransportStatisticsSessionTests.swift`,
 `scripts/transport-statistics-evidence.mjs`, its tests, `scripts/test-dual-output.mjs`.
 
 - [x] Extend the session test with an advancing sample; verify its window survives
-  historical stop while fresh access closes. Existing late-getter test must pass.
+      historical stop while fresh access closes. Existing late-getter test must pass.
 - [x] In the native fixture's existing monitor, own one statistics tracker. Observe
-  each actual sample and export the optional window alongside raw samples; serialize
-  exact integer deltas as decimal strings. No new timer or capture work.
+      each actual sample and export the optional window alongside raw samples; serialize
+      exact integer deltas as decimal strings. No new timer or capture work.
 - [x] Write failing independent Node checks for exact endpoints, deltas, nonuniform
-  weighted means, maxima, missing/unexpected windows, cached/gap handling and corrupted
-  output. Reconstruct expected windows from raw collections, with explicit 64-sample
-  and 1–5 second bounds. Exported window values cannot be their own oracle.
+      weighted means, maxima, missing/unexpected windows, cached/gap handling and corrupted
+      output. Reconstruct expected windows from raw collections, with explicit 64-sample
+      and 1–5 second bounds. Exported window values cannot be their own oracle.
 - [x] Run the oracle for transparent/recoverable and deliberate-overload paths; overload
-  media remains separately unqualified. Preserve all existing media gates. Run
-  `pnpm test:tools` and `pnpm test:native-network` with selected Xcode. Rebuild dependent
-  Swift probe if SwiftPM's cached source discovery misses the new Media file.
+      media remains separately unqualified. Preserve all existing media gates. Run
+      `pnpm test:tools` and `pnpm test:native-network` with selected Xcode. Rebuild dependent
+      Swift probe if SwiftPM's cached source discovery misses the new Media file.
 
 ## Task 3: Review and checkpoint
 
 - [x] Run existing Streaming tests and the combined unsigned iPhone/Watch Release
-  build to check public snapshot compatibility. Run original native scenarios if
-  runner or fixture changes alter their shared path.
+      build to check public snapshot compatibility. Run original native scenarios if
+      runner or fixture changes alter their shared path.
 - [x] Independent bounded review; address reproduced issues, then document exact
-  evidence and limitations, hash final source/evidence and commit verified changes.
+      evidence and limitations, hash final source/evidence and commit verified changes.
 - [x] Update `docs/adaptive-telemetry.md` and a transport-window runbook. Keep capacity,
-  thermal/worker pressure, policy/source alignment, profile transitions and physical
-  radio/Watch qualification explicitly open. Do not enable quality adaptation here.
+      thermal/worker pressure, policy/source alignment, profile transitions and physical
+      radio/Watch qualification explicitly open. Do not enable quality adaptation here.
 
 ## Verified checkpoint
 

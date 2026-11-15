@@ -32,21 +32,21 @@ is a separate pipeline and must be exercised in later integration runs.
 ## Steps
 
 - [x] Add a native SRT test with 64→32 dimensions that first fails against a
-  not-encoding API stub. Require a receipt only after actual new output, all submitted
-  frames reaching pre-mux observation, and finish retaining the final frame.
+      not-encoding API stub. Require a receipt only after actual new output, all submitted
+      frames reaching pre-mux observation, and finish retaining the final frame.
 - [x] Expose the codec's immutable drain handle and last valid submission snapshot
-  through OutgoingStream. Implement actor-owned raw pause, receipt and deadline.
+      through OutgoingStream. Implement actor-owned raw pause, receipt and deadline.
 - [x] Add deterministic lifecycle tests using finite gated native-session completion
-  for timeout/cancel/finish/close and restart exclusion; test conflicting settings,
-  bitrate and compressed input, stale generation, native failure, missing output,
-  and bounded ingress under pressure. Preserve red results before fixes.
+      for timeout/cancel/finish/close and restart exclusion; test conflicting settings,
+      bitrate and compressed input, stale generation, native failure, missing output,
+      and bounded ingress under pressure. Preserve red results before fixes.
 - [x] Run the entire vendored SDK suite sequentially, then streaming package tests
-  and the unsigned combined Apple Release build. Review the lifecycle and receipts.
+      and the unsigned combined Apple Release build. Review the lifecycle and receipts.
 - [x] Regenerate the maintained SDK patch from hash-verified upstream bytes, verify
-  exact round trip, document observed limits, and commit with terminal evidence.
+      exact round trip, document observed limits, and commit with terminal evidence.
 - [ ] Expose the qualified API to the app's publisher and run paced down/up changes
-  through worker decoding with independent full-resolution local recording; qualify
-  pressure and recovery before enabling automatic profile selection.
+      through worker decoding with independent full-resolution local recording; qualify
+      pressure and recovery before enabling automatic profile selection.
 
 Commands use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer` and
 `swift test --package-path vendor/HaishinKit --filter SRTVideoReplacementTests`,

@@ -29,7 +29,6 @@
 
 All original non-null TS bytes must match the delivered stream, all accepted transport bytes must arrive exactly, and decoded audio/video must be identical across source and padded deliveries. The lease and pressure cases must withdraw padding while media continues, without resetting the source or changing its profile. No result from this plan enables adaptation or claims a usable video capacity.
 
-
 ## Reviewed result
 
 Authoritative run: `artifacts/qa/mpegts-probe-TZgGv9`. Source snapshot hashes for all 11 runtime/test dependencies remain unchanged. Installed SRT headers and runtime both report 1.5.6. The source is 5,252,344 bytes containing 13,487 existing null packets. Each of the three scenarios delivers the entire accepted transport stream exactly; every original non-null TS byte is preserved. FFmpeg decodes 360 video pictures and 564 audio frames with identical hashes, timebases and timestamps in source and all deliveries.

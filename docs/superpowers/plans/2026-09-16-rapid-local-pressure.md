@@ -37,7 +37,6 @@ transport evidence to identify the next bottleneck rather than easing qualificat
 The native statistics cadence and congestion thresholds are separate future
 experiments. Production adaptation, long soaks, devices and remote hosts remain open.
 
-
 ## Verified checkpoint
 
 The causal adapter tests failed before the duration change; the version-three

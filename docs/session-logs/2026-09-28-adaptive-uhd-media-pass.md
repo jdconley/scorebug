@@ -17,11 +17,11 @@ Native RecordingLibrary export reuses the current test bundle, exec41230 joined0
 All167segment metadata/hash entries verify. A single full A/V decode per file
 checks source identity, with packet timestamps read separately:
 
-| Media | Consecutive source frames | First–last identity | A/V end offset |
-| --- | --- | --- | --- |
-| Clean native archive |9927 |0–9926 |approximately0ms |
-| Proxy final MP4 |9846 |61–9906 |−2.126ms |
-| Mock RTMP recorder MP4 |9846 |61–9906 |+13.436ms |
+| Media                  | Consecutive source frames | First–last identity | A/V end offset   |
+| ---------------------- | ------------------------- | ------------------- | ---------------- |
+| Clean native archive   | 9927                      | 0–9926              | approximately0ms |
+| Proxy final MP4        | 9846                      | 61–9906             | −2.126ms         |
+| Mock RTMP recorder MP4 | 9846                      | 61–9906             | +13.436ms        |
 
 All are3840×2160H.264/AAC, audible audio with0timestamp gaps; both outputs have
 identical frame identities. Archive continues20frames beyond the final live frame.

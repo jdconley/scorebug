@@ -11,22 +11,29 @@
 - [x] Add failing Swift profile/fixture tests for `low360` (640×360, requested 600,000 video bps, H.264/30 fps) and unchanged archive defaults.
 - [x] Add failing Node tests for exact `360p30` fixture authorization, geometry, native format, native byte cost and rejection of crossed dimensions/profile labels. Preserve all fixed540 cases and reject probe requests at 360.
 - [x] Implement the profile and explicitly gated native fixture selection in `PublishingVideoProfile.swift`, `VideoObservationFixture.swift`, `CaptureStreamingModel.swift`; no production default change. Add 360 to the UI test launcher
-  in `ios/AppUITests/NativeStreamingTests.swift`, retaining 540-only bandwidth probes.
+      in `ios/AppUITests/NativeStreamingTests.swift`, retaining 540-only bandwidth probes.
 - [x] Extend `native-live-profile.mjs`, `native-format-qualification.mjs`, `native-video-cost.mjs`, `native-streaming-options.mjs`, `native-streaming-fixture.mjs` and the runner for the 360 evidence path. Scale diagnostic sampling coordinates consistently, keeping archive dimensions unchanged.
 - [x] Run streaming/media/model/tool tests, simulator test build and unsigned combined iPhone/Watch Release build; investigate any failures.
 - [x] Freeze source inventory and run the actual fixed360 scheduled 4 Mbps pressure fixture without a probe. Independently reconcile format, cost, archive/live frame identity, audio, full decodes and proxy teardown. Record measured bitrate rather than assuming the 600 kbps setting is achieved.
 - [x] Save results, remaining gates and commit. A passed fixed360 run qualifies only that finite simulator scenario; 240, transitions, short-window health and physical-device behavior remain separate gates.
 
 Core test assertions:
+
 ```swift
 let profile = try XCTUnwrap(PublishingVideoProfile(rawValue: "360p30"))
 XCTAssertEqual(profile.width, 640)
 XCTAssertEqual(profile.height, 360)
 XCTAssertEqual(profile.bitRate, 600_000)
 ```
+
 ```js
-assert.equal(nativeLiveProfile({ ...args, environment: { ...environment,
-  SCOREBUG_TEST_LIVE_PROFILE: '360p30' } }), '360p30');
+assert.equal(
+    nativeLiveProfile({
+        ...args,
+        environment: { ...environment, SCOREBUG_TEST_LIVE_PROFILE: '360p30' },
+    }),
+    '360p30',
+);
 assert.equal(nativeMediaGeometry('360p30', true).width, 640);
 assert.equal(nativeMediaGeometry('360p30', false).width, 1920);
 ```

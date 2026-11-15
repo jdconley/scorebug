@@ -41,20 +41,20 @@ production reads only Foundation's scalar state and uptime outside the session l
 ## Tasks
 
 - [x] Add `PublishingThermalObservation.swift` and tests in ScorebugMedia. Begin with
-  API stubs returning unknown/no coverage, then run behavioral tests red. Implement
-  bounded history, gap/duplicate/quarantine handling, immutable closure and bracketed
-  queries. Test nonuniform fractional boundaries, exact boundary maximum, unknown,
-  missing brackets, gap, eviction after >64 samples, closed/fresh, invalid clocks,
-  duplicate conflicts and Foundation state mapping.
+      API stubs returning unknown/no coverage, then run behavioral tests red. Implement
+      bounded history, gap/duplicate/quarantine handling, immutable closure and bracketed
+      queries. Test nonuniform fractional boundaries, exact boundary maximum, unknown,
+      missing brackets, gap, eviction after >64 samples, closed/fresh, invalid clocks,
+      duplicate conflicts and Foundation state mapping.
 - [x] Integrate a `thermalObservation` field into PublishingSessionSnapshot and the
-  existing monitor, with an internal deterministic sampler seam. Tests must prove
-  readiness-only sampling, real monitor collection, history frozen at stop, no late
-  mutation from suspended health, and failure/stop while startup is suspended.
-  Add a production-default sampler test that collects actual ProcessInfo readings
-  through a running PublishingSession and verifies fresh/closed accessors.
+      existing monitor, with an internal deterministic sampler seam. Tests must prove
+      readiness-only sampling, real monitor collection, history frozen at stop, no late
+      mutation from suspended health, and failure/stop while startup is suspended.
+      Add a production-default sampler test that collects actual ProcessInfo readings
+      through a running PublishingSession and verifies fresh/closed accessors.
 - [x] Run full Media, Streaming and Film tests sequentially, then combined unsigned
-  iPhone/Watch Release. Obtain bounded independent review, address findings with
-  regressions, record evidence and hashes, update telemetry/parent docs and commit.
+      iPhone/Watch Release. Obtain bounded independent review, address findings with
+      regressions, record evidence and hashes, update telemetry/parent docs and commit.
 
 Commands use DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer.
 `swift test --package-path ios/Packages/ScorebugMedia --filter PublishingThermal`;

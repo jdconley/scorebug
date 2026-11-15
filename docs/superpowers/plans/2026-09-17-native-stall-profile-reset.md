@@ -25,7 +25,6 @@ Use the prior controlled-stall command with `SCOREBUG_TEST_DECODER_STALL=reset54
 
 This is a fault-response test, not a startup or upward-admission shortcut. Initial high quality is confined to the explicit DEBUG simulator mode. Frame continuity in saved media does not establish uninterrupted real-time delivery through the injected pause.
 
-
 ## Results
 
 Actual `native-app-1wOipN` finished with exit 0 and joined cleanup. The owned decoder

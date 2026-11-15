@@ -174,7 +174,6 @@ source clock and credentials. Keep any fixture override confined to DEBUG simula
 qualification and validate it before resource creation. Dynamic impairment/recovery
 phases and live acceptance gates still need a bounded design review.
 
-
 ## Stage-2 fresh native confirmation
 
 `native-app-XDjE3w` passes the complete 90-second confirmation-required `blocks16`

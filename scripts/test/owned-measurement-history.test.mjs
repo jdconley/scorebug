@@ -83,7 +83,9 @@ test('a final stopped owner can join without settling discarded policy', () => {
 test('retains policy observations after joined settlement without reopening the owner', () => {
   const raw = fixture();
   raw.events.splice(6, 0, { ...raw.events[5], kind: 'policyState', at: raw.events[5].at + 0.001 });
-  raw.events.forEach((e, i) => { e.ordinal = String(i + 1); });
+  raw.events.forEach((e, i) => {
+    e.ordinal = String(i + 1);
+  });
   const result = index(raw);
   assert.deepEqual(result.attempts[0].eventIndices, [0, 1, 2, 3, 4, 5, 6]);
   assert.equal(result.attempts[0].terminal, 'settledFailure');
@@ -94,9 +96,15 @@ test('retains policy observations after joined settlement without reopening the 
 });
 test('policy observations cannot authorize work after settlement', () => {
   const raw = fixture();
-  raw.events.splice(6, 0, { ...raw.events[5], kind: 'policyState', at: raw.events[5].at + 0.001 },
-    { ...raw.events[5], kind: 'allocationRequested', at: raw.events[5].at + 0.002 });
-  raw.events.forEach((e, i) => { e.ordinal = String(i + 1); });
+  raw.events.splice(
+    6,
+    0,
+    { ...raw.events[5], kind: 'policyState', at: raw.events[5].at + 0.001 },
+    { ...raw.events[5], kind: 'allocationRequested', at: raw.events[5].at + 0.002 },
+  );
+  raw.events.forEach((e, i) => {
+    e.ordinal = String(i + 1);
+  });
   assert.throws(() => index(raw), /event outside active Session owner/);
 });
 for (const kind of ['sourceWaitStarted', 'sourceReady', 'sourceWaitTimedOut'])
@@ -108,20 +116,30 @@ for (const kind of ['sourceWaitStarted', 'sourceReady', 'sourceWaitTimedOut'])
     assert.equal(result.retryPolicyQualified, false);
     assert.equal(result.nativeProbeQualified, false);
     raw.events.splice(6, 0, { ...raw.events[5], kind, at: raw.events[5].at + 0.001 });
-    raw.events.forEach((e, i) => { e.ordinal = String(i + 1); });
+    raw.events.forEach((e, i) => {
+      e.ordinal = String(i + 1);
+    });
     assert.throws(() => index(raw), /event outside active Session owner/);
   });
 for (const cleanupFirst of [false, true])
   test(`indexes rejected application with cleanup ${cleanupFirst ? 'before' : 'after'} rejection`, () => {
     const raw = fixture();
     raw.events = raw.events.slice(0, 1);
-    const kinds = ['applicationTransferred',
-      ...(cleanupFirst ? ['cleanupJoined', 'applicationRejected'] : ['applicationRejected', 'cleanupJoined']),
-      'settledApplicationRejection'];
+    const kinds = [
+      'applicationTransferred',
+      ...(cleanupFirst
+        ? ['cleanupJoined', 'applicationRejected']
+        : ['applicationRejected', 'cleanupJoined']),
+      'settledApplicationRejection',
+    ];
     for (const kind of kinds)
-      raw.events.push({ ...raw.events[0], kind, ordinal: String(raw.events.length + 1),
+      raw.events.push({
+        ...raw.events[0],
+        kind,
+        ordinal: String(raw.events.length + 1),
         at: 21 + raw.events.length,
-        applicationID: '30000000-0000-0000-0000-000000000001' });
+        applicationID: '30000000-0000-0000-0000-000000000001',
+      });
     const result = index(raw);
     assert.equal(result.attempts[0].terminal, 'settledApplicationRejection');
     assert.equal(result.retryPolicyQualified, false);

@@ -68,15 +68,15 @@ corresponding existing/new test files.
 
 - [x] Add the constant and optional typed fields.
 - [x] Write failing HTTP tests for initial/idempotent advertised support, known and
-  unknown bounded clock round-trip, malformed rejection, and immutable known/absent
-  conventions across omissions, retries and new attempts/sessions.
+      unknown bounded clock round-trip, malformed rejection, and immutable known/absent
+      conventions across omissions, retries and new attempts/sessions.
 - [x] Add failing reporter tests for old/new/unknown capabilities, supplier-copy
-  ownership, exact envelope shape, ack token updates and capability re-evaluation
-  after session renewal. Add actual pipeline snapshot label assertion.
+      ownership, exact envelope shape, ack token updates and capability re-evaluation
+      after session renewal. Add actual pipeline snapshot label assertion.
 - [x] Run focused tests and retain behavioral failures before production changes.
 - [x] Implement the handshake/filter/immutability behavior described above. Keep
-  existing counter, age and session guards. Run focused then full API/worker tests,
-  protocol build and affected type checking. No production media argv changes.
+      existing counter, age and session guards. Run focused then full API/worker tests,
+      protocol build and affected type checking. No production media argv changes.
 
 ## Task 2: Native wire compatibility
 
@@ -84,26 +84,25 @@ corresponding existing/new test files.
 Core decoded-video tests, `packages/protocol/fixtures/decoded-video-clock-v1.json`.
 
 - [x] Create shared known/legacy/unknown status examples with signed wrap-region PTS.
-  API tests must accept and preserve these exact status observation payloads.
+      API tests must accept and preserve these exact status observation payloads.
 - [x] Add failing Swift decode/round-trip assertions and exact known-label recognition;
-  preserve existing optional omission and mandatory null encoding behavior.
+      preserve existing optional omission and mandatory null encoding behavior.
 - [x] Implement optional raw clock and computed exact convention recognition.
 - [x] Run complete Core tests and compile arm64_32 watchOS 10 plus combined iPhone/
-  Watch Release. Reuse existing package build commands and Xcode 26.2 toolchain.
+      Watch Release. Reuse existing package build commands and Xcode 26.2 toolchain.
 
 ## Task 3: Integrated proof and documentation
 
 - [x] Obtain specification then quality reviews and fix actionable findings.
 - [x] Run full tooling tests and local worker lifecycle/media fixture. Verify actual
-  production-tagged reports reach the authenticated status endpoint, in addition to
-  existing scoring, recovery and stop behavior. Keep old-server tests as regressions.
+      production-tagged reports reach the authenticated status endpoint, in addition to
+      existing scoring, recovery and stop behavior. Keep old-server tests as regressions.
 - [x] Update `docs/worker-decoded-video.md` and `docs/adaptive-telemetry.md` with scope,
-  exact test results and remaining native anchor/interval work; commit this change.
+      exact test results and remaining native anchor/interval work; commit this change.
 
 The phone's SDK clock export, native-to-worker attempt correlation, matched source
 intervals, profile boundaries, capacity/pressure and impairment tests remain separate
 required work. This field does not enable automatic quality changes.
-
 
 ## Verified implementation
 
@@ -144,7 +143,6 @@ All paths above are under `artifacts/qa/`.
 This completes convention negotiation. The native SDK anchor is still not exposed
 through the app's publication observations. That integration and actual matching
 source-interval counts remain the next prerequisite to automatic quality changes.
-
 
 Independent specification and quality reviews approve the completed change.
 The repeated attempt 1 in the workflow also makes the next identity requirement

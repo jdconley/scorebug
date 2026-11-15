@@ -14,7 +14,7 @@ and the actual new1050s configuration is executing. Syntax/diff checks pass.
 
 Prepared a separate1200s fixture from the existing600s UHD clip; Downloads originals
 and the prepared original remain unchanged. H264 has noBframes and is stream-copied;
-packet timestamps explicitly useN*512ticks at1/15360. PCM audio uses the first600s
+packet timestamps explicitly useN\*512ticks at1/15360. PCM audio uses the first600s
 repeated once, removing the original's20ms extra tail at the loop boundary.
 All36,000video packets have exact30fpsPTS/DTS. All57,600,000audio samples have continuous
 packet timestamps. A decoded boundary sample is17994…17999,0…5 as expected. SourceIDs

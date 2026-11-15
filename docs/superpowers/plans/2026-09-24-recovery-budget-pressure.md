@@ -38,36 +38,36 @@ integration. Full impaired video qualification remains outstanding.
 ## Tasks
 
 - [x] In `ios/Sources/Scorebug/Capture/PublishingQualityTelemetry.swift`, introduce
-  `TransportLimits.Policy: String` with `legacy-threshold-v1`, `sender-delay-v1`,
-  and `recovery-budget-v1`. Replace the internal Boolean initializer parameter with
-  `policy: Policy = .legacyThreshold`; update the two existing call sites to
-  `.senderDelay` so their semantics are unchanged. Add the API while retaining old
-  classification first.
+      `TransportLimits.Policy: String` with `legacy-threshold-v1`, `sender-delay-v1`,
+      and `recovery-budget-v1`. Replace the internal Boolean initializer parameter with
+      `policy: Policy = .legacyThreshold`; update the two existing call sites to
+      `.senderDelay` so their semantics are unchanged. Add the API while retaining old
+      classification first.
 - [x] Add tests in `ios/FilmModelTests/PublishingQualityTelemetryTests.swift` for
-  recovered retries at65ms RTT/67ms backlog/400ms delay (nominal source and no local
-  pressure), known drops/RTT/backlog over reserve (elevated), exact limits, unknown
-  delay, and preservation of legacy retry pressure. Observe behavioral red with:
-  `xcodebuild -project ios/Scorebug.xcodeproj -scheme ScorebugFilmModelTests -destination platform=macOS,arch=arm64 -derivedDataPath ios/DerivedData/FileCapture -collect-test-diagnostics never -only-testing:ScorebugFilmModelTests/PublishingQualityTelemetryTests test`.
+      recovered retries at65ms RTT/67ms backlog/400ms delay (nominal source and no local
+      pressure), known drops/RTT/backlog over reserve (elevated), exact limits, unknown
+      delay, and preservation of legacy retry pressure. Observe behavioral red with:
+      `xcodebuild -project ios/Scorebug.xcodeproj -scheme ScorebugFilmModelTests -destination platform=macOS,arch=arm64 -derivedDataPath ios/DerivedData/FileCapture -collect-test-diagnostics never -only-testing:ScorebugFilmModelTests/PublishingQualityTelemetryTests test`.
 - [x] Implement only the policy-specific differences: apply retry fraction only
-  outside `.recoveryBudget`; compare each enclosing sample's RTT and backlog with
-  that same sample's delay; return unknown when positive delay is absent and no
-  independent pressure exists. Run the focused tests green.
+      outside `.recoveryBudget`; compare each enclosing sample's RTT and backlog with
+      that same sample's delay; return unknown when positive delay is absent and no
+      independent pressure exists. Run the focused tests green.
 - [x] In `scripts/native-quality-pressure.mjs`, replace the replay Boolean with
-  `transportPolicy`, default `legacy-threshold-v1`; validate the three exact policy
-  strings. Keep quarter-second windows required for both delay-aware policies.
-  Update existing callers in `native-quality-qualification.mjs`,
-  `measured-trial-policy.mjs`, `measured-recovery-policy.mjs`, and
-  `repeated-measured-policy.mjs` to name `sender-delay-v1` where they previously
-  passed true. Introduce the API first, then add behavioral-red tests in
-  `scripts/test/recovery-budget-pressure.test.mjs`, then implement identical
-  recovery-budget classification. Use raw counter/gauge fixtures with truthful
-  claimed pressure and reject mismatched claims, unknown policy, stale/quarantined
-  histories and malformed counter deltas.
+      `transportPolicy`, default `legacy-threshold-v1`; validate the three exact policy
+      strings. Keep quarter-second windows required for both delay-aware policies.
+      Update existing callers in `native-quality-qualification.mjs`,
+      `measured-trial-policy.mjs`, `measured-recovery-policy.mjs`, and
+      `repeated-measured-policy.mjs` to name `sender-delay-v1` where they previously
+      passed true. Introduce the API first, then add behavioral-red tests in
+      `scripts/test/recovery-budget-pressure.test.mjs`, then implement identical
+      recovery-budget classification. Use raw counter/gauge fixtures with truthful
+      claimed pressure and reject mismatched claims, unknown policy, stale/quarantined
+      histories and malformed counter deltas.
 - [x] Run focused Node tests, all tooling tests and all app-model tests. Independently
-  replay the25 preserved retry-only rows as legacy elevated and recovery-budget
-  nominal (a diagnostic comparison, not retroactive run qualification). Review,
-  record results and commit. Keep current app format4 and production selection
-  unchanged until explicit admission/audit integration is ready.
+      replay the25 preserved retry-only rows as legacy elevated and recovery-budget
+      nominal (a diagnostic comparison, not retroactive run qualification). Review,
+      record results and commit. Keep current app format4 and production selection
+      unchanged until explicit admission/audit integration is ready.
 
 ## Evidence checkpoint
 

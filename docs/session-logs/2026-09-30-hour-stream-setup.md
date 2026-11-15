@@ -49,7 +49,6 @@ saved A/V decode/timestamps, audible content, quality duration/heat and continui
 Then stop backend by writing `stop\n` to exec87395, join owned processes and report
 acceptance accurately. A completed UI test alone is not whole-stream qualification.
 
-
 ## Active run and quality investigation (not final acceptance)
 
 User said ready. Runner73033 and monitor69435 active; backend87395 retained.
@@ -97,7 +96,6 @@ User reports the phone was USB charging with Apple clear case, then unplugged it
 Report received around07:54Pacific (~44min); actual unplug time is approximate.
 Treat later thermal recovery as an observational intervention, not controlled proof
 of charging/case causality. Capture continues unchanged.
-
 
 ## Final hour result and preserved media
 

@@ -30,11 +30,11 @@ All use the same private250–300s content remux,35s capture and real archive/SR
 proxy/both outputs. All preserve recording/publishing and select native hardware.
 Each artifact includes source HEAD/patch plus hashed `isolation-analysis.json`.
 
-| Artifact | Warmup / proxy | SDK / app drops | UHD receiver frames | Max PTS delta |
-| --- | --- | --- | --- | --- |
-| headless-native-fw3Zum |121candidate frames / VideoToolbox |0 /0 |786 |3000/90000 |
-| headless-native-LC8Cpq |17,534,384probe bytes / VideoToolbox |17 /0 |772 |6000/90000 |
-| headless-native-zDpc9c |17,460,688probe bytes / software |0 /0 |790 |3000/90000 |
+| Artifact               | Warmup / proxy                       | SDK / app drops | UHD receiver frames | Max PTS delta |
+| ---------------------- | ------------------------------------ | --------------- | ------------------- | ------------- |
+| headless-native-fw3Zum | 121candidate frames / VideoToolbox   | 0 /0            | 786                 | 3000/90000    |
+| headless-native-LC8Cpq | 17,534,384probe bytes / VideoToolbox | 17 /0           | 772                 | 6000/90000    |
+| headless-native-zDpc9c | 17,460,688probe bytes / software     | 0 /0            | 790                 | 3000/90000    |
 
 Candidate-only exec69955, probe/VT exec28797, probe/software exec60166 all joined0;
 cleanup arrays empty. Candidate-only producing patch predates moving baseline

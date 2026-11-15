@@ -33,7 +33,6 @@ retain their fixed RTT classification. Source windows remain 1–5.25 seconds.
       actual response timing, receipt binding and live-media gates. Record failures
       candidly, join owners, verify cleanup, hash terminal evidence and commit.
 
-
 ## Verified checkpoint
 
 Causal tests reproduce quarter-second rejection, missing-delay false health,

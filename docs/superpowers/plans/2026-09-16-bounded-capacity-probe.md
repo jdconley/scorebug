@@ -19,11 +19,9 @@
 
 Use no large media copies or new Apple build directories: available disk is about 12 GiB. Execute locally and sequentially. The caller's existing autonomous authorization covers this reversible experiment; no deployment or external broadcast occurs.
 
-
 The implementation also extracts bounded child-process ownership into `scripts/capacity-probe-process.mjs` with four real process fault/stop tests. All 1061 tooling tests pass, including 35 new policy/ownership tests. Review found a previous-stage loss-report hole and missing readable-pipe error handlers; causal regressions reproduce both, and targeted re-review confirms both fixes. New attempts retain explicit cumulative counter baselines; new discontinuities still withdraw immediately.
 
 Native observations now include sticky total message/discontinuity counters, and the final harness drains until all accepted baseline and probe messages are delivered. A measured baseline warm-up prevents the SRT startup RTT from being mistaken for constrained-link pressure. The earlier startup-only refusal is retained as an invalid experiment, not capacity evidence. A deliberate lease-renewal interruption verifies native probe withdrawal while baseline continues. Source snapshots and initial/final clock bridges accompany the authoritative run.
-
 
 ## Authoritative transport outcome
 

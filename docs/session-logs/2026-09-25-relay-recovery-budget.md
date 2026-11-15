@@ -8,12 +8,12 @@ Continues from `2b9214f` in the local-validation worktree. The previous session 
 
 Four isolated scenarios use the actual SRT publisher, MediaMTX relay and SRT reader. The controlled network fault drops one data packet and holds its retransmissions until approximately600ms after the drop; all target sequence/timing observations are retained. This models a delayed recovery, not the full constrained-bandwidth native experiment.
 
-| Scenario | Captured frames | Missing IDs within span | Pixel mismatches at original PTS |
-| --- | ---: | ---: | ---: |
-| Intact400ms | 359 | 0 | 0 |
-| Missing compressed reference400ms | 297 | 2 | 57 |
-| Delayed retransmission400ms | 297 | 2 | 53 |
-| Delayed retransmission1000ms | 299 | 0 | 0 |
+| Scenario                          | Captured frames | Missing IDs within span | Pixel mismatches at original PTS |
+| --------------------------------- | --------------: | ----------------------: | -------------------------------: |
+| Intact400ms                       |             359 |                       0 |                                0 |
+| Missing compressed reference400ms |             297 |                       2 |                               57 |
+| Delayed retransmission400ms       |             297 |                       2 |                               53 |
+| Delayed retransmission1000ms      |             299 |                       0 |                                0 |
 
 The damaged relay outputs emit no FFmpeg corruption warnings. This directly reproduces the silent damaged-video path through the actual relay. The1000ms case receives the delayed packet and matches every pixel checksum and frame ID in its captured span, with33.33ms timestamp spacing. Reader acquisition boundaries differ; these are captured-span comparisons, not proof of startup/tail completeness. The fixture is video-only and does not qualify native application adaptation, archive/audio, overlay/RTMP, or the full1.5-second delivery deadline.
 
@@ -33,7 +33,6 @@ Implemented in `c2e0973`. Focused JavaScript237/237 and full FilmModel618/618 pa
 
 The full native1000ms diagnostic started under wrapper session9675, log `repeated-live-checkpoint-owned-diagnostic-latency1000-20260925.log`. Exact environment is retained in `owned-latency1000-native-environment-20260925.json`; launch script `run-owned-latency1000-native-20260925.py`. Result pending. Inspect all three recordings and delivery evidence after the process joins. A short relay success alone does not justify production enablement.
 
-
 ## Native1000ms result: clean media, failed timing/progression
 
 `native-app-siloC2` and wrapper9675 joined with intentional diagnostic exit1; collection errors are empty, owned simulator/services cleaned. All three recordings decode. Archive has9276 sequential IDs0–9275; both live outputs have8845 identical sequential IDs221–9065, max video gap34ms. No missing/reversed IDs occur within any recorded span. Detailed probes, frame tables, raw barcode bytes, hashes and results are under `owned-recording-diagnostic/`.
@@ -50,7 +49,6 @@ The measured600ms retransmission and roughly435ms encoder delay suggest a700ms r
 
 The same explicit owned diagnostic option is being extended to exact700ms, retaining400/1000, all legacy contracts and unchanged deadlines. Focused tests/reviews precede another complete native experiment. The original1000ms failure is retained.
 
-
 ##700ms native run started
 
 Committed `85bc29e` passes250 focused JS tests and14 Swift fixture tests; both specification and quality reviews approve. The full618-test result remains the `c2e0973` baseline, not a rerun claim. Red/green logs and hashes are retained in `85bc29e-imported-verification-logs.json`.
@@ -58,7 +56,6 @@ Committed `85bc29e` passes250 focused JS tests and14 Swift fixture tests; both s
 Full native700ms experiment `native-app-7JYkdI` is active under wrapper86509, log `repeated-live-checkpoint-owned-diagnostic-latency700-20260925.log`. Exact environment and launcher use unique700 filenames. No phone test was started. Result pending; source/frame/deadline limits remain unchanged.
 
 A read-only audit of the original four-owner history found the telemetry needed for full owned qualification already exists. The next complete verifier must join original owner/campaign/revision indices across receiver, candidate, witness, application and retry policy evidence. A shared raw candidate validator is being extracted as a bounded prerequisite, preserving existing legacy envelope checks and adding no recovery authority or normal-runner bypass.
-
 
 ## 700 ms native result: clean A/V and score, uncertain timing
 
@@ -77,7 +74,6 @@ The next isolated test reruns the existing low-latency encoder request on instal
 Commit `551828f` extracts shared raw encoding, resources and A/V cost validation. The new entry requires explicit independent owner/source bindings, generation, transferred measurement ID, exclusion of the live encoder, and pinned SDK resource limits. It retains complete original 514-event mAluZi audit bytes and provenance. Both actual candidate measurements pass; mutated frame/audio/resource/session/time evidence rejects. Legacy version/envelope/pressure checks and return shape remain intact. No runner wiring or recovery/admission permission is added.
 
 Focused tests pass 55/55 and relevant regression suites 405/405. Independent spec review passes 144 tests and quality review 192; both approve. Logs and SHA-256 are retained in `551828f-imported-verification-logs.json`. Complete receiver/witness/application/retry joins remain open. Four-phase audio-anchor support is the next bounded prerequisite under implementation.
-
 
 ## Reviewed audio anchors and completed encoder experiments
 

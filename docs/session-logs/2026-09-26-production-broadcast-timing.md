@@ -27,13 +27,11 @@ Root app test run41827 covers CaptureStreamingModelTests,
 PublishingQualityDriverTests and PublishingDeliverySourceWindowTests. Spec review
 is read-only and ongoing; no capture active.
 
-
 All verification jobs joined:199app tests pass (115CaptureStreamingModel,
 48DeliverySourceWindow,36Driver),8Core timing boundary tests pass, DebugUI and
 Release arm64 device builds pass. Full current diagnostic stress4045bytes and
 pressure4091bytes remain under4096. Source/log hashes in verification.json.
 No media or recovery pass is inferred; source review is still required before run.
-
 
 Spec review approved four exact source blobs without blockers; quality review
 is now read-only against the same blobs. Retained strict constructor diagnostics

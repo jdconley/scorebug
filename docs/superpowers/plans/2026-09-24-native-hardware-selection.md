@@ -95,12 +95,12 @@ gate. Its failed second case is retained below.
 All four native sessions below report hardware selection after preparation. That
 is a cached session property, not per-frame utilization or proof of contention.
 
-| Proxy / case | Live frames | Archive frames | Median native call | Outcome |
-| --- | --- | --- | --- | --- |
-| VideoToolbox 1 | 360 | 360 | 0.194 ms | Pass |
-| VideoToolbox 2 | 348 | 360 | 33.444 ms | Fail; campaign stops |
-| CPU/libx264 control 1 | 360 | 360 | 0.215 ms | Pass |
-| CPU/libx264 control 2 | 360 | 360 | 0.225 ms | Pass |
+| Proxy / case          | Live frames | Archive frames | Median native call | Outcome              |
+| --------------------- | ----------- | -------------- | ------------------ | -------------------- |
+| VideoToolbox 1        | 360         | 360            | 0.194 ms           | Pass                 |
+| VideoToolbox 2        | 348         | 360            | 33.444 ms          | Fail; campaign stops |
+| CPU/libx264 control 1 | 360         | 360            | 0.215 ms           | Pass                 |
+| CPU/libx264 control 2 | 360         | 360            | 0.225 ms           | Pass                 |
 
 The failed case misses source frames 94, 98, 102, 105, 108, 112, 116, 120, 124,
 128, 239 and 296. Aligned seconds contain 30, 30, 30, 23, 27, 30, 30, 29, 30,

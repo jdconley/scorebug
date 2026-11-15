@@ -252,9 +252,10 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
   // The physical recovery lane already exposes a Node UDP forwarder on the
   // LAN. Its native Mac worker and forwarder can use the Docker loopback port,
   // avoiding Docker Desktop's failing LAN-bound UDP path on this machine.
-  const relayHost = options.physicalRecovery && options.publisherRecovery && !options.workerImage
-    ? '127.0.0.1'
-    : options.host;
+  const relayHost =
+    options.physicalRecovery && options.publisherRecovery && !options.workerImage
+      ? '127.0.0.1'
+      : options.host;
   if (options.workerImage !== undefined) {
     validateWorkerImage(options.workerImage);
     assert.equal(options.encoder, 'software');
@@ -405,8 +406,13 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
           async () => {
             if (relayStarted) {
               try {
-                const { stdout, stderr } = await execute('docker', ['logs', relayName], { timeout: 20000 });
-                await writeFile(join(artifact, 'relay.log'), stdout + stderr, { flag: 'wx', mode: 0o600 });
+                const { stdout, stderr } = await execute('docker', ['logs', relayName], {
+                  timeout: 20000,
+                });
+                await writeFile(join(artifact, 'relay.log'), stdout + stderr, {
+                  flag: 'wx',
+                  mode: 0o600,
+                });
               } finally {
                 await execute('docker', ['rm', '-f', relayName], { timeout: 20000 });
               }

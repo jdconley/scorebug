@@ -16,7 +16,7 @@ or process RSS have a mathematical upper bound.
 | AudioCodec output               |             64 |                                      64 KiB |                    4 MiB |
 | TSWriter output                 |             32 |                              2 MiB + 64 KiB |                   66 MiB |
 | TSWriter startup PES collection |            256 | Also subject to the 2 MiB payload preflight |          8 MiB aggregate |
-| TSWriter A/V interleaving | 256 | Also subject to the 2 MiB payload preflight | 8 MiB aggregate |
+| TSWriter A/V interleaving       |            256 | Also subject to the 2 MiB payload preflight |          8 MiB aggregate |
 
 The sum of these retained logical payload ceilings is **102 MiB**. Startup also
 has the existing two-second media-span limit. A 2 MiB compressed video item leaves

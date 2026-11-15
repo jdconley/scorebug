@@ -176,8 +176,6 @@ or deadline; and profile-success followed by guarded bitrate rejection. Tests
 must distinguish continued healthy publication from a partially applied change
 that requires joined shutdown.
 
-
-
 ## Required settlement after guarded rejection
 
 The Core transfer currently consumes `ownedMeasurement` in
@@ -223,7 +221,6 @@ owned application transfer. This is additional required work. The Core portion i
 app must still enforce actual joined cleanup and absence of an earlier native
 effect before using it.
 
-
 ## Native SDK checkpoint
 
 Explicit guarded bitrate and profile-replacement methods are implemented. They
@@ -265,7 +262,6 @@ changed to obtain the serial pass.
 This native checkpoint alone did not deliver guarded Media/Streaming APIs. The
 adapter checkpoint below now supplies them. PublishingSession safe-error handling,
 owned measurement integration and fresh full-media qualification remain open.
-
 
 ## Media and publisher-adapter checkpoint
 
@@ -312,7 +308,6 @@ PublishingSession timer/reservation handling, and the broader application owner.
 A successful profile mutation followed by a rejected bitrate write still requires
 joined shutdown by that broader owner. No automatic retry route is enabled here.
 
-
 ## Core transferred-application checkpoint
 
 Core now retains the exact measurement/application pair after transfer, separately
@@ -335,7 +330,6 @@ cases. All processes joined. Behavioral RED evidence exercised the former
 behavior before using the new API. Evidence:
 `artifacts/qa/transferred-application-core-{red,focused-final,full}-20260925.log`.
 Independent specification and quality reviews approve the Core-only checkpoint.
-
 
 ## PublishingSession checkpoint
 

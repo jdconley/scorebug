@@ -84,7 +84,14 @@ function sample(value) {
 function producer(value) {
   object(value);
   counter(value.frameIndex);
-  times(value, ['deadline', 'nominalDeadline', 'generationStart', 'generationEnd', 'callbackStart', 'callbackEnd']);
+  times(value, [
+    'deadline',
+    'nominalDeadline',
+    'generationStart',
+    'generationEnd',
+    'callbackStart',
+    'callbackEnd',
+  ]);
 }
 function consumer(value) {
   object(value);

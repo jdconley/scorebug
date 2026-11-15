@@ -18,7 +18,6 @@
 - [x] Run `SCOREBUG_TEST_DEADLINE_RESETS=1 SCOREBUG_TEST_DECODER_STALL=reset540` with the existing cadence fixture, 1500ms deadline,90s hold, blocks16 motion, slice decoding,400ms peer latency and relative pacing. Require healthy higher-profile delivery before the ownedpause; reject an unrelated earlier reset. Reconcile all raw deadlines and native/receiver transition frames, fully decode archive/live outputs, verify archive continuity/audio and join all owned processes. Preserve every previous artifact; new evidence prefix `deadline-profile-*`.
 - [x] Record the measured result and remaining gates, rehash source/runtime/evidence, and commit. A successful test qualifies the downward transition only; minimum-first startup followed by qualified upgrades, controlled recovery, actual candidate cost/headroom, reconnect/soaks, physical phone/Watch and remote workers remain open.
 
-
 ## Fault ownership refinement
 
 A fresh decoder sample immediately before `SIGSTOP` and another sample while the
@@ -30,7 +29,6 @@ must all remain valid at the pause; the paused anchor must match the resetting
 failure's associated native stall. This prevents an unrelated earlier stall from
 qualifying the reset. Failed reads before pause send no signal; failed reads during
 pause still resume the exact owned decoder in `finally`, with regression tests.
-
 
 ## Verified result
 

@@ -59,7 +59,6 @@ SCOREBUG_TEST_NATIVE_QUALITY=1 SCOREBUG_TEST_NATIVE_CONFIRMATION=1
 SCOREBUG_TEST_UPLINK_PROFILE=rate4m SCOREBUG_TEST_ADAPTIVE_PROFILES=1
 pnpm test:native-streaming`.
 
-
 ## Verified checkpoint
 
 The cached-read scaffold reproduced all missing demand-collection and lifecycle

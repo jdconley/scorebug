@@ -32,7 +32,6 @@ Files: `ios/Sources/Scorebug/Capture/NativeBandwidthProbeFixture.swift`, `ios/Fi
 - [x] Review spec then quality; run full streaming/model tests and ARM64 simulator plus unsigned combined iPhone/Watch Release. Preserve new-prefix evidence and earlier frozen artifacts, update main plan, commit.
 - [x] Document remaining independent verifier integration explicitly: current CLI only admits legacy renew/expire. Before any real staged run, extend sender, authenticated receiver collector, receiver interval verifier and CLI mode checks together, build the staged relay image, and test mutation rejection. Then qualify actual A/V plus independent archive, measured candidate cost, upward recovery and long-session campaigns. This checkpoint does not qualify those gates.
 
-
 ## Verified checkpoint
 
 Both publisher adapters now expose staged start and exact-identity replacement,

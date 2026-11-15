@@ -46,28 +46,28 @@ actual media encoder compatibility continues to require a real pipeline test.
 ## Tasks
 
 - [x] Add `worker-processing-windows.ts` and focused behavioral tests. A fixture feeds
-  two adjacent windows plus exact scalar histories; assert `(previous.lastPTS,lastPTS]`,
-  counts, pending-to-complete progression, immutable completed results, first-window
-  acquisition, gaps, changed/rewound windows, scope changes, invalid/ended state,
-  zero submissions and missing/evicted anchors. Run red, then green.
+      two adjacent windows plus exact scalar histories; assert `(previous.lastPTS,lastPTS]`,
+      counts, pending-to-complete progression, immutable completed results, first-window
+      acquisition, gaps, changed/rewound windows, scope changes, invalid/ended state,
+      zero submissions and missing/evicted anchors. Run red, then green.
 - [x] Add `snapshotProcessingWindow()` to the pipeline and integrate the collector
-  only with opt-in timing. Read decoder once per collector sample and use histories
-  from that same synchronous pipeline read. Extend real-child coverage for closure
-  and optional absence; default FFmpeg arguments stay unchanged.
+      only with opt-in timing. Read decoder once per collector sample and use histories
+      from that same synchronous pipeline read. Extend real-child coverage for closure
+      and optional absence; default FFmpeg arguments stay unchanged.
 - [x] Add `encoder-statistics-capability.ts`, config `WORKER_PROCESSING=auto|off`,
-  and startup enablement in `index.ts`. Test exact option detection, bounded output,
-  failure/timeout/cancellation cleanup, sanitized errors and config defaults. Ensure
-  shutdown cancels and joins the startup probe before process exit and no loops start
-  after shutdown. Unsupported binaries remain usable without extra options.
+      and startup enablement in `index.ts`. Test exact option detection, bounded output,
+      failure/timeout/cancellation cleanup, sanitized errors and config defaults. Ensure
+      shutdown cancels and joins the startup probe before process exit and no loops start
+      after shutdown. Unsupported binaries remain usable without extra options.
 - [x] Add a paced local processing command using an owned loopback HTTP source backed
-  by FFmpeg `-re`, with 24 seconds of regular source-coded A/V. Sample the production
-  pipeline every 100 ms; save raw windows/snapshots. Independently check actual source
-  PTS, adjacent window bounds, selected output IDs, counts and duration arithmetic.
-  Require at least two complete live processing windows with bounded histories.
-  Fully decode saved output and compare every barcode with expected cap selection.
-  Run CPU and VideoToolbox serially; unsupported hardware must fail honestly.
+      by FFmpeg `-re`, with 24 seconds of regular source-coded A/V. Sample the production
+      pipeline every 100 ms; save raw windows/snapshots. Independently check actual source
+      PTS, adjacent window bounds, selected output IDs, counts and duration arithmetic.
+      Require at least two complete live processing windows with bounded histories.
+      Fully decode saved output and compare every barcode with expected cap selection.
+      Run CPU and VideoToolbox serially; unsupported hardware must fail honestly.
 - [x] Run worker/typecheck/tool suites, independent review, preserve hashes and evidence,
-  update telemetry/runbook/parent plan, and commit the verified checkpoint.
+      update telemetry/runbook/parent plan, and commit the verified checkpoint.
 
 Next: additive negotiated API/native processing reports tied to existing age proofs,
 then classify current-load evidence from paced/overloaded runs and connect the native
@@ -85,11 +85,11 @@ inherited-pipe wrapper descendant. Independent review approves source and harnes
 
 Final paced fixture evidence under `artifacts/qa`:
 
-| Backend/source | Artifact | Source/output frames | Complete live windows |
-| --- | --- | --- | --- |
-| CPU 30 fps | `worker-processing-3xwOh4` | 720 / 720 | 2 |
-| VideoToolbox 30 fps | `worker-processing-tYulx7` | 720 / 720 | 2 |
-| CPU 60 fps | `worker-processing-McXMf4` | 1440 / 720 | 2 |
+| Backend/source      | Artifact                   | Source/output frames | Complete live windows |
+| ------------------- | -------------------------- | -------------------- | --------------------- |
+| CPU 30 fps          | `worker-processing-3xwOh4` | 720 / 720            | 2                     |
+| VideoToolbox 30 fps | `worker-processing-tYulx7` | 720 / 720            | 2                     |
+| CPU 60 fps          | `worker-processing-McXMf4` | 1440 / 720           | 2                     |
 
 Each final run independently checks exact frame selection and saved output barcodes,
 full A/V decoding, current adjacent window/source correspondence, raw count/duration

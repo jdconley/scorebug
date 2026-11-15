@@ -29,16 +29,15 @@ later authenticated setup-notice design; a rejected probe rules out that immedia
 route for this experiment without declaring physical hardware unsupported.
 
 - [x] Add gate regression tests: no opt-in/ineligible states, first eligible
-  attempt only, invalid request cannot reach production relay, deadline/clock
-  failure, duplicate/late callback and concurrent terminal claims.
+      attempt only, invalid request cannot reach production relay, deadline/clock
+      failure, duplicate/late callback and concurrent terminal claims.
 - [x] Implement gate, native DEBUG-only send and fixed inbound observation.
-  Keep callback epochs/peer revocation ahead of logging. Switch capped logs to
-  notice and explicitly enable the probe only in companion UI tests.
+      Keep callback epochs/peer revocation ahead of logging. Switch capped logs to
+      notice and explicitly enable the probe only in companion UI tests.
 - [x] Run Watch models; review; freeze sources; run one actual paired case using
-  the existing owned simulator harness. Inspect raw events, API counts and cleanup.
+      the existing owned simulator harness. Inspect raw events, API counts and cleanup.
 - [x] Verify combined Release build and absence of both opt-in keys/subsystem;
-  update plans with the actual result. Retain the previous failed paired attempt.
-
+      update plans with the actual result. Retain the previous failed paired attempt.
 
 ## Result: immediate route also rejected
 

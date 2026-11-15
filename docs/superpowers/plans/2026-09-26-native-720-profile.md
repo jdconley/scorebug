@@ -21,6 +21,7 @@ The ordinary 240/360 recovery route has two consecutive native/transport passes 
 ## 1. Add the shared recipe under behavioral tests
 
 Files:
+
 - Modify `ios/Packages/ScorebugMedia/Sources/ScorebugMedia/PublishingVideoProfile.swift`.
 - Test `ios/Packages/ScorebugStreaming/Tests/ScorebugStreamingTests/PublishingVideoProfileTests.swift`.
 - Test `ios/Packages/ScorebugMedia/Tests/ScorebugMediaTests/PublishingVideoProfileChangeTests.swift`.
@@ -56,6 +57,7 @@ DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer swift test --pac
 ## 2. Verify actual candidate output and bounded production planning
 
 Files:
+
 - Test `ios/Packages/ScorebugStreaming/Tests/ScorebugStreamingTests/PublishingCandidateEncoderTests.swift`.
 - Test `ios/FilmModelTests/NativeOwnedCandidatePublisherTests.swift`.
 

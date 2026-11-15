@@ -5,3 +5,6 @@ build
 pnpm-lock.yaml
 ios
 vendor/HaishinKit
+packages/protocol/fixtures/*.json
+# Prettier output for this file is not idempotent
+docs/superpowers/plans/2026-09-24-recovery-budget-probe.md

@@ -50,26 +50,26 @@ timer cannot forcibly terminate a blocked synchronous native API.
 ## Tasks and evidence
 
 - [x] Add receipt/API stubs and focused Media tests. Exercise invalid scalars,
-  inactive/cancelled/overlapping calls, healthy acceptance, historical retention,
-  native errors, mismatch/reused UUID/backward boundary, deadline expiry, stop and
-  caller cancellation during suspended writes, and stop joining late completion.
-  Use bounded gates; record behavioral red before implementation.
+      inactive/cancelled/overlapping calls, healthy acceptance, historical retention,
+      native errors, mismatch/reused UUID/backward boundary, deadline expiry, stop and
+      caller cancellation during suspended writes, and stop joining late completion.
+      Use bounded gates; record behavioral red before implementation.
 - [x] Implement `PublishingBitRateChange.swift`, MediaPublisher default method,
-  session-owned update/deadline tasks and snapshot history. Keep cancellation handlers
-  outside locks. Split locked shutdown creation from request entry so deadline and
-  completion checks are atomic with state transitions.
+      session-owned update/deadline tasks and snapshot history. Keep cancellation handlers
+      outside locks. Split locked shutdown creation from request entry so deadline and
+      completion checks are atomic with state transitions.
 - [x] Forward typed receipts through SRTPublisher and SRTMediaPublisher; preserve
-  the old setter and shared single-update gate. Extend existing adapter lifecycle
-  tests to check typed values and failure/stop/cancellation rejection.
+      the old setter and shared single-update gate. Extend existing adapter lifecycle
+      tests to check typed values and failure/stop/cancellation rejection.
 - [x] Use SRTMediaPublisher's typed path in the real dual-output fixture while
-  preserving its direct asynchronous append/drain semantics and all existing gates.
-  This qualifies the adapter with real encoding; controlled Media tests separately
-  qualify session task ownership. Do not invent a graceful session drain or bypass
-  the production ingress contract just to make a fixture pass.
+      preserving its direct asynchronous append/drain semantics and all existing gates.
+      This qualifies the adapter with real encoding; controlled Media tests separately
+      qualify session task ownership. Do not invent a graceful session drain or bypass
+      the production ingress contract just to make a fixture pass.
 - [x] Run Media/Streaming/tooling tests, both native suites and combined unsigned
-  iPhone/Watch Release build. Obtain bounded independent review, preserve evidence
-  hashes and raw events, document the ownership contract and remaining policy work,
-  then commit verified source.
+      iPhone/Watch Release build. Obtain bounded independent review, preserve evidence
+      hashes and raw events, document the ownership contract and remaining policy work,
+      then commit verified source.
 
 ## Files and commands
 
@@ -94,7 +94,6 @@ Commands use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`:
 Automatic quality control remains disabled until verified startup/application receipts
 are bound to policy acknowledgments and aligned source/pressure windows, followed by
 actual automatic trial/rollback qualification. Physical/radio/remote-host gates remain.
-
 
 ## Verified checkpoint
 

@@ -23,7 +23,10 @@ test('owned measurement can collect diagnostics but cannot enter the passing run
   assert.throws(() => selectOwned([]), /Owned recovery runner awaits its whole-history qualifier/);
   for (const invalid of ['', 'true', '0', 1, null])
     assert.throws(() => selectOwned(['--capacity-diagnostics'], invalid), /exact opt-in/);
-  assert.throws(() => selectOwned(['--capacity-diagnostics'], '1', false), /complete capacity route/);
+  assert.throws(
+    () => selectOwned(['--capacity-diagnostics'], '1', false),
+    /complete capacity route/,
+  );
 });
 const stages = ['stopStatus', 'saveStatus', 'stopWorker', 'stopUplink', 'finishRecorder'];
 async function workflow(operations) {

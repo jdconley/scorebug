@@ -16,7 +16,7 @@ No external broadcast or original/user recording deletion.
   failed before controlled impairment:240→360 trial at revision1, then240 reset at
   revision2. Original failure and `mediaQualified:false` are retained.
 - No impairment exchanges occurred. Reset cause was `missingCapacity,unknownPressure,
-  trialRollback`; thermal unknown, worker/transport nominal,150captured/encoded/received
+trialRollback`; thermal unknown, worker/transport nominal,150captured/encoded/received
   frames and zero reported source loss in the selected five-second interval.
   Last two-second delivery report had60on-time frames, no late/missing/uncertain frames.
   Measurement renewal rejected its changed policy/authority context. These observations
@@ -27,11 +27,11 @@ without altering its original. The matching attempt transition journal was also 
 `media-validation.json` binds all three saved files and records full strict A/V decode,
 frame timestamps and audio packet continuity. Each check passes:
 
-| File | Video | Maximum video gap | Audio gaps >5ms |
-| --- | --- | --- | --- |
-| Clean archive |1920×1080,4297frames,143.237s|35ms|0|
-| Proxy MP4 |1920×1080 canvas,3735frames,124.503s|33.356ms|0|
-| Mock RTMP MP4 |1920×1080 canvas,3735frames,124.503s|34ms|0|
+| File          | Video                                | Maximum video gap | Audio gaps >5ms |
+| ------------- | ------------------------------------ | ----------------- | --------------- |
+| Clean archive | 1920×1080,4297frames,143.237s        | 35ms              | 0               |
+| Proxy MP4     | 1920×1080 canvas,3735frames,124.503s | 33.356ms          | 0               |
+| Mock RTMP MP4 | 1920×1080 canvas,3735frames,124.503s | 34ms              | 0               |
 
 Proxy canvas resolution is not upload resolution: upload remained240p except the
 brief360p trial. Visual samples show the TV volleyball footage, no Scorebug overlay

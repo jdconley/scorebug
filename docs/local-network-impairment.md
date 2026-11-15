@@ -14,11 +14,11 @@ thermal pressure, or another host's encoder. Automatic stream quality remains of
 the existing probe explicitly changes live encoding from 6 to 2 Mbps after five
 seconds. Local recording keeps its independent settings.
 
-| Scenario | Forward path | Reverse path | Required outcome |
-| --- | --- | --- | --- |
-| Transparent | No rate cap, delay, or injected loss | Same | All archive and normal live gates |
-| Recoverable | 12 Mbps, 10 ms delay, drop every 100th datagram | 1 Mbps, 10 ms, drop every 80th | All archive and normal live gates; actual injected loss in both directions |
-| Overload | 3 Mbps, 10 ms, 32 KiB queue | 1 Mbps, 10 ms | Complete archive, actual bounded queue overflow; report live degradation separately |
+| Scenario    | Forward path                                    | Reverse path                   | Required outcome                                                                    |
+| ----------- | ----------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
+| Transparent | No rate cap, delay, or injected loss            | Same                           | All archive and normal live gates                                                   |
+| Recoverable | 12 Mbps, 10 ms delay, drop every 100th datagram | 1 Mbps, 10 ms, drop every 80th | All archive and normal live gates; actual injected loss in both directions          |
+| Overload    | 3 Mbps, 10 ms, 32 KiB queue                     | 1 Mbps, 10 ms                  | Complete archive, actual bounded queue overflow; report live degradation separately |
 
 Rates charge actual datagram length plus 28 bytes of IPv4/UDP headers. SRT headers
 are already inside the datagram. Each direction has a 16 KiB maximum token burst,

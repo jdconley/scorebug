@@ -29,15 +29,15 @@ loss cannot erase that known failure; native dispatch retains the existing attem
 revision, advice-expiry and acknowledgment checks.
 
 - [x] Core failure signal and direct-minimum decision with threshold, overlap,
-  stale/scope, minimum no-op, trial precedence and recovery-no-credit regressions.
+      stale/scope, minimum no-op, trial precedence and recovery-no-credit regressions.
 - [x] Native revocable context authority, classified-window adapter and owner
-  integration with tests for stale work, duplicates, context changes and teardown.
+      integration with tests for stale work, duplicates, context changes and teardown.
 - [x] Driver scheduling and evidence export; explicit fixture activation only.
-  Keep production automatic quality disabled until full qualification.
+      Keep production automatic quality disabled until full qualification.
 - [x] Independent review, required suites/builds and actual simulator fault run;
-  independently reconcile decisions with raw deadline evidence and archive output.
-  Freeze evidence and commit; qualify higher-profile writes/recovery separately
-  where this run cannot prove them.
+      independently reconcile decisions with raw deadline evidence and archive output.
+      Freeze evidence and commit; qualify higher-profile writes/recovery separately
+      where this run cannot prove them.
 
 ## Owner checkpoint
 
@@ -71,7 +71,6 @@ build-for-testing and unsigned combined iPhone/Watch Release builds. All 276 pri
 frozen evidence files remain unchanged. This checkpoint's source and evidence
 hashes are in `artifacts/qa/deadline-reset-final-verification.json`.
 
-
 ## Verified driver checkpoint
 
 The serialized driver now consumes the monitor's classified observations, with
@@ -88,7 +87,6 @@ with raw report deltas and the owned decoder pause, check freshness again at
 admission, and reject any action at the already-minimum profile. The first actual
 run qualifies minimum holds only. Higher-profile deadline-triggered writes,
 automatic recovery and candidate headroom remain separate gates.
-
 
 Actual simulator run `native-app-DcUNqI` now qualifies the isolated deadline path.
 The 2.051-second owned decoder pause produced one admitted one-second failure with

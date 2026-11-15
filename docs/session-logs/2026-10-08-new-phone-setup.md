@@ -95,13 +95,11 @@ Checkpoint committed8d7e138. First600-second combined setup `physical-recovery-i
 
 Rebuilding the documented maintained relay via `docker compose -f docker-compose.dev.yml build ingest`, session2114, log `new-phone-20261008/rebuild-ingest.log`. Uses pinned upstream/source checksums and cumulative patches; no historical image overwritten because tag absent. LAN remains192.168.1.130. Next: retry same combined setup after image build completes; no app rebuild/unchanged tests beyond harness incremental build.
 
-
 ## Relay rebuilt; password-saving offer blocks setup before capture
 
 Relay build session2114 joins0; maintained `scorebug/ingest:drain-v1` is available. Combined retry `physical-recovery-1MwykU`/session14447 joins1 after backend readiness but before any capture. After native Score joins HOME/AWAY and takes control, Film Setup is blocked by the observed 1Password Save Password? sheet with Not Now/Save actions. Screenshot `new-phone-20261008/combined-setup-failure.png` proves capture off. Lab `device-lab-1N9IFX` cleans up without failures; no live jobs or capture remain. This is setup interference, not a failed 1080p hold.
 
 Added a physical-test-only helper to decline precisely the observed password-save offer: exact title/body plus Save and hittable Not Now controls. Checks app and SpringBoard accessibility surfaces, never accepts saving or enters credentials. Called before reveal scrolling, avoiding attempts to scroll behind this sheet. Existing failed combined workflow supplies reproduction; next affected-only run verifies the change. User asked to dismiss the current offer manually as well. User reconfirmed no case; USB charging/moving volleyball/audio remain the qualification setup.
-
 
 Combined retry `physical-recovery-gPzChR`/session30554 joins1 before capture; cleanupFailures empty. No password-save dismissal attachment was emitted, so that helper is compiled but not yet exercised. Film connection and controller preflight completed. Failure screenshot `new-phone-20261008/combined-second-setup-failure.png` shows Checking saved recordings and disabled recording/quality controls; the 4K selector was unavailable. Added the same bounded90-second scan-ready wait before combined 4K selection. No integrity check removed or archive deleted. Next affected-only retry verifies this known readiness race, not an adaptive policy change.
 
@@ -117,7 +115,6 @@ Instrumented backend retry `physical-recovery-7bb9KA`/session81234 joins1 at the
 
 Startup-stage attempt `physical-recovery-NTQziR`/34953 and common-error attempt `physical-recovery-C193sP`/3048 both join1 at prepublication gate; cleanup[]. Neither newly instrumented JSON appears in device QA inventory. Built Scorebug.debug.dylib contains new controlFailure/streaming-failure strings, Debug/iOS flags correct and xctestrun target path correct. Explicit `devicectl device install app` of current build succeeds (session54011 joined0) without uninstalling/purging data. Stale test target install is a hypothesis pending the next controlled retry; do not claim it as root cause yet.
 
-
 ## Startup localized to Docker LAN UDP path
 
 Explicit-install retry `physical-recovery-0NbnOK`/session3232 joins1, cleanup[]. Newly added diagnostics now appear: publisherStart raises PublishingSessionError.startFailed; earlier control requests time out (NSURLErrorDomain/-1001). Actual4K recordingEB85D657 runs~36s, thermal nominal throughout. Native UDP forwarding snapshot receives/forwards3handshakes/276bytes, zero reverse packets and no injected/overflow/oversize loss. No receiver session or media-quality downgrade exists in this attempt.
@@ -130,7 +127,6 @@ Loopback retry `physical-recovery-UXBE2L`/17450 joins1 before capture: Streaming
 
 Reconciled retry `physical-recovery-psymmJ`/33476 reaches recording-requested, local-publishing-observed and initial-encoder-ack. Loopback correction removes the previously reproduced startup failure. Prior API restoration session23504 stopped after this fresh Film connection; preserves its SQLite state. Progressive ramp/hold/output evidence pending.
 
-
 ## Native 1080 ramp passes; combined hold sampling boundary corrected
 
 Reconciled `physical-recovery-psymmJ`/33476 joins1, cleanup[]. Actual app publishes, worker produces output; normal360/720/1080 increases each acknowledge/probate/confirm. Native score changes run. Before any confirmed1080 hold starts, direct XCTUnwrap of recoverySample gets nil because the preceding proof read was inside the existing2-second throttle; this is a test boundary bug, not an observed downgrade. Cleanup completes stream Stop, archive continuation and recording Stop. Exact3E9CEA02-92F2-4A6A-ABA5-3879E108AE28 native full export passes (`nativeExport:true`); sustained hold remains failed/unqualified.
@@ -142,7 +138,6 @@ Completed short native ramp resources from3E9CEA02:216.8s capture, thermal0/nomi
 Corrected `physical-recovery-3CIIBa` reaches confirmed1080-hold-started and first SCOREBUG_HOUR_PROGRESS seconds=0 quality=1080p30:6000000 after normal360/720/1080 acknowledgment/probation/confirmation. Initial throttled sampling boundary is now exercised successfully.600-second hold is running; final resource/geometry/native export/three-output media gates pending.
 
 `physical-recovery-3CIIBa` reports every30-second hold observation at1080p30:6000000 through570s, then confirmed1080-hold-complete/hour-hold-complete. Stream Stop and archive continuation finish, recording Stop requested. One live bounded resource snapshot shows active charging (batteryState2), thermal fair1, nominal camera pressure, footprint~134–141MiB. Final closed resource, geometry, native export and saved-media checks pending; no overall pass claim yet.
-
 
 ## Laptop-move stopping checkpoint
 

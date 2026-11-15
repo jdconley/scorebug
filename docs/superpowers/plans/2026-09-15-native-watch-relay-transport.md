@@ -40,8 +40,8 @@ Watch sender can wake its iOS counterpart in the background; the reverse directi
 does not wake the Watch. The receiving delegate must invoke its reply block even
 for rejected input. This supports immediate bounded failure replies at admission,
 then one owned async forwarding task for an accepted request. See
-[sendMessageData](https://developer.apple.com/documentation/watchconnectivity/wcsession/sendmessagedata(_:replyhandler:errorhandler:))
-and [the receiving delegate](https://developer.apple.com/documentation/watchconnectivity/wcsessiondelegate/session(_:didreceivemessagedata:replyhandler:)).
+[sendMessageData](<https://developer.apple.com/documentation/watchconnectivity/wcsession/sendmessagedata(_:replyhandler:errorhandler:)>)
+and [the receiving delegate](<https://developer.apple.com/documentation/watchconnectivity/wcsessiondelegate/session(_:didreceivemessagedata:replyhandler:)>).
 
 ## Implemented local request owner
 

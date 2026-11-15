@@ -11,44 +11,44 @@
 ## Core interval contract
 
 - [x] Add failing tests for 1–5 second receiver-clock intervals, exact local identity,
-  sender byte reconciliation, partial-message boundaries, clock-offset intersection,
-  monotonic counters, immutable first-delivery time, causal new delivery, quarantine,
-  evidence gaps, scope replacement, expiry, zero progress and duplicated reports.
+      sender byte reconciliation, partial-message boundaries, clock-offset intersection,
+      monotonic counters, immutable first-delivery time, causal new delivery, quarantine,
+      evidence gaps, scope replacement, expiry, zero progress and duplicated reports.
 - [x] Implement `WorkerReceiverProbeTracker.observe(evidence, acceptedPayloadBytes,
-  senderActive, at)` and `expire(at:)`. Keep one baseline, one high-water snapshot,
-  one clock-offset intersection and one current interval. Quarantine contradictions
-  until scope replacement or explicit owner reset; missing reports cannot wash them.
+senderActive, at)` and `expire(at:)`. Keep one baseline, one high-water snapshot,
+      one clock-offset intersection and one current interval. Quarantine contradictions
+      until scope replacement or explicit owner reset; missing reports cannot wash them.
 - [x] Require snapshot and last-delivery age <=1.5 seconds for usable progress.
-  A baseline may begin with zero messages. For complete-message delta D and P
-  already-seen baseline packets, conservative interval payload is `D*1316-P*188`;
-  ignore incomplete end packets. This is delivered load, not spare capacity.
+      A baseline may begin with zero messages. For complete-message delta D and P
+      already-seen baseline packets, conservative interval payload is `D*1316-P*188`;
+      ignore incomplete end packets. This is delivered load, not spare capacity.
 - [x] Retain original interval freshness when duplicate/new subsecond reports arrive;
-  neither may refresh historical evidence. Intersect all native receipt envelopes
-  with receiver elapsed time and reject disjoint clocks or overlapping requests.
+      neither may refresh historical evidence. Intersect all native receipt envelopes
+      with receiver elapsed time and reject disjoint clocks or overlapping requests.
 
 ## App owner binding
 
 - [x] Add tests before code for optional publisher observation, locally constructed
-  expectations, native-generation mismatch, late response during capture replacement,
-  expiry and teardown. Recording remains independent.
+      expectations, native-generation mismatch, late response during capture replacement,
+      expiry and teardown. Recording remains independent.
 - [x] Add a small app `PublishingProbeObserving` protocol and scalar observation;
-  SRTMediaPublisher and the existing DEBUG probe wrapper forward current native
-  snapshots. Do not move SDK-specific types into shared core/media.
+      SRTMediaPublisher and the existing DEBUG probe wrapper forward current native
+      snapshots. Do not move SDK-specific types into shared core/media.
 - [x] Capture model holds the optional observer in its publishing tuple, reads after
-  the status response to conservatively bound received bytes by sender acceptance,
-  rechecks lifecycle after await, and feeds/expires the tracker. A terminated or
-  expired native lease cannot provide usable intervals.
+      the status response to conservatively bound received bytes by sender acceptance,
+      rechecks lifecycle after await, and feeds/expires the tracker. A terminated or
+      expired native lease cannot provide usable intervals.
 
 ## Actual qualification and verification
 
 - [x] Export a bounded DEBUG history of actual native tracker intervals at joined
-  detach. Extend the existing probe fixture collector to retain and qualify it
-  against the independently saved authenticated receiver snapshots and native probe
-  identity. Missing evidence must fail this opt-in fixture.
+      detach. Extend the existing probe fixture collector to retain and qualify it
+      against the independently saved authenticated receiver snapshots and native probe
+      identity. Missing evidence must fail this opt-in fixture.
 - [x] Run core/model/harness tests, simulator test build and combined iPhone/Watch
-  Release build sequentially. Review correctness and fix demonstrated gaps.
+      Release build sequentially. Review correctness and fix demonstrated gaps.
 - [x] Run the finite native pressure fixture with marked probes and independently
-  verify clean archive/live media, receiver attribution and native intervals.
+      verify clean archive/live media, receiver attribution and native intervals.
 - [x] Save source/evidence hashes and outcomes, update the main plan and commit.
 
 The current one-probe-per-connection primitive still needs repeated/staged ownership

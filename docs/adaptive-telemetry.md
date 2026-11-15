@@ -598,7 +598,6 @@ also has actual confirmed native trials on the barcode and structured-motion sou
 with complete recording/live-video checks. Network impairment, longer adaptive
 soaks, production activation and physical/remote-host thresholds remain open.
 
-
 The [local-pressure fallback](superpowers/plans/2026-09-16-local-pressure-fallback.md)
 now supplies independent downward-only evidence to the simulator control loop when
 matched receiver evidence is unavailable. It exports raw bounded local histories

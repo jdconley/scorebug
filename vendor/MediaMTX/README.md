@@ -240,7 +240,6 @@ The independent 1080p archive and 540p live output decoded without source loss;
 all expected audio markers survived. This finite result does not qualify spare
 capacity, automatic quality increases, physical devices or remote deployments.
 
-
 ## Campaign probe wire foundation
 
 The cumulative `campaign-probe-v3` build adds explicit `SBUGPRB3` accounting while

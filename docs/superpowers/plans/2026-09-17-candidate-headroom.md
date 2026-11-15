@@ -22,23 +22,22 @@ This checkpoint qualifies a historical candidate-specific load relation only. Sa
 
 ## Tasks
 
-- [x] 1. Extend only staged-v2 probe ceiling consistently across native producer, relay parser, authenticated API, app snapshot validation and independent verifier. Add boundary tests for 12,000,000 accepted, 12,000,001 rejected, and unchanged v1 2,000,000/2,000,001 behavior. Exercise high-rate pacing, byte/time limits and revocation. Regenerate exact vendor patches; test real relay parser before building a fresh image tag.
-- [x] 2. Add the combined fixture route and explicit rate schedule, preserving legacy fixture behavior. Test composition/startup forwarding, final-stage readiness, wrong/retired authority, stop during readiness/sampling, bounded stage duration and exactly-once joined cleanup. Add environment parsing tests in Swift and Node before implementation.
-- [x] 3. Implement candidate-specific headroom evaluation and independent replay with mutation tests: real cost and message overhead, identity, clocks, stale candidate, stage replacement, duplicate/overlapping intervals, insufficient and sufficient sustained delivery. Require the existing media replay gates before this historical relation; report online media health and upgrade authorization as false. No inferred current-media capacity.
-- [ ] 4. Run fresh native combined trials with independent archive/live frame identity, audio markers, source intervals, pressure, exact mux replay and sender/receiver probe accounting. Include insufficient-headroom and withdrawn-probe cases; preserve failed runs without editing their evidence. Investigate causes before changing thresholds.
-- [x] 5. Obtain spec and quality review. Run affected Swift, Node, API and Go suites, simulator and unsigned phone/Watch builds, provenance and image checks. Hash source/runtime/evidence, verify prior frozen artifacts unchanged, update the main plan and commit. The subsequent milestone connects runtime admission to upward trials/recovery; keep the full goal active.
+- [x]   1. Extend only staged-v2 probe ceiling consistently across native producer, relay parser, authenticated API, app snapshot validation and independent verifier. Add boundary tests for 12,000,000 accepted, 12,000,001 rejected, and unchanged v1 2,000,000/2,000,001 behavior. Exercise high-rate pacing, byte/time limits and revocation. Regenerate exact vendor patches; test real relay parser before building a fresh image tag.
+- [x]   2. Add the combined fixture route and explicit rate schedule, preserving legacy fixture behavior. Test composition/startup forwarding, final-stage readiness, wrong/retired authority, stop during readiness/sampling, bounded stage duration and exactly-once joined cleanup. Add environment parsing tests in Swift and Node before implementation.
+- [x]   3. Implement candidate-specific headroom evaluation and independent replay with mutation tests: real cost and message overhead, identity, clocks, stale candidate, stage replacement, duplicate/overlapping intervals, insufficient and sufficient sustained delivery. Require the existing media replay gates before this historical relation; report online media health and upgrade authorization as false. No inferred current-media capacity.
+- [ ]   4. Run fresh native combined trials with independent archive/live frame identity, audio markers, source intervals, pressure, exact mux replay and sender/receiver probe accounting. Include insufficient-headroom and withdrawn-probe cases; preserve failed runs without editing their evidence. Investigate causes before changing thresholds.
+- [x]   5. Obtain spec and quality review. Run affected Swift, Node, API and Go suites, simulator and unsigned phone/Watch builds, provenance and image checks. Hash source/runtime/evidence, verify prior frozen artifacts unchanged, update the main plan and commit. The subsequent milestone connects runtime admission to upward trials/recovery; keep the full goal active.
 
 Worktree: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Apple toolchain: `/Applications/Xcode-26.2.0.app/Contents/Developer`. Heavy jobs are sequential and parent-owned. Evidence prefix `candidate-headroom-`; never rewrite earlier QA helpers, logs or manifests. No external broadcast, deployment or license acceptance.
-
 
 ## Checkpoint results
 
 Two fresh combined iOS 17.5 simulator runs pass the independent replay gates:
 
 | Candidate | Accounted A/V transport cost | Required padding delivery (25% margin) | Minimum of two delivered intervals | Archive/live saved frames |
-| --- | ---: | ---: | ---: | ---: |
-| 360p30 | 4.072 Mbps | 5.090 Mbps | 10.024 Mbps | 3,668 / 3,262 |
-| 1080p30 | 7.405 Mbps | 9.257 Mbps | 9.770 Mbps | 3,666 / 3,261 |
+| --------- | ---------------------------: | -------------------------------------: | ---------------------------------: | ------------------------: |
+| 360p30    |                   4.072 Mbps |                             5.090 Mbps |                        10.024 Mbps |             3,668 / 3,262 |
+| 1080p30   |                   7.405 Mbps |                             9.257 Mbps |                         9.770 Mbps |             3,666 / 3,261 |
 
 Each candidate contains 121 consecutive frames over four source seconds. The
 archive and live saved ranges remain consecutive at approximately 30 fps; all
@@ -64,7 +63,6 @@ Next connect a candidate-specific measured admission type to fresh online health
 and the owned profile trial/rollback path. Do not put whole-stream measured cost
 into the existing nominal-video `usableVideoCapacity` field. Run controlled
 negative native campaigns before enabling production automatic increases.
-
 
 Checkpoint verification passes 270 SDK, 398 Core, 139 Streaming, 327 native model,
 480 API and 1,902 tooling tests, type checking, formatting, clean simulator and

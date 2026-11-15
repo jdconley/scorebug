@@ -16,7 +16,6 @@
 - [x] Replay actual prior FFmpeg/HTTP packets through Swift with explicit fixture publication binding, compare exact reconstructed history and metrics, and retain that binding limitation. Run Core/model suites, simulator and unsigned iPhone/Watch Release builds.
 - [x] Independently review and fix findings; update main plan, preserve previous evidence, freeze new source/evidence hashes and commit.
 
-
 ## Verified checkpoint
 
 The native packet/history implementation matches the TypeScript delta protocol,

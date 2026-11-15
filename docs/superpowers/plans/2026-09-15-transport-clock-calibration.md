@@ -44,23 +44,23 @@ sessions or reconnections.
 `apps/home-daemon/src/pipeline.ts` (`buildFfmpegArgs`), `scripts/media-frame-codes.mjs`.
 
 - [x] Generate short 640x360/30 H.264/AAC MPEG-TS streams with known video identities,
-  no B-frames and one-second keyframes. Cover ordinary transport lead, a nonzero
-  origin, and a stream spanning the 33-bit wrap. Preserve input commands/version.
+      no B-frames and one-second keyframes. Cover ordinary transport lead, a nonzero
+      origin, and a stream spanning the 33-bit wrap. Preserve input commands/version.
 - [x] Produce a late-acquisition suffix by cutting actual TS packets at the repeated
-  PAT preceding a later keyframe, without remuxing or changing timestamp bits.
+      PAT preceding a later keyframe, without remuxing or changing timestamp bits.
 - [x] Independently parse video PES PTS from TS packet headers, rejecting malformed
-  sync/adaptation/PES/timestamp marker bytes. Bound retained fixture arrays/files.
-  Compare ffprobe decoded PTS modulo 2^33 with the wire PTS and retained identities.
+      sync/adaptation/PES/timestamp marker bytes. Bound retained fixture arrays/files.
+      Compare ffprobe decoded PTS modulo 2^33 with the wire PTS and retained identities.
 - [x] Run the production worker and an otherwise identical `-copyts` candidate,
-  sequentially, using the existing fd3 parser. Record all PTS arrays and compare
-  candidate decoder PTS modulo 2^33 to the original wire values for every frame.
-  Record current-command differences without relabeling them as source loss.
+      sequentially, using the existing fd3 parser. Record all PTS arrays and compare
+      candidate decoder PTS modulo 2^33 to the original wire values for every frame.
+      Record current-command differences without relabeling them as source loss.
 - [x] Decode output frame identities and probe output A/V start/end times for both
-  commands. Any changed media continuity is a finding, not permission to relax gates.
-  Keep all artifacts/results under a unique `artifacts/qa/transport-clock-*` directory.
+      commands. Any changed media continuity is a finding, not permission to relax gates.
+      Keep all artifacts/results under a unique `artifacts/qa/transport-clock-*` directory.
 - [x] Run with the host FFmpeg first. Require actual process completion, record failure
-  details and exact commands, and preserve partial evidence on failure. No services,
-  external network, Apple builds or long real-time holds are needed.
+      details and exact commands, and preserve partial evidence on failure. No services,
+      external network, Apple builds or long real-time holds are needed.
 
 Command: `pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-transport-clock.mjs`.
 Expected: complete evidence and explicit pass/fail per mapping candidate. An unsupported
@@ -69,11 +69,11 @@ candidate is a useful negative result; it must not be reported as qualification.
 ## Task 2: Review and choose the next production boundary
 
 - [x] Compare evidence with code: native common-origin calculation, Double-to-90k
-  quantization, signed demux wrap handling, and worker input timestamp adjustment.
+      quantization, signed demux wrap handling, and worker input timestamp adjustment.
 - [x] Obtain independent specification then quality review of the fixture and claims.
 - [x] Record exact measured invariants and limits in this plan and link from
-  `docs/adaptive-telemetry.md`. Select the next concrete source-anchor integration
-  from that evidence. Keep automatic quality changes disabled.
+      `docs/adaptive-telemetry.md`. Select the next concrete source-anchor integration
+      from that evidence. Keep automatic quality changes disabled.
 
 The user's standing authorization covers these local experiments and engineering
 choices. This plan does not require another approval checkpoint.
@@ -103,7 +103,6 @@ loss estimator must count matching source intervals (with explicit acquisition,
 restart and profile-transition boundaries), not infer a denominator from just each
 window's first/last PTS. Keep the existing wall-time cadence/age evidence separately.
 
-
 ## Experimental findings before integration
 
 The first host run (`transport-clock-GvtP86`) completed characterization but exited 1
@@ -126,7 +125,6 @@ wire and -126,000 after demux, so signed numeric equality would be an incorrect 
 The final qualifier must name the passing candidate explicitly and exit 0 only when
 all its mapping and media gates pass. Known-unsuitable comparison candidates remain
 reported failures, not hidden exclusions. Final host and Linux CPU evidence follows below. No production worker flags have changed.
-
 
 ## Final host and portable CPU evidence
 
@@ -168,7 +166,6 @@ with its explicit frame-rate cap, retaining regression coverage for 25/30/60 fps
 missing frames, acquisition gaps and real native SRT input. A source-interval loss
 estimator and profile-transition boundaries still follow; the current wall-time
 aggregates cannot become exact source-loss counts merely by attaching an anchor.
-
 
 Independent specification and quality reviews approve the finite fixture and evidence.
 Review checks include actual TS timestamp bytes, byte-identical late suffixes, saved

@@ -41,34 +41,34 @@ a separate physical-device gate.
 ## Ordered work
 
 - [x] Define an explicit trusted opt-in fixture option and its memory/content
-  contract. Reject malformed settings before starting owned resources. Plumb it
-  through the runner, Xcode test environment, native UI launch and DEBUG simulator
-  source selection; absent options preserve the old source. Record selected
-  workload in the artifact configuration.
+      contract. Reject malformed settings before starting owned resources. Plumb it
+      through the runner, Xcode test environment, native UI launch and DEBUG simulator
+      source selection; absent options preserve the old source. Record selected
+      workload in the artifact configuration.
 - [x] TDD the deterministic source: stable seeded initialization, changing central
-  image area, unchanged identity bands/static overlay crop, immutable published
-  frames, correct NV12 layout/PTS/audio, bounded retained data and joined stop.
-  Include scaled test profiles, while actual workload qualification uses 1080p30.
+      image area, unchanged identity bands/static overlay crop, immutable published
+      frames, correct NV12 layout/PTS/audio, bounded retained data and joined stop.
+      Include scaled test profiles, while actual workload qualification uses 1080p30.
 - [x] Measure actual encoded video payload rates from packet sizes and media
-  timestamps in both finalized outputs. Keep audio/container overhead separate.
-  Exclude acquisition/partial boundaries explicitly; report steady-window rates
-  and retain exact measurement scope. Unit-test packet accounting, invalid/empty
-  intervals, mixed streams and timestamp handling. Never treat configured bitrate
-  as measured throughput.
+      timestamps in both finalized outputs. Keep audio/container overhead separate.
+      Exclude acquisition/partial boundaries explicitly; report steady-window rates
+      and retain exact measurement scope. Unit-test packet accounting, invalid/empty
+      intervals, mixed streams and timestamp handling. Never treat configured bitrate
+      as measured throughput.
 - [ ] Run a short isolated calibration experiment, keeping all current frame,
-  A/V, scoring, archive and delivery gates. Target sustained video payload rates
-  near the existing 12/6 Mbps configuration; initially assess whether at least 6/3 Mbps
-  is achievable without the generator missing its own deadlines. These are workload
-  calibration targets, not product quality guarantees. If payload stays low or
-  generation stalls, inspect the measured cause before selecting a workload.
+      A/V, scoring, archive and delivery gates. Target sustained video payload rates
+      near the existing 12/6 Mbps configuration; initially assess whether at least 6/3 Mbps
+      is achievable without the generator missing its own deadlines. These are workload
+      calibration targets, not product quality guarantees. If payload stays low or
+      generation stalls, inspect the measured cause before selecting a workload.
 - [ ] Freeze and review the measured workload and acceptance criteria. Run a
-  three-minute hold, then 600 seconds if it passes. Full decode, complete archive
-  identities, live terminal delivery, zero recording rejections/drops, clock/age
-  integrity and unchanged cadence gates remain required. Preserve all failures.
+      three-minute hold, then 600 seconds if it passes. Full decode, complete archive
+      identities, live terminal delivery, zero recording rejections/drops, clock/age
+      integrity and unchanged cadence gates remain required. Preserve all failures.
 - [ ] Record exact revision, selected workload, encoded payload rates, retained
-  pressure evidence and limitations. Do not enable automatic quality changes or
-  higher device profiles on this evidence alone. Continue to actual camera and
-  Watch/phone testing when hardware is reachable.
+      pressure evidence and limitations. Do not enable automatic quality changes or
+      higher device profiles on this evidence alone. Continue to actual camera and
+      Watch/phone testing when hardware is reachable.
 
 The conditional prerequisite now passes in `native-app-6o9S2U` at `a49408c`.
 Independent design, specification and quality reviews approve the implemented workload.
@@ -153,7 +153,6 @@ A real ffprobe metadata smoke check against `native-app-OCNlMh` succeeds:
 measure 0.076717 Mbps. These exclude audio/container overhead and are not wire rates.
 Metadata and calculations are retained in `artifacts/qa/motion-payload-baseline/`.
 The first native motion calibration failed; it is not qualified. See the evidence below.
-
 
 ## First native motion calibration: failed
 

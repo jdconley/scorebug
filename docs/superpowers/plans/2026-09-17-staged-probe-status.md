@@ -21,7 +21,6 @@
 
 This establishes authenticated identity and revocation, not measured spare capacity or an automatic upgrade decision. A real staged SRT experiment still requires the native replacement API, cumulative sender budgets and media qualification. Fresh candidate encoding cost, recovery, physical device routes and remote workers remain required by the main plan.
 
-
 ## Verified checkpoint
 
 The API and shared Core now validate v2 without erasing stage identity; the app

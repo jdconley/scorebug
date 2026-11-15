@@ -123,7 +123,6 @@ The long-running runtime must be separated from finite laboratory evidence stora
 - Copied only the newly created phone recording378035D3-F9DE-4963-904C-4358C1B607CF. Native completedAt exists; all89segmentmetadata/payload lengths/SHA256 agree. Concatenated unchanged fragments into diagnostic-only `phone-fragment-diagnostic.mp4`; fullA/V decodeexit0. This is not a native export or complete paired acceptance. Phone originalrecordings retained.
 - Do not attempt another physical retry until a useful device-readiness change/userreply. Pending question about additional prompts remains unanswered; no password requested or collected.
 
-
 ## Continuation: 1000 ms retransmission experiment and interval replay
 
 - Native experiment `native-app-D4EhKU`, launched at `c62cf61` with explicit `broadcast-reliability2000-v1` and1000ms SRT, joined root14560 with intentional diagnosticexit1. UI workflow passed1/0 in364seconds; collectionerrors empty, one uninterrupted recorder session, coherent timing metadata. Original prepared source and fault schedule unchanged. All owned simulator cleanup completed.

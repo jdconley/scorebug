@@ -22,10 +22,10 @@ No media timestamps, encoder defaults, archive or adaptive policy changed.
 ## Verification
 
 - Red: `pnpm --filter @scorebug/home-daemon exec vitest run
-  test/pipeline-process.test.ts -t 'keeps encoder descriptor'`: three failures,
+test/pipeline-process.test.ts -t 'keeps encoder descriptor'`: three failures,
   each actual `EPIPE` rather than expected final write.
 - Green: same package, `vitest run test/pipeline-process.test.ts
-  test/pipeline-terminal-failure.test.ts`:45passed in15seconds, process97296 exit0.
+test/pipeline-terminal-failure.test.ts`:45passed in15seconds, process97296 exit0.
 - Worker typecheck initially caught a missing `Promise<void>` JSDoc annotation;
   corrected, `pnpm --filter @scorebug/home-daemon typecheck` passed,80947 joined0.
 - Changed source/tests formatted; `git diff --check` passed.

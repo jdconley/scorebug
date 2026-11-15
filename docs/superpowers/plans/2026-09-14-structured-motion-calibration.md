@@ -20,12 +20,12 @@ identity and score backgrounds, and re-encode through local VideoToolbox. Each
 case has 300 packets in two complete five-second windows. They establish a candidate
 workload, not native or transport qualification:
 
-| Spatial treatment | Cell | Requested 6 Mbps | Requested 12 Mbps |
-| --- | --- | --- | --- |
-| Area average, then nearest expansion | 8 | 6.071880 | 12.108207 |
-| Area average, then nearest expansion | 16 | 5.825442 | 8.565807 |
-| Point sample, then nearest expansion | 8 | 12.521762 | 12.655786 |
-| Point sample, then nearest expansion | 16 | 6.260794 | 12.062671 |
+| Spatial treatment                    | Cell | Requested 6 Mbps | Requested 12 Mbps |
+| ------------------------------------ | ---- | ---------------- | ----------------- |
+| Area average, then nearest expansion | 8    | 6.071880         | 12.108207         |
+| Area average, then nearest expansion | 16   | 5.825442         | 8.565807          |
+| Point sample, then nearest expansion | 8    | 12.521762        | 12.655786         |
+| Point sample, then nearest expansion | 16   | 6.260794         | 12.062671         |
 
 All values are measured video payload Mbps, excluding audio/container/transport
 bytes. Artifacts: `native-app-KIC4hs/structured-replay-95GnNt` and
@@ -38,57 +38,57 @@ color/contrast variation while staying near both requested rates in this experim
 ## Explicit pattern selection
 
 - [x] Preserve absent/empty native flag as the original barcode source. Preserve
-  `SCOREBUG_TEST_MOTION_FIXTURE=1` as the existing pixel-noise mode, including exact
-  texture bytes and seed. Add one explicit value, `blocks16`, for the new pattern.
-  This intentionally extends the original single-value flag contract; no other
-  nonempty spelling is accepted. Runner explicit empty remains invalid.
+      `SCOREBUG_TEST_MOTION_FIXTURE=1` as the existing pixel-noise mode, including exact
+      texture bytes and seed. Add one explicit value, `blocks16`, for the new pattern.
+      This intentionally extends the original single-value flag contract; no other
+      nonempty spelling is accepted. Runner explicit empty remains invalid.
 - [x] Record `fixtureWorkload: motion-blocks16` for the new value; keep `motion`
-  and `barcode` labels unchanged for existing artifacts. Validate both enabled
-  patterns before resources and require streaming plus the direct receiver.
-  Pass the validated flag through Xcode/UITest/app without collapsing it to 1.
-  Release and physical-camera source selection remain unchanged.
+      and `barcode` labels unchanged for existing artifacts. Validate both enabled
+      patterns before resources and require streaming plus the direct receiver.
+      Pass the validated flag through Xcode/UITest/app without collapsing it to 1.
+      Release and physical-camera source selection remain unchanged.
 
 ## Bounded source implementation
 
 - [x] Add a typed pattern selection inside the DEBUG fixture implementation.
-  Existing callers/tests default to pixel noise; the camera selects the explicit
-  blocks16 pattern only after flag validation during prepare.
+      Existing callers/tests default to pixel noise; the camera selects the explicit
+      blocks16 pattern only after flag validation during prepare.
 - [x] Generate the same eight seeded NV12 noise textures as before, then transform
-  each texture in place during prepare for blocks16. Retain the 32 MiB checked
-  ceiling and 24,883,200 byte 1080p total; do not allocate another image or generate
-  pixels after the capture clock starts. A few scalar cell samples are sufficient.
+      each texture in place during prepare for blocks16. Retain the 32 MiB checked
+      ceiling and 24,883,200 byte 1080p total; do not allocate another image or generate
+      pixels after the capture clock starts. A few scalar cell samples are sufficient.
 - [x] Treat luma as 16×16 pixel cells within the existing central band, starting at
-  that band's lower row. Use the center sample at start + floor(clipped length / 2) on each axis
-  (the upper middle for even lengths) from each clipped cell,
-  and repeat its value across that cell. For NV12 chroma, use 8 rows×8 UV-pair cells
-  (same physical 16×16 pixels), sample U and V separately and repeat each pair.
-  Clip at width/band boundaries and respect the existing protected chroma boundary
-  pairs. No averaging, colorspace change or writes outside the allowed rows.
+      that band's lower row. Use the center sample at start + floor(clipped length / 2) on each axis
+      (the upper middle for even lengths) from each clipped cell,
+      and repeat its value across that cell. For NV12 chroma, use 8 rows×8 UV-pair cells
+      (same physical 16×16 pixels), sample U and V separately and repeat each pair.
+      Clip at width/band boundaries and respect the existing protected chroma boundary
+      pairs. No averaging, colorspace change or writes outside the allowed rows.
 - [x] Preserve source PTS, audio, callback order, fresh output buffer ownership,
-  destination strides, joined stop, raw queue capacities and encoder settings.
-  Test small even dimensions with partial cells and odd band boundaries as well
-  as 1080p; all barcode/scoring pixels remain unchanged.
+      destination strides, joined stop, raw queue capacities and encoder settings.
+      Test small even dimensions with partial cells and odd band boundaries as well
+      as 1080p; all barcode/scoring pixels remain unchanged.
 
 ## Tests and native calibration
 
 - [x] Red/green tests: exact original-mode bytes remain unchanged; malformed flags
-  fail; each luma/chroma cell is constant with independent UV; center sampling and
-  clipped cells agree with original seeded noise; frames/seed vary; static regions
-  and prior emitted buffers remain intact. Cover new runner/UITest flag mapping.
+      fail; each luma/chroma cell is constant with independent UV; center sampling and
+      clipped cells agree with original seeded noise; frames/seed vary; static regions
+      and prior emitted buffers remain intact. Cover new runner/UITest flag mapping.
 - [x] Run focused source, full Film, focused/full tools and combined iPhone/Watch
-  Release build, then independent specification and quality reviews.
+      Release build, then independent specification and quality reviews.
 - [x] Run the same short native workflow with explicit `blocks16`. Keep every
-  existing frame-identity/cadence, A/V marker/coverage, native scoring, clean
-  archive, report-age and terminal-delivery gate unchanged. Record exact revision,
-  workload, per-window payload and bounded diagnostic scope; preserve failures.
+      existing frame-identity/cadence, A/V marker/coverage, native scoring, clean
+      archive, report-age and terminal-delivery gate unchanged. Record exact revision,
+      workload, per-window payload and bounded diagnostic scope; preserve failures.
 - [x] Review the measured native workload before freezing acceptance. Existing
-  initial 6/3 Mbps archive/live demand targets are calibration observations only;
-  also examine upper rates against 12/6 Mbps settings. Never infer a hard bitrate
-  ceiling, wire throughput or visual quality from those settings.
+      initial 6/3 Mbps archive/live demand targets are calibration observations only;
+      also examine upper rates against 12/6 Mbps settings. Never infer a hard bitrate
+      ceiling, wire throughput or visual quality from those settings.
 - [ ] Only after calibration passes, freeze the workload contract and run 180 then
-  600 second holds. Physical devices, real sports footage, thermal testing and
-  network impairment remain separate gates. Original high-rate corruption and
-  shutdown/delivery behavior remain an open overload diagnosis.
+      600 second holds. Physical devices, real sports footage, thermal testing and
+      network impairment remain separate gates. Original high-rate corruption and
+      shutdown/delivery behavior remain an open overload diagnosis.
 
 ## Missing diagnostic boundary
 
@@ -104,7 +104,6 @@ never perform file I/O in capture callbacks or silently change transport policy.
 Independent design review approves this separate calibration candidate.
 Source and tooling are implemented; the first short native blocks16 calibration passes as recorded below.
 
-
 ## Tooling verification
 
 The runner accepts the exact new `blocks16` spelling, records `motion-blocks16`
@@ -114,7 +113,6 @@ as expected; green passes 37 tests and the full tooling suite passes 355, both w
 normal exit 0. The runner syntax check and independent specification review pass.
 Evidence: `artifacts/qa/structured-motion-options-{red,green,format}.log` and
 `structured-motion-tools.log`. Native verification is recorded below.
-
 
 ## Native source verification
 
@@ -129,7 +127,6 @@ diagnostics and actual recording/export. The combined unsigned iPhone/Watch
 Release build passes. Logs are under `artifacts/qa/structured-motion-source-{red,green}.log`,
 `structured-motion-film-full.log` and `structured-motion-release.log`.
 Combined specification and independent quality reviews approve with no findings.
-
 
 ## Short native calibration at a4a5c25: passed
 

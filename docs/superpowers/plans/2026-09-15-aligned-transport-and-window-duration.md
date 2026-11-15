@@ -42,23 +42,23 @@ acknowledgment, freshness and pressure thresholds.
 ## Tasks
 
 - [x] Core regressions: measured 5.000622/5.001985-second healthy windows accepted;
-  5.25 allowed, >5.25 rejected; actual-rate floor still reduces; 150-frame 5.25-second
-  windows never accumulate strong recovery; jittered contiguous windows accumulate
-  actual elapsed recovery and post-ack confirmation. Then expose documented duration
-  bound and implement the validation change.
+      5.25 allowed, >5.25 rejected; actual-rate floor still reduces; 150-frame 5.25-second
+      windows never accumulate strong recovery; jittered contiguous windows accumulate
+      actual elapsed recovery and post-ack confirmation. Then expose documented duration
+      bound and implement the validation change.
 - [x] Media API stubs and behavioral tests for fractional/nonuniform bounds,
-  left-held gauges, exact wide enclosing deltas, edge sample maxima, missing/bracketing
-  coverage, gaps, eviction, duplicate readings, quarantine, immutable/closed history,
-  and finite extreme RTT. Implement in PublishingTransportWindow.swift and expose
-  retained ordered samples/query through PublishingTransportStatisticsSnapshot.
+      left-held gauges, exact wide enclosing deltas, edge sample maxima, missing/bracketing
+      coverage, gaps, eviction, duplicate readings, quarantine, immutable/closed history,
+      and finite extreme RTT. Implement in PublishingTransportWindow.swift and expose
+      retained ordered samples/query through PublishingTransportStatisticsSnapshot.
 - [x] Native fixture: retain the monitor's validated tracker via a small synchronized
-  scalar owner, close after joined monitor stop, export retained samples and per-source
-  probe interval results. Source probe boundaries remain explicitly finite-fixture
-  endpoints. Independently reconstruct query results from native collections in Node;
-  add malformed-evidence tests before implementation. Preserve existing native gates.
+      scalar owner, close after joined monitor stop, export retained samples and per-source
+      probe interval results. Source probe boundaries remain explicitly finite-fixture
+      endpoints. Independently reconstruct query results from native collections in Node;
+      add malformed-evidence tests before implementation. Preserve existing native gates.
 - [x] Run full Core/Media/Streaming/tooling tests, both native suites, arm64_32 watchOS
-  10 Core compile and combined unsigned iPhone/Watch Release. Obtain bounded source
-  review, preserve evidence/hashes, update docs and commit verified changes.
+      10 Core compile and combined unsigned iPhone/Watch Release. Obtain bounded source
+      review, preserve evidence/hashes, update docs and commit verified changes.
 
 Files: QualityController.swift and QualityTrialTests.swift in ScorebugCore;
 PublishingTransportWindow.swift, PublishingTransportStatistics.swift and

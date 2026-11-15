@@ -170,7 +170,6 @@ Durable match identity is now connected to worker reconciliation/status. The
 remaining adversarial integration audit and device acceptance are tracked in the
 delivery plan; the legacy publishing scaffold still has a separate in-memory lifecycle.
 
-
 ## Focused native recovery verification
 
 Use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node scripts/test-apple.mjs --lost-reply --ui-only` for the native saved-command/lost-reply workflow. The UI-only option skips unrelated suites and physical builds. A loopback fault proxy lets the real API apply one point, discards its response, and keeps the app offline through relaunch. The native scorer must recover its saved action via the original receipt, then undo/end with exactly three durable commands.

@@ -190,7 +190,6 @@ Automatic control remains disabled. Verified startup and policy acknowledgment,
 aligned source/pressure windows, and actual automatic trial/rollback qualification
 remain required. Local archive ownership and settings are independent of this API.
 
-
 The owned-update checkpoint passes 213 Media, 52 Streaming and 755 tooling tests,
 independent source review and the combined unsigned iPhone/Watch Release build.
 Native evidence is `artifacts/qa/dual-output-bnx985` and

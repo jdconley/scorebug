@@ -50,40 +50,40 @@ by this laboratory selection.
 ## Tasks
 
 - [x] Add public read-only `SRTBandwidthProbeRecoveryObservation` in the native
-  transport-guard file, plus `recoveryObservation` on native/publisher snapshots.
-  Guard keeps its last successful check time and exact raw sample without a history.
-  Test initial values, accepted retries, cached collections with new check times,
-  immutable old snapshots, retained observation after failure/cancel, nil legacy
-  evidence and propagation through native replacement/restart and adapters.
-  Introduce the API, observe behavioral red, then wire the data.
+      transport-guard file, plus `recoveryObservation` on native/publisher snapshots.
+      Guard keeps its last successful check time and exact raw sample without a history.
+      Test initial values, accepted retries, cached collections with new check times,
+      immutable old snapshots, retained observation after failure/cancel, nil legacy
+      evidence and propagation through native replacement/restart and adapters.
+      Introduce the API, observe behavioral red, then wire the data.
 - [x] Add policy and raw observation to `PublishingProbeObservation` and
-  `NativeBandwidthProbeSample`. Change the app permit closure to take policy as an
-  explicit fourth argument. Update all app/test call sites; native closures forward
-  the requested policy to native authority. `isActive` requires staged recovery,
-  valid raw evidence and a check in this stage no later than evaluation. Legacy
-  observations require absent recovery evidence. Compare policy at app owner,
-  candidate pinning and binding/admission boundaries. Red/green tests must reject
-  wrong policy, missing/malformed evidence and changed policy across suspension.
+      `NativeBandwidthProbeSample`. Change the app permit closure to take policy as an
+      explicit fourth argument. Update all app/test call sites; native closures forward
+      the requested policy to native authority. `isActive` requires staged recovery,
+      valid raw evidence and a check in this stage no later than evaluation. Legacy
+      observations require absent recovery evidence. Compare policy at app owner,
+      candidate pinning and binding/admission boundaries. Red/green tests must reject
+      wrong policy, missing/malformed evidence and changed policy across suspension.
 - [x] Export policy and raw observation through probe events, candidate bindings,
-  frozen admission witnesses and lifecycle diagnostics. Preserve legacy field
-  omission and formats. Add a new explicit native proof/admission format for the
-  recovery policy; add a shared JS raw-observation validator with canonical bounded
-  counters, fresh checked/sample times, same-collection reserve checks, unchanged
-  cached values and monotonic validated observations. Snapshot order uses actual
-  check times, not the order in which overlapping async reads return.
+      frozen admission witnesses and lifecycle diagnostics. Preserve legacy field
+      omission and formats. Add a new explicit native proof/admission format for the
+      recovery policy; add a shared JS raw-observation validator with canonical bounded
+      counters, fresh checked/sample times, same-collection reserve checks, unchanged
+      cached values and monotonic validated observations. Snapshot order uses actual
+      check times, not the order in which overlapping async reads return.
 - [x] Wire one explicit DEBUG network-recovery route selection through the native
-  fixture start and pressure classifier, plus the host options and qualifiers.
-  Reject partial/unsupported combinations. Historical verifiers must reject new
-  policy evidence rather than reinterpret it. The encoding-only candidate payload
-  contract may remain unchanged; every authority/headroom/witness join must compare
-  policy and replay the new raw observations.
+      fixture start and pressure classifier, plus the host options and qualifiers.
+      Reject partial/unsupported combinations. Historical verifiers must reject new
+      policy evidence rather than reinterpret it. The encoding-only candidate payload
+      contract may remain unchanged; every authority/headroom/witness join must compare
+      policy and replay the new raw observations.
 - [ ] Run focused and full native/Streaming/app/tool checks serially, review the
-  final integration, then run the existing90-second prepared-match impaired route
-  using400ms actual SRT delay and slice decoding. Freeze source/input hashes before
-  launching, join the same live process, preserve failure artifacts, verify owned
-  cleanup and media/audio/score/recording continuity. Investigate failures without
-  weakening any fps/deadline/recording/admission gate. Update the main plan and
-  commit coherent verified work; continue production/device/portable-host work.
+      final integration, then run the existing90-second prepared-match impaired route
+      using400ms actual SRT delay and slice decoding. Freeze source/input hashes before
+      launching, join the same live process, preserve failure artifacts, verify owned
+      cleanup and media/audio/score/recording continuity. Investigate failures without
+      weakening any fps/deadline/recording/admission gate. Update the main plan and
+      commit coherent verified work; continue production/device/portable-host work.
 
 Use the existing joined wrapper and unique names:
 `python3 artifacts/qa/repeated-live-checkpoint-run-check.py NAME COMMAND...`.
@@ -224,7 +224,6 @@ The native321/Streaming179 suites remain the preceding verified baseline; their
 runtime libraries were not changed in this checkpoint. Read-only review and its
 follow-up found no remaining actionable findings in this slice.
 
-
 ## Complete trial and DEBUG route checkpoint
 
 The successful full-trial qualifier now explicitly selects the recovery probe policy
@@ -262,7 +261,6 @@ slice decoder,1500ms deadline and explicit recovery policy. It freezes source an
 prepared clip hashes, joins the same process and preserves all failures. Current
 installed iOS/watchOS runtimes are26.2 and27; older-runtime coverage is historical,
 not a claim that deleted runtimes remain installed. No runtime was reinstalled.
-
 
 ## First recovery-policy impaired-match attempt
 
@@ -302,7 +300,6 @@ and evaluation times, with no payload/history, and repeat the frozen route after
 focused/full checks. This diagnostic does not relax the opening coverage gate or
 alter scheduling. Keep the earlier failed attempt visible even if the next passes.
 
-
 ## Opening-audio diagnostic checkpoint
 
 The transport now freezes one `openingAudioFailure` receipt when the existing
@@ -319,7 +316,6 @@ pass. A read-only review found no issues. Logs are the joined
 the preceding passes; no native transport rules or host qualification rules changed.
 The diagnostic does not fix either observed failure. The next frozen experiment
 uses `artifacts/qa/native-measured-opening-audio-run.py` with the same route/limits.
-
 
 ## Candidate startup routing repair design
 
@@ -352,7 +348,6 @@ relaxation or production quality promotion is introduced. Verify focused/full
 Streaming and app suites and review cancellation/startup ordering before another
 frozen network experiment.
 
-
 ## Startup routing repair verification
 
 The real encoder/transport regression first reproduced missing opening coverage
@@ -374,7 +369,6 @@ and owned simulator/relay/API/process cleanup were verified. The next actual
 experiment uses `artifacts/qa/native-measured-startup-audio-repair-run.py` with the
 same source, static link, SRT budget and delivery criteria.
 
-
 ### Measurement startup clock repair (in progress)
 
 The third frozen run (`native-app-Jts7xm`, freeze `startup-audio-repair-freeze-o7r6bolm`) joined with exit 1 and all 1,216 source hashes unchanged. Candidate transport failed `audioOpeningCoverage` after one raw frame; there were no profile requests. Its first raw PTS was 166.25 s, rejected AAC PTS 166.275583291 s, arm time 1950475.9192127085 and packet observation 1950475.9397460418. The 25.583 ms source gap exceeds one 48 kHz AAC packet (21.333 ms). This preserves the failure without proving when a prior packet arrived.
@@ -382,7 +376,6 @@ The third frozen run (`native-app-Jts7xm`, freeze `startup-audio-repair-freeze-o
 Review separately found that measurement `startedAt` was recorded after native startup, while valid AAC could already be retained after arming. The unchanged cost validators correctly reject such out-of-window evidence. The previous regression fabricated an earlier measurement start and masked this integration gap.
 
 Repair design: establish measurement time and the existing five-second deadline before arming/native startup; keep raw admission separately disabled until startup completes; include startup time in the same five-second budget and reject late readiness even if the timer is delayed. Pass generation through the production measurement startup operation so arming occurs after its clock. Preserve joined cancellation, terminal ownership and all AAC/cost gates. Replace the fabricated measurement regression with real measurement/encoder/transport and final cost validation; test held startup, raw readiness and exhausted startup budget. Behavioral red confirmed before implementation. This clock fix does not claim to fix the third run's opening source gap.
-
 
 ### Cold-start opening audio anchor (next implementation)
 
@@ -396,7 +389,6 @@ Clock repair verification: focused 36 tests, full Streaming 183 and app-model 53
 
 Opening-anchor implementation checkpoint: production measurement now defers raw against an immutable post-arm AAC source floor. The first raw frame must have PTS at or beyond that floor. The monotonic preflight leaves strict encoder/transport admission and all audio gates unchanged; no per-frame work or larger buffer was added. Behavioral red reproduced pre-audio raw admission; focused owner 19 and full Streaming 189 tests pass. Read-only review found no issues. All 535 app-model tests also pass. Joined logs use `repeated-live-checkpoint-candidate-opening-anchor-*`. Next is a frozen run of the same impaired match configuration.
 
-
 ### Fourth impaired match: opening repaired; retirement replay correction
 
 Frozen `native-app-NCUMkX` / `opening-anchor-freeze-jh7nshwy` joined exit 1, all 1,216 hashes unchanged. Candidate completed 121 native frames, transport completed, and the controller requested/applied 360p. No local-pressure or delivery-failure events occurred. Full qualification stopped at `active observation exceeds token budget` in the host retirement replay; do not count it as a full pass.
@@ -406,7 +398,6 @@ The exact failing comparison is binding vs renewed native event 169: both accept
 Repair: distinguish unchanged acceptance from positive byte progress. Equal counters must keep exactly the same acceptance timestamp (and recovery raw check); only positive progress requires a new paced interval. Preserve every positive-delta one-message/elapsed-rate allowance and all ownership/lease gates. Historical and recovery regressions reproduce the false rejection; extra-packet and changed-timestamp mutants remain rejected. Behavioral red confirmed before implementation.
 
 Independent media checks retain consecutive archive IDs 0–3948 and live IDs 230–3726; the archive continues 7.4 s after live. Three baseline audio windows per output and score changes pass, and AAC cumulative timestamp error stays below 0.432 ms. `failure-assessment.json` and `retirement-token-failure.json` preserve the evidence. Full host replay and phase audio checks remain to be run after the correction.
-
 
 Retirement correction verification: focused 94 and full tooling 3,856 tests pass; read-only review found no issues. Joined logs use `repeated-live-checkpoint-unchanged-renewal-binding-*`. Replaying the frozen raw media with the corrected verifier passes native probe retirement, candidate admission, lifecycle and controller policy, with phases 240p→360p and confirmation. The unchanged full trial still rejects strict30fps delivery: 139/157 rows pass, while 18 rows contain 29 or 29.5 fps. All 157 rows have zero late/missing/uncertain frames and none falls below 24 fps. Steady capture windows stay at least 29.6 fps. Both outputs pass 27 additional phase audio anchors. Owned simulator/relay are removed and the API port is closed.
 

@@ -65,23 +65,23 @@ admission must still revalidate current ownership and measurements.
 ## Tasks
 
 - [x] Core failing-first tests: startup/unknown/stale/future/time reversal, readiness
-  at exact healthy boundary, next bitrate/profile/top profile, no pending/trial/
-  application/reset work, invalidation and gap, unchanged policy state/advice,
-  post-reset recovery/cooldown and repeated failures. Parent RED, implement, GREEN.
+      at exact healthy boundary, next bitrate/profile/top profile, no pending/trial/
+      application/reset work, invalidation and gap, unchanged policy state/advice,
+      post-reset recovery/cooldown and repeated failures. Parent RED, implement, GREEN.
 - [x] Native failing-first tests in PublishingQualitySessionTests: real authenticated
-  source yields current context; raw policy-only health does not; changed receipt,
-  generation, ingress owner, stopped/closed/busy and stale health reject. Show
-  reads perform no native write and cannot replace a consumed admission.
+      source yields current context; raw policy-only health does not; changed receipt,
+      generation, ingress owner, stopped/closed/busy and stale health reject. Show
+      reads perform no native write and cannot replace a consumed admission.
 - [x] Implement query in PublishingQualitySession using exact current receipt
-  comparison and existing Core readiness. Run Core and FilmModel regressions,
-  independent review and unsigned iPhone/Watch build; preserve frozen evidence.
+      comparison and existing Core readiness. Run Core and FilmModel regressions,
+      independent review and unsigned iPhone/Watch build; preserve frozen evidence.
 - [ ] Wire recovery-ready requests into a versioned repeating v3 probe/candidate
-  coordinator. Join prior campaign and measurement before allocating replacements;
-  stamp every suspended callback with its campaign and current applied revision.
-  Preserve per-campaign audit rather than overwriting the original single-run files.
+      coordinator. Join prior campaign and measurement before allocating replacements;
+      stamp every suspended callback with its campaign and current applied revision.
+      Preserve per-campaign audit rather than overwriting the original single-run files.
 - [ ] Extend independent replay and native fixture to verify at least two complete
-  ramp/reset/recovery cycles. Then qualify physical devices and additional proxy
-  hosts before changing production activation.
+      ramp/reset/recovery cycles. Then qualify physical devices and additional proxy
+      hosts before changing production activation.
 
 ## Verification
 
@@ -152,17 +152,17 @@ existing measured flag explicitly selects the checked constructor; missing provi
 fails closed rather than falling back to startup metadata.
 
 - [x] Bounded NativeCandidateAttempt implementer: test first for missing/changed
-  contexts before and after begin, forwarding current context to begin, newer healthy
-  sequence on the same configuration, and cancellation/changed-owner retirement joins.
-  Add reader tests for one install, missing provider, close during await and no cache.
-  Parent owns RED/GREEN and all heavy checks.
+      contexts before and after begin, forwarding current context to begin, newer healthy
+      sequence on the same configuration, and cancellation/changed-owner retirement joins.
+      Add reader tests for one install, missing provider, close during await and no cache.
+      Parent owns RED/GREEN and all heavy checks.
 - [x] Parent: wire reader into measured NativeCandidatePublisher, expose guarded
-  query forwarding on PublishingQualityDriver, install current provider in capture.
-  Add targeted routing/driver tests and keep nonmeasured diagnostic routes unchanged.
+      query forwarding on PublishingQualityDriver, install current provider in capture.
+      Add targeted routing/driver tests and keep nonmeasured diagnostic routes unchanged.
 - [x] Independent review, complete affected regressions, Release build and a fresh
-  full native measured recovery pass. Preserve prior raw media and failed runs.
+      full native measured recovery pass. Preserve prior raw media and failed runs.
 - [ ] Then implement the versioned repeating v3 campaign scheduler and repeated
-  native-cycle verifier from the remaining tasks above.
+      native-cycle verifier from the remaining tasks above.
 
 ## Checked startup checkpoint
 

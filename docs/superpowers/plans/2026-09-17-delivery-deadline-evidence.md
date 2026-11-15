@@ -22,7 +22,6 @@ For native evaluation time N, authenticated conservative sample age A, and worke
 
 Expected frames come from an independently validated complete native source window; this classifier cannot infer omitted camera frames or configuration coverage from a supplied array. Its output explicitly separates known failures from uncertain frames, and cannot expose a complete on-time FPS/loss ratio until all frames are classified. Native capture-rate, receipt/profile and source-history validation remain the adapter's responsibility.
 
-
 ## Verified checkpoint
 
 Real local FFmpeg fixture `decoder-delivery-native-AQldhi` passed with 478 decoded

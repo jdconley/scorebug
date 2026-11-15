@@ -30,7 +30,6 @@ Keep the current three/four CLI arguments and accept a fifth profile ID after ti
 
 Component checks: profile RED failed on missing recipe; streaming GREEN passed 168 tests. Configuration RED failed on missing type; SDKProbe GREEN passed six tests and built the native executables. Debug live-selector RED reproduced accidental 4K acceptance. Full FilmModel GREEN passed 498 tests. Independent code review found equivalent candidate-selector widening; its added RED test failed all three live-profile cases, then the explicit candidate allowlist passed all 56 candidate tests. Simulator build passed. Logs use exclusive `artifacts/qa/repeated-live-checkpoint-native-4k-*` names. Network/media results are recorded below; historical 1080p and repeated adaptive tests remain independently scoped evidence.
 
-
 ## Failure diagnostic amendment
 
 CPU v2 passed the full media gates. VideoToolbox v2 stopped native publishing after roughly three seconds (84 proxy-decoded frames); the independent 4K archive retained all 360 frames. Existing boolean health combines five failure boundaries and cannot identify the failed one. Do not guess or enlarge queues.
@@ -39,7 +38,6 @@ CPU v2 passed the full media gates. VideoToolbox v2 stopped native publishing af
 - [x] RED: unit-test each failed boundary plus the actual unconnected adapter callback; GREEN: full Streaming suite and SDKProbe build. Run one new VideoToolbox experiment with the diagnostic, retaining every earlier failure. Diagnose from the first reported boundary before any runtime fix.
 
 Diagnostic Streaming tests passed: 170 (including two new health tests). The SDKProbe incremental build failed linking SDKSmoke against the old SRTPublisher initializer symbol; cleaning that package and rerunning passed all six tests and rebuilt both tools. Independent code review approves the diagnostic; interpret first observed unhealthy state as a clue, not necessarily the initiating cause.
-
 
 ## Local outcome and evidence
 

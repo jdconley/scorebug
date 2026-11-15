@@ -26,15 +26,15 @@ the quality owner prevents concurrent policy evaluation or another mutation.
 ## Work and validation
 
 - [x] Add failing app-model tests for a real quality decrease from 1080 to 540,
-  one combined deadline, atomic revision and exact new-encoder bitrate binding.
+      one combined deadline, atomic revision and exact new-encoder bitrate binding.
 - [x] Cover unsupported descriptors before dispatch, invalid format and bitrate
-  receipts, expiry between operations, and stop/cancellation during either write.
+      receipts, expiry between operations, and stop/cancellation during either write.
 - [x] Add the optional profile operation and production PublishingSession binding.
-  Retain the last committed format receipt in the snapshot for later diagnostics.
+      Retain the last committed format receipt in the snapshot for later diagnostics.
 - [x] Run the focused tests, then all FilmModel tests and unsigned Apple Release
-  build sequentially. Review receipt causality and admission/shutdown behavior.
+      build sequentially. Review receipt causality and admission/shutdown behavior.
 - [x] Record the completed iOS 26.2 controlled-transition result separately from
-  this unit-tested policy binding; hash terminal evidence and commit.
+      this unit-tested policy binding; hash terminal evidence and commit.
 
 ## Subsequent recovery gates
 

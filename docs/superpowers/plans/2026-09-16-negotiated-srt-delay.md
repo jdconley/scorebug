@@ -42,7 +42,6 @@ ios/Packages/ScorebugMedia`, `swift test --package-path ios/Packages/ScorebugStr
 'platform=macOS' test`, `pnpm test:tools`, the existing unsigned combined Apple Release
 build and exactly the preceding native adaptive rate4m command.
 
-
 ## Verified checkpoint
 
 Causal model/export tests fail before retention/serialization, and five malformed

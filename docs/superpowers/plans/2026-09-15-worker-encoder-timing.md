@@ -47,19 +47,19 @@ it, joins EOF via child close, and never logs raw credential-bearing diagnostics
 ## Tasks
 
 - [x] Create `apps/home-daemon/src/encoder-timing.ts` and corresponding tests. Write
-  stub APIs, then red tests for exact wide/negative/rational PTS; reordered post output;
-  unknown/missing matches; ordinal faults; malformed/chunked/oversized/truncated data;
-  invalid clocks; 256-entry eviction/exhaustion; immutable closed snapshots; complete
-  vs pending historical intervals. Implement validated bounded tracking.
+      stub APIs, then red tests for exact wide/negative/rational PTS; reordered post output;
+      unknown/missing matches; ordinal faults; malformed/chunked/oversized/truncated data;
+      invalid clocks; 256-entry eviction/exhaustion; immutable closed snapshots; complete
+      vs pending historical intervals. Implement validated bounded tracking.
 - [x] Add `encoderTiming` opt-in to PipelineOptions/buildFfmpegArgs and nullable
-  snapshotEncoderTiming on PipelineHandle. Add optional terminal evidence, a separate
-  pipe through pipeline-guardian.mjs, and isolated drain/end handling. Add argument
-  and real-child lifecycle tests for valid/malformed/truncated timing, independent
-  decoded telemetry, closure and default-off behavior before implementation.
+      snapshotEncoderTiming on PipelineHandle. Add optional terminal evidence, a separate
+      pipe through pipeline-guardian.mjs, and isolated drain/end handling. Add argument
+      and real-child lifecycle tests for valid/malformed/truncated timing, independent
+      decoded telemetry, closure and default-off behavior before implementation.
 - [x] Run complete worker tests/typecheck, scripts tooling tests and normal worker
-  native fixtures. Replay real CPU/VideoToolbox paired probe records through the
-  tracker, preserving native argument lists and unqualified limitations. Obtain
-  source review, record evidence/hashes, update docs and commit.
+      native fixtures. Replay real CPU/VideoToolbox paired probe records through the
+      tracker, preserving native argument lists and unqualified limitations. Obtain
+      source review, record evidence/hashes, update docs and commit.
 
 Commands: `pnpm --filter @scorebug/home-daemon test`,
 `pnpm --filter @scorebug/home-daemon typecheck`, `pnpm test:tools`, `pnpm test:worker`.

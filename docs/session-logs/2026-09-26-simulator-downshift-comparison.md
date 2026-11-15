@@ -14,7 +14,6 @@ Fresh Watch lockState read completed successfully but reports `passcodeRequired:
 
 Added opt-in mutation frame181 to inspect phase dependence. Harness accepts only180/181 before native allocation and records it; analyzer binds the request to the recorded input interval, defaults legacy traces strictly to180, and disallows cross-phase comparisons. Three new validator tests causally fail before implementation; all14pass afterward. Native host unit build passes (opt-in media case skipped), simulator aggregate build-for-testing succeeds. Both independent reviews approved source blobs cf23921eecf140d62c67c9ae4fa053bceda14268 /143ddfa2f45adb54ec4a240930a0c1ab5a0d8c26 /d1fb64240d6f761da90560b3e9a7b48fe0da0b0c. Root-owned adjacent launchers are reviewed, retain local launcher copies and hash code/binary/build inputs. Native comparisons run sequentially after builds join. A frame181 request alone does not prove no pending keyframe; inspect actual callback timing and sync flags.
 
-
 Adjacent frame181 results:
 
 - Host `native-downshift-adjacent-taykc_ic`: resize74.55ms, rate-only3.72ms, rate-resize73.86ms. One pending nonsync frame181 shrinks7677→5500bytes; frame180 had already completed21–28ms before mutation. No other resize-vs-rate-resize frame sizes differ. Both resize modes retain37166byte maximum100ms output. All360PTS reconcile; all three cases pass.
@@ -23,14 +22,11 @@ Adjacent frame181 results:
 
 Decision: do not describe pre-rate as a general burst fix. A guarded three-stage application is a candidate for an isolated full-collapse experiment only. The branch candidate must preserve one original deadline, exact receipt chain, one final ACK, and terminal joined shutdown after any successful native mutation followed by failure. Retain the candidate only if full media comparison supports it; otherwise restore the previous sequence. Actual physical-phone collapse remains a high-value next lane because the simulator retains14frames while the Mac hardware retains1. Paired Watch acceptance remains separately blocked on current passcode state.
 
-
 Experimental implementation checkpoint: `PublishingQualitySession` carries one guarded downward application through preliminary bitrate, exact-receipt resize and final bitrate, with one original deadline and final Core ACK. Successful native effects are tracked before validation; later refusal/failure joins shutdown. Final configuration cannot reuse the intermediate ID. Existing unguarded/upward/same-profile/nonlower-rate paths retain their sequence.
 
 TDD: initial21profile tests fail against original ordering (`profile-red.log`, exit65), then pass (`profile-green-1.log`, exit0). A second red run catches intermediate-ID reuse and an upward-test strategy setup issue; corrected final suite passes75tests (23profile,22session,30measured). Sessions53321/29580/46639/81531 all joined. Both independent reviewers approve production blob efde2ffd341bd37c340747320e376ab26dc222ce and tests52a75cf6f59cdfabc75d6672b608247b32b722ef. Review is source/application correctness only; surrounding lifecycle tests and iOS builds precede capture. Direct phone lockState also reports passcodeRequired:true; neither physical lane is currently ready.
 
-
 Surrounding lifecycle run43787 joins65:192tests,191pass/one failure. Only failure is the old expected three-call order in `NativeOwnedCandidatePublisherTests.testDriverHandlesFreshDownwardTickWhileRejectedMeasurementCleanupIsHeld`; actual four-call order is the intended preliminary write. Updated that single assertion without changing surrounding one-revision/held-cleanup/obsolete-retirement checks. Targeted rerun36518 joins0; independent review approves test blob1d97c5c4cea2a8f351ebaf2ec5de77176f967d2a. No production edits after the reviewed blobs. Release iPhone build90152 joins0. Verification/provenance: artifacts/qa/guarded-pre-rate-validation/verification.json. Debug UI build is performed by the dedicated full-run launcher before capture. All local validation processes joined before launching it.
-
 
 Full candidate comparison on241de49: `ordinary-native-EZqNUN`, lab`device-lab-CadzNV`, runner74206 joins0 with workflowPassed:true and cleanupFailures:[]. Debug UI build succeeds before capture. Actual156segment native export collected and verified. Recovery attachment9940D154-97FF-42EE-BBDA-5D36C29832DA.json. Independent native/transport/geometry replay passes.
 
@@ -41,7 +37,6 @@ Complete25s packet evidence:278overflow packets237808wirebytes (237original data
 Independent transition comparison finds only sampled revision4: evaluation1252.7–1280.3ms, ACK1720.1–1747.7ms after constraint, application467.4ms versus prior459.5ms. Cause transport pressure:1003ms buffer,350ms delay-relative/500ms broad limits,90drops,RTT2.552ms. Revision3 remains unsampled; preliminary native receipt timestamps are not exposed. Do not reconstruct missing stages or call earlier sampled ACK a causal improvement.
 
 Decision: candidate does not meet full media acceptance. Finish independent A/V/glyph diagnostic4954, preserve immutable evidence, then restore the three candidate source/test files to91857b7 and verify. Keep the reviewed native diagnostic/phase support. This run is a failed experiment, not improved production recovery.
-
 
 Independent A/V diagnostic4954 joins1: archive64audio probes and clean-glyph checks pass; live summed-audio coverage differs by~-1177ms. This is not proof of permanent presentation offset. Both live continuity failures stand. Preserved59files with SHA256/size and rechecked every entry before writing immutable failed-media-evidence-manifest.json. Snapshot copies retain all three candidate source/test files; source241de49 also remains in Git. Original producing manifest stays false, no accepted-window mapping.
 

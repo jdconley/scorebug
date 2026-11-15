@@ -29,7 +29,7 @@ conversion remains a separate question.
 
 The wrapper includes synchronous callback work and excludes session creation and
 asynchronous output completion. Apple documents output callbacks separately from
-submission in its [VideoToolbox encode API](https://developer.apple.com/documentation/videotoolbox/vtcompressionsessionencodeframe(_:imagebuffer:presentationtimestamp:duration:frameproperties:infoflagsout:outputhandler:)).
+submission in its [VideoToolbox encode API](<https://developer.apple.com/documentation/videotoolbox/vtcompressionsessionencodeframe(_:imagebuffer:presentationtimestamp:duration:frameproperties:infoflagsout:outputhandler:)>).
 Do not infer hardware selection from the API name: Apple exposes a separate
 [hardware-encoder property](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_usinghardwareacceleratedvideoencoder).
 

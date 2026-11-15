@@ -119,7 +119,6 @@ and compact `complete-assessment.json` remain in ignored
 passes the repeated local laboratory milestone; production upgrades, network-loss
 recovery, physical devices and other proxy hosts remain unqualified.
 
-
 ## September 24 regression: frame buckets at capture-clock boundaries
 
 Frozen `582a339`, `native-app-gN2v2o`, fails before campaign two. A lossless
@@ -151,7 +150,6 @@ for 28/58, loss, uncertainty, gaps, ownership and insufficient source health. Ru
 native and JS checks, then freeze and run the complete repeated fixture. Preserve
 `gN2v2o` as failed regardless of the corrected replay rule.
 
-
 The correction is implemented. Tests-first native verification fails at the coverage
 helper and monitor invalidation assertions (45 tests, two expected failures), then
 passes all 45 after the change. Timestamp-backed repeated-policy replay first fails
@@ -163,7 +161,6 @@ Its separate failing-first regression passes after correction. Native 28/58-fram
 negative. Full native model verification passes 502 tests (66.902 seconds). Independent
 review approves the runtime and replay correction, including explicit recovery-only
 final coverage. All 3,353 JS tool tests and the simulator build pass. A fresh frozen repeated run follows.
-
 
 ## Frozen correction regression
 

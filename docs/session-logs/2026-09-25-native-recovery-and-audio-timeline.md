@@ -28,6 +28,7 @@ The raw-PCM extraction concatenates decoded samples while losing gaps in their p
 A separate diagnostic (`diagnose-audio-presentation-timeline-20260925.mjs`,49249 joined0) uses FFmpeg's documented timestamp matching to represent the gap with explicit silence in an analysis-only PCM file. Filter: `asetpts=PTS-STARTPTS,aresample=8000:async=1:min_hard_comp=0.005:first_pts=0`. [FFmpeg aresample documentation](https://ffmpeg.org/ffmpeg-filters.html#aresample-1); localFFmpeg8.1.2filter help was checked. Original MP4s, original PCM and failures are unchanged.
 
 -69grid/phase-anchor waveform probes per live output pass in presentation time. Lag spread0.599ms direct and0.0078ms overlay; head/tail score glyphs0→1 independently pass both outputs.
+
 - Direct analysis adds169samples at8kHz; the original~21ms gap remains explicit in `audio-presentation-diagnostic/results.json`. Silence cannot restore the lost audio. Diagnostic flags explicitly deny continuity/full qualification.
 - The evidence supports stable post-gap alignment, not zero audio loss. Next work must distinguish packet loss/concealment and timeline-aware synchronization instead of weakening the original20ms check or claiming the stream is entirely qualified.
 
@@ -40,7 +41,6 @@ Implementation, tests and independent reviews are recorded below. Candidate admi
 - Sampled the four native phases visually at sourceframes619,1957,4434,7510: volleyball content and overlay are visible; `owned-recording-diagnostic/four-phase-preview.png` retains the contact sheet. This is sampled inspection, not perceptual-quality qualification.
 - `e34926f` implements the candidate join; implementer226focused tests and root37new tests pass. Root replay also passes both LvDNAy and uE9hUY (each4originalowners/2completedcandidates). Specification review verified byte-exact fixtures; retirement-index followup `39a3122` passed re-review. Quality review found that a measurement could claim to start after native startup completed. `ce91204` adds the missing upper bound and a regression covering both joined candidates, and names the narrow baseline flag `baselineFrameConsistencyQualified` while retaining `mediaQualified:false`. Implementer227focused tests and final quality38/38pass; quality re-review approved with no remaining findings. Both independent reviews are closed for this slice.
 
-
 ## Recorder shutdown investigation
 
 The reconnecting recorder currently saves only `client-socket` or `upstream-socket`, discarding error code and socket event ordering. A client error destroys the upstream and eventually stops the child; this explains the observed termination request but does not identify why the client errored. Three comparison runs ended naturally with recorder exit0; uE9hUY ended255 after termination. Do not infer that a decodable MP4 proves clean shutdown.
@@ -49,12 +49,10 @@ Fresh baseline command: `FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg FF
 
 Next bounded implementation adds sanitized socket lifecycle/error-code observations while preserving existing failure/cleanup behavior. No shutdown fix is justified yet. No physical test was restarted.
 
-
 - `157c48f` adds bounded sanitized recorder lifecycle diagnostics:32events per session, explicit overflow, monotonic time, fixed labels, allowlisted networking errno, socket close hadError, and recorder finish/stop outcomes. Existing failure decisions, limits, byte accounting and cleanup remain intact. Implementer117focused tests pass; independent specification119related and quality18recorder tests pass. Both reviews approve. This is instrumentation only.
 - Fresh artifact-only VideoToolbox/48kHzAAC/RTMP+MP4tee experiment `test-recorder-vt-tee-close-20260925.mjs` completed41978exit0 at157c48f; artifact `reconnecting-vt-tee-13aGVC`. Two12-second representative-footage sessions each retain360frames and577536audio samples at the mock destination; both independently saved tee MP4s also fully decode with360frames. Original source hashes unchanged.
 - Both sessions record orderly client end→upstream finish/end→client finish→both close(hadErrorfalse)→recorder finish resolved;8events each, no overflow, no forced stops. Neither short baseline reproduces the long native failure. Results and all media remain in their distinct artifacts; this does not qualify full native adaptation.
 - Next controlled run repeats the existing3000ms/1000ms native simulator scenario with the new diagnostics; no timing or failure thresholds change. This is one bounded attempt to capture the intermittent shutdown and audio-gap behavior, not a reason to retest all prior combinations.
-
 
 ## Fresh long replay with recorder diagnostics
 
@@ -64,7 +62,7 @@ Source `f79460d`; wrapper `run-owned-reliability3000-peer1000-native-20260925-cl
 - Native562events retain two acknowledged and two failed owners. Quality applications28.071s↑,91.169s↓,193.226s↑ afterbootstrap; all four phases present.
 - Analysis91468 joined0: all three A/V files fully decode. Archive9302frames0–9301, no missing/reordered IDs,33.334ms max video gap. Both live8860frames227–9087 have exactly one missing source frame4575, no ID reversals,~66.7ms max gap. Archive continues214frames after live stops. Identical tee frame identities place the missing frame before the outputs diverge; this does not identify the packet-loss location.
 - Timing/native/compressed/profile/capacity-clock leaves pass. Accountedmedia fails `captureVideo decoded full window fell below24fps`. The first leaf command was invoked before archive.gray existed and exited with a missing-prerequisite error; no leaf output was created. After the analysis joined, the same command ran and saved the actual results. This orchestration mistake is distinct from the retained product failures.
--374delivery windows:372onTime and2failed;2missing-frame observations across overlapping windows,0late/uncertain,0rejected rows,2unmatched arrivals. These are not unique-frame counts. Capture-to-decoder uppermedian1813.86ms,max2372.90ms; simulator encoder median435.64ms. No thresholds changed.
+  -374delivery windows:372onTime and2failed;2missing-frame observations across overlapping windows,0late/uncertain,0rejected rows,2unmatched arrivals. These are not unique-frame counts. Capture-to-decoder uppermedian1813.86ms,max2372.90ms; simulator encoder median435.64ms. No thresholds changed.
 - Original A/V check46096 joinedexit1: archive64waveformprobes passes. Both live files reproduce one short audio timestamp gap near143.312s: direct21.655ms,overlay21.338ms; each raw-PCM waveform check rejects~21.33ms lagspread. Archive has no gaps over3ms. Original score/phase checks are not reached. Saved `audio-timestamp-diagnosis.json`. Unlike uE9hUY, no presentation-time alignment diagnostic was run for this replay; do not transfer that prior alignment pass to this run.
 - This separates the retained media loss from recorder shutdown: missing live audio/video occurs even with clean socket and child termination. No additional identical replay is needed just to repeat the failure. Next diagnosis must observe the relevant media/transport boundary.
 

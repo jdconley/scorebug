@@ -111,12 +111,12 @@ maximum completion lag over each complete run, including bootstrap, is 560.9 and
 455.3 ms respectively. Each phase excludes its first five seconds, then measures
 three complete five-second source windows:
 
-| Encoder phase | Requested Mbps | Actual H.264 Mbps |
-| --- | ---: | ---: |
-| Dynamic: initial high | 6.0 | 6.020 |
-| Dynamic: low | 1.5 | 5.576 |
-| Dynamic: restored high | 6.0 | 5.576 |
-| Fresh encoder: low from bootstrap | 1.5 | 5.576 |
+| Encoder phase                     | Requested Mbps | Actual H.264 Mbps |
+| --------------------------------- | -------------: | ----------------: |
+| Dynamic: initial high             |            6.0 |             6.020 |
+| Dynamic: low                      |            1.5 |             5.576 |
+| Dynamic: restored high            |            6.0 |             5.576 |
+| Fresh encoder: low from bootstrap |            1.5 |             5.576 |
 
 All three low-window byte totals exactly match the fresh-low and restored-high
 totals for the repeated pixel sequence. Fresh-low payload is 3.717 times its

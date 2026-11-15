@@ -30,8 +30,17 @@
 
 ```ts
 const baseline = deriveIngestGrant(secret, gameId, selection, 1, 'relay.internal', 8890);
-const redirected = deriveIngestGrant(secret, gameId, selection, 1,
-  'relay.internal', 8890, undefined, undefined, { host: 'upload.example', port: 18890 });
+const redirected = deriveIngestGrant(
+    secret,
+    gameId,
+    selection,
+    1,
+    'relay.internal',
+    8890,
+    undefined,
+    undefined,
+    { host: 'upload.example', port: 18890 },
+);
 expect(new URL(redirected.publishUrl).host).toBe('upload.example:18890');
 expect(redirected.readUrl).toBe(baseline.readUrl);
 expect(redirected.path).toBe(baseline.path);

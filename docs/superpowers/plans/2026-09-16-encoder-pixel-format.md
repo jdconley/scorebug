@@ -63,7 +63,6 @@ process owners joined; the low-latency failure is retained as a failed experimen
 Evidence and source hashes are frozen in
 `artifacts/qa/pixel-format-final-verification-v2.json`.
 
-
 Next, qualify a genuinely cheaper low-resolution candidate on the same workload;
 smaller nominal dimensions alone did not make 360p cheaper than 540p. The exact
 low-latency callback cause is also unresolved. Preserve the user-required startup

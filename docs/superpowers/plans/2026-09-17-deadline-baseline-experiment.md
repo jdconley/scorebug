@@ -14,16 +14,16 @@ does not change. The verifier must require the independently specified budget;
 changing a saved audit budget cannot silently reinterpret it.
 
 - [x] Add failing native and Node budget-validation tests; implement exact fixture
-  option propagation and independently requested verifier budget.
+      option propagation and independently requested verifier budget.
 - [x] Run focused tests and generate/build the native project. Freeze runtime
-  source hashes before a new actual simulator capture; preserve all prior evidence.
+      source hashes before a new actual simulator capture; preserve all prior evidence.
 - [x] Require healthy source windows in each lane, fault observations and clean
-  archive/media in the new run. Inspect unknowns and latency intervals. Associate
-  fault windows with decoder progress evidence without mixing clock epochs or
-  counting overlapping lanes twice.
+      archive/media in the new run. Inspect unknowns and latency intervals. Associate
+      fault windows with decoder progress evidence without mixing clock epochs or
+      counting overlapping lanes twice.
 - [x] Independent spec/quality review; full relevant tests and simulator/unsigned
-  phone/Watch builds. Save evidence and commit the verified result or diagnosed
-  limitation. Keep adaptation/recovery gated until their own qualifications pass.
+      phone/Watch builds. Save evidence and commit the verified result or diagnosed
+      limitation. Keep adaptation/recovery gated until their own qualifications pass.
 
 ## Result
 

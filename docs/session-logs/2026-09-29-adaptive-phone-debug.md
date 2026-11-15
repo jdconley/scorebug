@@ -63,7 +63,6 @@ cleanupFailures[], though the in-app bridge shutdown reported no listener.
 port49174. Preflight works and physical capture is active.
 Do not treat this entry as acceptance before the workflow and media results land.
 
-
 ## Active-capture CPU root cause and fix
 
 The screenshots-only `physical-recovery-oAiKrj` also reached serious temperature;
@@ -96,7 +95,6 @@ CPU comparison in matching25s captures: total sampled CPU24.750→11.525s; main
 thread21.950→6.310s; SwiftUI render9.869→1.452s; AttributeGraph11.488→1.699s.
 This verifies the redundant-publication fix materially reduces app CPU work.
 
-
 ## Remaining sender-retention gate
 
 `physical-recovery-uusTBV` confirms360p and720p and remains fair throughout the
@@ -119,7 +117,6 @@ uses fresh bridge port49178 to gather the missing cause sequence.
 
 SRT primary reference: https://github.com/Haivision/srt/blob/master/docs/API/statistics.md
 (msSndBuf is instantaneous unacknowledged time span, not decoded loss).
-
 
 ## Final physical1080 acceptance
 

@@ -67,6 +67,7 @@ broadcast cancel intent. Automatic terminal failure never stops a new generation
 Manual Start still works. A reconnecting status preserves the Stop control.
 
 Focused evidence under artifacts/qa/fault-coverage-20260928:
+
 - reconnect-before.log: one baseline regression fails3assertions: no replacement,
   failed local state, and unwanted broadcast Stop.
 - reconnect-after.log: first retry and joined-teardown tests pass.

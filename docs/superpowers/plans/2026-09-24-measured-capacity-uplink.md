@@ -74,7 +74,6 @@ Use four owned request/reply challenges: one before and one after each actual ra
 
 For each rate change, the before reply must arrive strictly before the proxy's applied timestamp and the after request must start at or after it. Native samples then bracket the fault without assuming equal epochs, clock rates or a constant offset. Require both host and native brackets at most1.5s, all sequences/times ordered, and no overflow/invalid/extra samples. Qualification returns timing bounds only; transport accounting and native media/controller recovery remain separate. Baseline confirmation must precede the conservative lower limit boundary; credited post-fault or post-restoration events must follow the corresponding upper boundary. A missed challenge fails closed; never freshen an old sample, widen the budget or infer an offset.
 
-
 ## Clock prerequisite and native lifecycle checkpoint
 
 Implemented four-sample causal bracket qualification, a bounded host exchange sampler,
@@ -114,7 +113,6 @@ This is an unresolved Intel-simulator dependency limitation, not a deleted-runti
 problem. No simulator/runtime was created or reinstalled for these checks, and no
 persistent architecture exclusion was added.
 
-
 ## Host file exchange and scheduling contract
 
 Use an existing, explicitly supplied absolute app QA directory; never create or search
@@ -133,7 +131,6 @@ phase or a host bracket exceeding1.5s. Save the exact exchanges for the independ
 closed native audit/transport replay. Scheduling success alone grants no recovery
 qualification. Integration must derive the capture scope from owned native evidence
 and reconcile it with the final media artifacts.
-
 
 ## Host clock adapter and scheduler checkpoint
 
@@ -165,7 +162,6 @@ propagate explicit capacity audit modes through full raw native and prefix repla
 compose timing with transport, controller, archive/live and audio evidence. Keep the
 harness denial until that complete causal route is connected. Fresh measured re-ramp
 and true outage remain separate open gates.
-
 
 ## Native harness wiring and capacity replay checkpoint
 
@@ -220,7 +216,6 @@ No further implementation findings were reported.
 The corrected complete tooling suite again passes all 4,172 tests
 (`repeated-live-checkpoint-capacity-harness-reviewed-tools.log`).
 
-
 ## Diagnostic capture before causal qualification
 
 Refine the execution order to gather actual native fault behavior before completing
@@ -256,7 +251,7 @@ Preserved observations:
 - `diagnostic-clock-transport-inspection.json`: all four host/native exchanges
   match the closed native clock audit. Boundary widths are 0.504s and 0.498s.
   This qualifies timing only. Transport replay rejects `Missing phase traffic
-  coverage`; do not treat packet counters alone as a qualified transport run.
+coverage`; do not treat packet counters alone as a qualified transport run.
 - The app stayed at revision0/240p: zero profile requests, zero candidate admission
   events, and no applied upgrade. Nine healthy source evaluations reported
   `missingCapacity` before the fault. There is no demonstrated step-down or recovery.
@@ -384,13 +379,13 @@ the measured route time for an original overlapping report, subject to native
 resource limits. A withdrawn/expired/byte-limited probe still fails admission.
 
 - [x] Add failing tests for staged readiness wait, changed readiness after native
-  replacement, cancellation joining, final-stage lifetime/terminal limits and
-  total poll budget, retaining legacy stage timing.
+      replacement, cancellation joining, final-stage lifetime/terminal limits and
+      total poll budget, retaining legacy stage timing.
 - [x] Implement opt-in coordination and readiness-provider wiring.
 - [x] Run focused and full app-model tests, tooling tests as relevant, and the
-  arm64 iOS simulator build; obtain read-only review.
+      arm64 iOS simulator build; obtain read-only review.
 - [ ] Re-run a frozen capacity diagnostic only after the reconnectable sink and capacity
-  test assumptions are addressed. No unit-test result qualifies live recovery.
+      test assumptions are addressed. No unit-test result qualifies live recovery.
 
 The first coordination regression run failed20 assertions in five tests: it
 allocated without readiness, stopped stage three too early, and omitted the
@@ -485,13 +480,12 @@ cadence, probation and delivery gates. No local pressure after source evaluation
 begins is accepted, including probation or post-confirmation events.
 
 - [x] Test opt-in, defaults/unknown modes, raw mutations, ownership, timing,
-  sequence, reasons, authority fields, after-source events and unchanged input.
+      sequence, reasons, authority fields, after-source events and unchanged input.
 - [x] Implement the narrow replay and propagate its explicit option through the
-  pure full-trial helper. Leave the live harness/default route strict.
+      pure full-trial helper. Leave the live harness/default route strict.
 - [x] Replay the unchanged real artifacts under both contracts, preserving the
-  original failure. Qualify media/audio independently where possible; report any
-  additional failures rather than widening this contract. Review before commit.
-
+      original failure. Qualify media/audio independently where possible; report any
+      additional failures rather than widening this contract. Review before commit.
 
 ## Startup replay and media checkpoint
 
@@ -531,7 +525,6 @@ live default changed. Capacity reduction/restoration, a reconnectable recorder,
 fresh post-recovery ramp, true outage, physical camera/Watch and other hosts remain
 open. Next, provide a session-aware reconnectable test recorder and choose a fault
 rate from measured full wire costs before a new capacity experiment.
-
 
 ## Reconnectable recorder prerequisite complete
 
@@ -587,25 +580,24 @@ preparing longer representative footage.
 Implementation/verification sequence:
 
 - [x] Add a trusted named-profile table and explicit profile option to transport
-  configuration/qualification, preserving the default historical contract. Test
-  both complete schedules with the real synthetic queue, wrong selection,
-  incomplete duration, rate/timing/counter mutations and unchanged old fixtures.
+      configuration/qualification, preserving the default historical contract. Test
+      both complete schedules with the real synthetic queue, wrong selection,
+      incomplete duration, rate/timing/counter mutations and unchanged old fixtures.
 - [x] Propagate the selected trusted profile to clock scheduling, host route
-  validation and the independent Swift fixture leaf. Exactly210s is required for
-  `capacity750k`; exactly180s remains required for`capacity550k`. The clock verifier
-  must still join actual requested/applied phases and bounded native brackets.
+      validation and the independent Swift fixture leaf. Exactly210s is required for
+      `capacity750k`; exactly180s remains required for`capacity550k`. The clock verifier
+      must still join actual requested/applied phases and bounded native brackets.
 - [x] Test and build the native fixture with the existing installed iOS26.2 runtime.
-  Keep normal capacity success denied; select the reconnectable recorder only via
-  explicit diagnostics. Verify larger hold fits existing evidence budgets.
+      Keep normal capacity success denied; select the reconnectable recorder only via
+      explicit diagnostics. Verify larger hold fits existing evidence budgets.
 - [x] Prepare/hash at least330s of representative footage using the existing
-  frame-identity/audio integrity workflow. Run one frozen210s native diagnostic
-  campaign, join every owned process, and preserve all session evidence and
-  original failures.
+      frame-identity/audio integrity workflow. Run one frozen210s native diagnostic
+      campaign, join every owned process, and preserve all session evidence and
+      original failures.
 - [ ] Complete independent causal qualification that confirmation preceded the
-  limit, an owned pressure decrease occurred and minimum media recovered after restoration.
+      limit, an owned pressure decrease occurred and minimum media recovered after restoration.
 - [ ] Only after those facts are established, implement full causal recovery and
-  fresh post-recovery measured ramp qualification. A true outage remains separate.
-
+      fresh post-recovery measured ramp qualification. A true outage remains separate.
 
 ### 750kbps profile implementation checkpoint
 
@@ -624,7 +616,6 @@ found no actionable issues. Evidence is saved in
 `artifacts/qa/repeated-live-checkpoint-capacity750-*`.
 The 330-second fixture preparation and frozen native experiment are next;
 no new capacity downshift or recovery claim follows from these checks.
-
 
 ### Frozen 750kbps native experiment
 
@@ -711,7 +702,7 @@ prerequisites are next; neither grants a full causal recovery verdict.
 
 Preserve the current through-close traffic coverage as the default. Add an explicit
 `coveragePolicy: 'scheduled-hold-v1'` option to the transport qualifier. Its restored
-traffic window ends exactly 60,000ms after the *actual* restored phase application,
+traffic window ends exactly 60,000ms after the _actual_ restored phase application,
 not at the last traffic packet or a caller-selected timestamp. Require that endpoint
 within the original closed schedule and retain the profile's total hold requirement.
 Baseline and limited phase boundaries remain actual applied timestamps. Require
@@ -810,7 +801,6 @@ after trial/probation, changed receipts, unknown reasons/policies, extra authori
 fields and clock regressions. Return an explicit invalidation count and zero
 healthy credit; the suffix and complete recovery remain unqualified.
 
-
 ### Confirmed-prefix invalidation replay checkpoint
 
 The explicit pre-trial invalidation policy is implemented. Its positive regression
@@ -897,7 +887,6 @@ post-restoration source/delivery lanes and extra authority. Preserve the origina
 artifacts and their strict result. Red/green, full tooling, review and frozen offline
 replay precede changing any native success path.
 
-
 ### Complete capacity policy replay checkpoint
 
 Implemented `scripts/measured-capacity-policy.mjs` and 39 focused tests. The caller
@@ -946,7 +935,6 @@ decoder-pause qualification. Freeze and run a fresh native experiment only after
 routing and failure cases pass local tooling tests. Fresh measured ramp-up after
 restoration remains a subsequent experiment.
 
-
 ### Native capacity success-route implementation
 
 The explicit non-diagnostic capacity route now dispatches scheduled-window transport
@@ -967,7 +955,6 @@ capacity runs to stop at that guard is replaced with an incomplete-route rejecti
 before any artifacts/resources. Independent integration review found no actionable
 issues. A fresh frozen native run is required to establish this route's actual
 end-to-end outcome; this wiring alone is not a passing media experiment.
-
 
 ### Fresh native run exposed a measurement wake-up race
 
@@ -1005,7 +992,6 @@ long-poll candidate misses newly available readiness, and the driver neither
 notifies nor clears its notification callback on stop. Green tests, full model
 coverage, review and a fresh frozen native run must follow before claiming repair.
 
-
 Wake-up verification: all 574 app-model tests pass (89.514 seconds), including
 coalescing before registration, signal/close after registration, cancellation,
 timeout, signals during suspended probe/context reads, immediate candidate retry,
@@ -1015,7 +1001,6 @@ the two regression methods failed with six intended assertions. The full green r
 is `repeated-live-checkpoint-capacity-readiness-wakeup-model-green.log`. The next
 native run will retain the same750kbps profile and media input; no threshold,
 probe lifetime or campaign deadline was relaxed.
-
 
 ## Fresh native wake-up repeat and clock failure
 
@@ -1055,7 +1040,6 @@ The compact read-only assessment and nine raw-file hashes are saved in
 is `artifacts/qa/assess-capacity750-aRYRfO.mjs`. Every qualification/production
 authorization flag remains false. The original failed artifacts are retained.
 
-
 ## Independent clock responder verification
 
 The regression reproduced before repair: a request written while snapshot recovery
@@ -1074,7 +1058,6 @@ Read-only spec and lifecycle reviews found no actionable issues. The test's
 two-second response timeout proves independence from suspended network control;
 it does not establish the native experiment's250ms exchange limit. A frozen
 real-match repeat is required for that claim.
-
 
 ## Frozen independent-clock native repeat
 
@@ -1126,7 +1109,7 @@ complete native/media/recovery/fresh-ramp/production flags remain false.
   recovery/probation requirements. Transition/fault loss receives no healthy credit.
 - Evaluate a raw rate-limiting proof rather than substituting a lower unexplained
   queue-residence threshold. Current delay evidence remains below its selected
- 500ms gate. Any new explicit proof must establish actual token-budget pressure
+  500ms gate. Any new explicit proof must establish actual token-budget pressure
   and queued media from original observations, retain deterministic loss/byte
   conservation/clock bounds, and reject mere host delay or an underloaded link.
 - SRT live delivery intentionally may discard unrecovered packets past their
@@ -1140,7 +1123,6 @@ complete native/media/recovery/fresh-ramp/production flags remain false.
   aRYRfO gap still fails500ms cadence coverage; exact delivery-rejection replay
   would require new receipt/evaluator audit joins. Keep that separate from the
   measured one-frame loss here.
-
 
 ## Bounded live-loss conservation checkpoint
 

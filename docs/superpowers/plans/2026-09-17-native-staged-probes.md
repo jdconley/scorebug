@@ -41,7 +41,6 @@ Files: `vendor/HaishinKit/SRTHaishinKit/Sources/SRT/SRTStream.swift`, `Tests/SRT
 
 Expose joined replacement through both native publisher adapters and the bounded DEBUG scheduler, export cumulative sender diagnostics, then run real staged SRT media plus independent recording against the staged relay. Candidate-cost admission, automatic upward trials/recovery, long-session campaign policy, physical phone/Watch and remote-worker qualification remain open. Native SDK tests alone do not qualify these outcomes.
 
-
 ## Verified checkpoint
 
 Opt-in staged native start/replacement now emits v2 and preserves campaign origin

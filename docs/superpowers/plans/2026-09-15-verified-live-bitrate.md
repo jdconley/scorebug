@@ -143,13 +143,13 @@ At implementation commit `48155ea`, `pnpm test:dual-output` exits 0 with evidenc
 14-second Mac harness changes the real app adapter from 6 to 2 Mbps after five
 source seconds, exercising the dedicated native write/readback path.
 
-| Scenario | Archive frames | Live frames | Measured video rate before → after | Peak RSS |
-| --- | ---: | ---: | --- | ---: |
-| Record only | 420 | — | — | 75.7 MiB |
-| Normal | 420 | 420 | 6.135 → 1.982 Mbps | 94.5 MiB |
-| Normal, source clock +123.25 s | 420 | 420 | 6.068 → 2.016 Mbps | 94.7 MiB |
-| Stalled receiver | 420 | Failure reported | — | 81.3 MiB |
-| Absent receiver | 420 | Failure reported | — | 76.1 MiB |
+| Scenario                       | Archive frames |      Live frames | Measured video rate before → after | Peak RSS |
+| ------------------------------ | -------------: | ---------------: | ---------------------------------- | -------: |
+| Record only                    |            420 |                — | —                                  | 75.7 MiB |
+| Normal                         |            420 |              420 | 6.135 → 1.982 Mbps                 | 94.5 MiB |
+| Normal, source clock +123.25 s |            420 |              420 | 6.068 → 2.016 Mbps                 | 94.7 MiB |
+| Stalled receiver               |            420 | Failure reported | —                                  | 81.3 MiB |
+| Absent receiver                |            420 | Failure reported | —                                  | 76.1 MiB |
 
 All archives retain source frames 0–419 at 30 fresh fps, with no archive rejections,
 complete audio coverage and all six expected audio markers. Maximum archive marker

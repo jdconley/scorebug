@@ -190,7 +190,6 @@ Root offline wrapper session89823 is now running complete decode/audio/overlay
 checks. A read-only phase/geometry sanity review runs independently. No capture or
 build is active. Media qualification and ten-window mapping remain pending.
 
-
 ## Actual720 media failure and physical readiness
 
 Offline wrapper89823 and separate A/V diagnostic84225 both joined exit1. Native,
@@ -210,7 +209,6 @@ inventory now shows both physical devices available (prior disconnected evidence
 is retained). Started bounded current-source phone then Watch builds, session36830,
 labels phone/watch-720-paired-ready-20260926, Conley Chaos LLC B222J9J7B8. On success,
 physical paired vertical takes priority over further simulator experiments.
-
 
 Preserved70 failed-media/provenance/diagnostic files in
 `ordinary-native-TJzyrf/failed-media-evidence-manifest.json`; original producing
@@ -232,19 +230,16 @@ bounded devicectl details succeeded and now reports connected/developer services
 Started a fresh Watch build only after this state change (session86956). Earlier
 inventory's 'available (paired)' label did not itself establish a connected tunnel.
 
-
 Watch connected build86956 joined exit0. Started current-source physical paired
 runner18049, `physical-paired-live-iuYDle` / `device-lab-pcgG8w`. No heavy work
 runs concurrently. The Watch must reach its real companion-offer wait before the
 phone starts camera capture. No fixture identity or credential is passed to Watch.
-
 
 At03:44:16 Xcode's preflight explicitly requested Watch unlock; no phone capture
 started. Asked user to unlock the Watch itself on wrist. Both builds and developer
 connection are now proven; do not confuse device inventory availability with
 an unlocked test destination. Compacted NEXT to current evidence/actions and kept
 historical commands/results in session logs.
-
 
 Physical runner18049 joined exit1 after its240s companion readiness gate expired.
 Xcode continued waiting for Watch unlock; root sent SIGINT to the verified owned

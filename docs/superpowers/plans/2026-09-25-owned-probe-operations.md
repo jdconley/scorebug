@@ -249,7 +249,6 @@ No operation handles, terminal continuation receipts, Session lease or automatic
 retry scheduler are implemented by this checkpoint. The next implementation is
 the exact owned operation/retirement path described above.
 
-
 ### Owned operation checkpoint
 
 Both publisher adapters now reserve and return a privately constructed operation

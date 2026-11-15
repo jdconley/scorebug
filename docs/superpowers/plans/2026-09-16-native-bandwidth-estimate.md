@@ -26,7 +26,6 @@ The existing `capacityQualified` policy requires caller-supplied usable **video*
 
 First qualify the probe in the local harness against separately controlled rate changes and competing traffic. Keep the impairment rate out of the application/controller. Account for actual video payload, audio, framing and recovery overhead; report unknown when these observations do not establish headroom. Compare any admission against measured candidate encoder cost, including transition bursts, rather than the nominal requested rate. Preserve a way to discover improved conditions later: permanently disabling upgrades does not satisfy the quality requirement. Any proposed probe must demonstrate that it preserves recording, picture identity, A/V coverage and the 24 fps floor before production integration.
 
-
 ## Measured result and decision
 
 Source was snapshotted against `f5fb149` before native run `native-app-NxygNl`. Its saved configuration exactly matches the preceding `native-app-xJ7FLN`: source-cadence pacing, relative sender pacing, actual 400 ms publishing delay, slice decoding, and the 240-second adaptive rate4m fixture. No new behavior flag is involved. The UI workflow passes. The full runner fails live A/V end coverage at **−230.3 ms** against the unchanged 100 ms limit; supplemental media qualification also fails picture identity and cadence.
@@ -34,10 +33,10 @@ Source was snapshotted against `f5fb149` before native run `native-app-NxygNl`. 
 The **1004** distinct native samples preserve actual estimate values and agree on repeated reads. Native elapsed-time increments track collection uptime. Estimates range from **8.412 to 9253.956 Mbps**, median **6270 Mbps** over the publication. Interior socket-age bands give:
 
 | Approximate test phase | Socket age | Samples | Minimum / median / maximum estimate, Mbps |
-|---|---:|---:|---:|
-| Unconstrained | 10–50 s | 157 | 3650.352 / 6515.820 / 9253.956 |
-| 4 Mbps constraint | 70–110 s | 157 | 41.184 / 5560.392 / 7408.020 |
-| Recovered | 140–220 s | 313 | 3565.032 / 6670.692 / 8833.704 |
+| ---------------------- | ---------: | ------: | ----------------------------------------: |
+| Unconstrained          |    10–50 s |     157 |            3650.352 / 6515.820 / 9253.956 |
+| 4 Mbps constraint      |   70–110 s |     157 |              41.184 / 5560.392 / 7408.020 |
+| Recovered              |  140–220 s |     313 |            3565.032 / 6670.692 / 8833.704 |
 
 The proxy independently confirms its rate changes at 60.0005 and 120.0012 seconds after its first packet. Socket creation and that packet are **not an independently measured cross-clock anchor**; these interior bands are approximate phase alignment, not exact event/packet correspondence. The native sample covering the failed upward trial reports **6177.684 Mbps**, observed only **250.6 ms** before admission. The recovered trial's latest estimate is **6148.068 Mbps**, 193.2 ms old. Freshness does not make these gauges usable capacity. No filter or multiplier is qualified to turn them into admission evidence.
 

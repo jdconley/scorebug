@@ -9,21 +9,21 @@
 **Tech Stack:** Swift/CoreMedia/XCTest, existing native simulator fixture, Node/FFprobe qualification.
 
 - [x] Add `PublishingVideoCostTests.swift`: failing coverage for exact byte math,
-  rational timestamp equivalence, either callback order, two-second boundaries,
-  mixed configuration/session resets, duplicates/missing joins, gaps, low frame
-  rates, slow completions, bounded retention, clock regressions, close and freshness.
+      rational timestamp equivalence, either callback order, two-second boundaries,
+      mixed configuration/session resets, duplicates/missing joins, gaps, low frame
+      rates, slow completions, bounded retention, clock regressions, close and freshness.
 - [x] Implement `PublishingVideoCost.swift` with at most 64 pending joins, eight
-  retained intervals, sticky invalidity and no media ownership. Exclude anchor
-  bytes and incomplete windows; preserve actual rates rather than configured rates.
+      retained intervals, sticky invalidity and no media ownership. Exclude anchor
+      bytes and incomplete windows; preserve actual rates rather than configured rates.
 - [x] Wire both callbacks in `SRTPublisher.swift` and close after joined stop.
-  Add optional cost-observer forwarding in `SRTMediaPublisher.swift`.
+      Add optional cost-observer forwarding in `SRTMediaPublisher.swift`.
 - [x] Extend `NativePublishingFormatFixture.swift` and capture factory forwarding
-  to persist actual intervals with format evidence at joined stop. Test serialization.
+      to persist actual intervals with format evidence at joined stop. Test serialization.
 - [x] Add independent Node cost qualification against raw compressed callback byte sizes/PTS and
-  damaged-evidence regressions; integrate with the existing reduced live fixture.
+      damaged-evidence regressions; integrate with the existing reduced live fixture.
 - [x] Run streaming/model/tools tests and both Apple builds; review and fix findings.
 - [x] Run actual fixed540p pressure fixture, independently verify media and cost,
-  preserve source/evidence hashes, update main plan and commit.
+      preserve source/evidence hashes, update main plan and commit.
 
 This advances measured cost, not full candidate admission. Repeated/staged probing,
 fresh candidate encoding cost, overhead reserves and admission still follow; do not

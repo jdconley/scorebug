@@ -19,7 +19,6 @@
 
 The next gate is native packet reconstruction, authenticated freshness and source/configuration matching into the deadline classifier. No automatic recovery activation is authorized by this checkpoint alone. Current archive and native scoring behavior must remain intact.
 
-
 ## Verified result
 
 The worker now collects delivery history and sends it only after the API negotiates

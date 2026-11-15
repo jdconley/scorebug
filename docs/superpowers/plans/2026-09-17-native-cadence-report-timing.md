@@ -33,7 +33,6 @@ Files: new WorkerCadenceReportAudit.swift and native tests; CaptureStreamingMode
 Project.yml and NativeStreamingTests.swift; native-streaming-options/fixture/test-native-app;
 new native-cadence-reports verifier and tests. Production scheduling is unchanged.
 
-
 ## Verified result
 
 Actual `native-app-ToYhHS` ran on the iPhone 14/iOS 17.5 simulator against the owned

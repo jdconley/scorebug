@@ -29,14 +29,14 @@ MP4 of the final overlaid stream.
 
 ## Current status
 
-| Area | Working locally | Remaining |
-| --- | --- | --- |
-| Native phone scoring | Create/discover/join, durable scoring/undo, takeover, end and restoration; separate scorer while filming | Sustained/physical qualification |
-| Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI; physical Ultra2 companion setup and scoring while paired phone captures | Physical route handoffs, Series7 and sustained qualification |
-| Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults; physical60m26s4K/audio recovered with continuous encoded A/V; long-archive memory fix; saved phone recovery/export/playback/relaunch | Confirm fresh phone Stop; fresh-motion/sync and full-match profiles |
-| Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; timestamp jitter/cap attribution fixed; saved output cadence passes | simulator/backend limits, abrupt tails and full-match profiles |
-| Adaptive upload | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K; physical240→1080p/6Mbps; hour decoded1080 input14m20s total | Receiver-proof resets, serious phone heat; sustained/fallback qualification and other backends |
-| Deployment | Local Mac service; persistent Linux container stack and CPU/GPU runbooks | External networking/TLS and runtime/backend qualification |
+| Area                 | Working locally                                                                                                                                                                                                            | Remaining                                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Native phone scoring | Create/discover/join, durable scoring/undo, takeover, end and restoration; separate scorer while filming                                                                                                                   | Sustained/physical qualification                                                               |
+| Native Watch         | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI; physical Ultra2 companion setup and scoring while paired phone captures                                                                       | Physical route handoffs, Series7 and sustained qualification                                   |
+| Clean recording      | 1080p/4K selection, segmented recovery, export/playback; storage/queue/source faults; physical60m26s4K/audio recovered with continuous encoded A/V; long-archive memory fix; saved phone recovery/export/playback/relaunch | Confirm fresh phone Stop; fresh-motion/sync and full-match profiles                            |
+| Proxy and outputs    | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery; timestamp jitter/cap attribution fixed; saved output cadence passes                                                 | simulator/backend limits, abrupt tails and full-match profiles                                 |
+| Adaptive upload      | Normal240→2160 ladder, minimum fallback/recovery,754.5s actual4K; physical240→1080p/6Mbps; hour decoded1080 input14m20s total                                                                                              | Receiver-proof resets, serious phone heat; sustained/fallback qualification and other backends |
+| Deployment           | Local Mac service; persistent Linux container stack and CPU/GPU runbooks                                                                                                                                                   | External networking/TLS and runtime/backend qualification                                      |
 
 The [acceptance matrix](../../simulator-acceptance.md) owns retained results and
 platform limits. [Session logs](../../session-logs/README.md) own experiments,
@@ -52,25 +52,25 @@ acceptance matrix for its cleanup reconciliation and exact scope.
 
 - [x] Phone A records and streams while native phone B creates/joins and scores.
 - [x] Native Watch scores, takes over, undoes, relaunches and ends the match through
-  the real API while filming continues. Companion setup/radios remain unqualified.
+      the real API while filming continues. Companion setup/radios remain unqualified.
 - [x] Durable commands reconcile offline/lost replies and reject stale authority.
 - [x] Clean archive supports recovery, export/playback, storage/queue/source faults,
-  and continues after streaming stops.
+      and continues after streaming stops.
 - [x] SRT → changing score overlay → mock RTMP MP4, plus optional proxy MP4.
 - [x] Progressive upload starts low, climbs with measured headroom, falls back under
-  congestion and reconnects automatically without another Start.
+      congestion and reconnects automatically without another Start.
 - [x] API/worker restart, publisher/relay outages and periodic packet loss have
-  retained recovery and saved-media evidence.
+      retained recovery and saved-media evidence.
 - [x] Native Mac/software-proxy 1080p and sustained adaptive 4K pass with complete
-  clean archive and both final outputs. Simulator UHD limits remain below.
+      clean archive and both final outputs. Simulator UHD limits remain below.
 - [x] Relay credentials/generations, bounded telemetry and worker readiness covered.
 - [x] Mac service and persistent Linux API/relay deployment wiring implemented.
 - [x] Portable Linux worker image provides required encoder timing; compiled paced
-  overlay pipeline decodes both FLV/MP4 outputs on local Linux arm64 Docker VM.
+      overlay pipeline decodes both FLV/MP4 outputs on local Linux arm64 Docker VM.
 - [x] Linux CPU container proxy works with native Mac capture, real local SRT/RTMP,
-  confirmed240→360 increase, clean archive and both final MP4s; short integration.
+      confirmed240→360 increase, clean archive and both final MP4s; short integration.
 - [x] Hands-on simulator launcher opens two native phones and a Watch with the local
-  lab, without UI automation; preserves app data and recordings after shutdown.
+      lab, without UI automation; preserves app data and recordings after shutdown.
 
 ## Immediate delivery checkpoint
 
@@ -86,15 +86,15 @@ recordings; no fresh full-suite run is needed to demonstrate these features.
 
 Keep these boundaries explicit during local use:
 
-| Configuration | Delivery status |
-| --- | --- |
-| iPhone/Watch simulators, 1080p fixture, software proxy | Core functional vertical accepted; available for hands-on use |
-| Physical iPhone16Pro/Ultra2, software proxy | Short paired recording/scoring/output workflow and saved encoded A/V pass at240p upload; adaptive recovery unqualified |
-| Native Mac publisher, software proxy, adaptive UHD | Retained sustained media pass; does not qualify simulator UHD |
-| Simulator UHD | Not accepted: encoder pending-input limit; failed candidates retain the applied profile |
-| Simulator severe congestion | Not accepted for continuous live media: saved video/audio gaps; archive and recovery pass |
-| Colocated VideoToolbox proxy plus bandwidth probes | Not accepted: measured publisher input drops; use the software proxy locally |
-| Abruptly interrupted output tails | Current native and simulator/software-proxy regressions pass100ms; other timing/load/backends remain open |
+| Configuration                                          | Delivery status                                                                                                        |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| iPhone/Watch simulators, 1080p fixture, software proxy | Core functional vertical accepted; available for hands-on use                                                          |
+| Physical iPhone16Pro/Ultra2, software proxy            | Short paired recording/scoring/output workflow and saved encoded A/V pass at240p upload; adaptive recovery unqualified |
+| Native Mac publisher, software proxy, adaptive UHD     | Retained sustained media pass; does not qualify simulator UHD                                                          |
+| Simulator UHD                                          | Not accepted: encoder pending-input limit; failed candidates retain the applied profile                                |
+| Simulator severe congestion                            | Not accepted for continuous live media: saved video/audio gaps; archive and recovery pass                              |
+| Colocated VideoToolbox proxy plus bandwidth probes     | Not accepted: measured publisher input drops; use the software proxy locally                                           |
+| Abruptly interrupted output tails                      | Current native and simulator/software-proxy regressions pass100ms; other timing/load/backends remain open              |
 
 These are delivery/qualification boundaries, not new hard-coded product ceilings.
 Do not silently disable capable devices or label the failed configurations green.
@@ -117,59 +117,59 @@ Current hour evidence does not meet this target. Work through these milestones i
 order; reuse saved recordings and focused checks before another long capture.
 
 - [x] Bound archive recovery/assembly memory independently of payload size; retain
-  checksum, path and corruption guarantees. Focused regressions and real-hour Mac
-  replay pass; current signed iPhone build installed.
+      checksum, path and corruption guarantees. Focused regressions and real-hour Mac
+      replay pass; current signed iPhone build installed.
 - [x] Confirm fixed phone recovery/export/playback/relaunch of the preserved hour
-  recording, keeping originals and interrupted status.
+      recording, keeping originals and interrupted status.
 - [ ] Pass a short fresh4K/audio Stop check; phone automation authentication is pending.
 - [ ] Persist bounded transition causes and exact receiver-proof rejection reasons
-  during capture, with joined source/worker/transport/thermal evidence.
+      during capture, with joined source/worker/transport/thermal evidence.
 - [x] Separate intentional proxy timestamp-cap omissions from resource overload.
-  Replay the single-omission healthy window against the stated frame-loss target;
-  preserve meaningful capture/delivery/processing pressure checks.
+      Replay the single-omission healthy window against the stated frame-loss target;
+      preserve meaningful capture/delivery/processing pressure checks.
 - [ ] Resolve the reproduced receiver-proof reset cause while preserving real
-  expiry, revocation and authority/context-change guards.
+      expiry, revocation and authority/context-change guards.
 - [ ] Isolate phone thermal load after adaptation faults are addressed; measure
-  capture/encoding/probe load and charging conditions, then reduce the measured
-  dominant cost. Keep serious/critical fallback.
+      capture/encoding/probe load and charging conditions, then reduce the measured
+      dominant cost. Keep serious/critical fallback.
 - [x] Add repeatable saved-export and combined-duration physical harness modes
-  with actual-input geometry gates and safe finite finalization/cleanup.
+      with actual-input geometry gates and safe finite finalization/cleanup.
 - [ ] Pass one30-minute combined checkpoint, then one60-minute confirmed1080p
-  hold with4K/audio recording and phone stop/export/playback/relaunch. Fully
-  validate all three media files, fresh cadence, sync and resource trajectory.
+      hold with4K/audio recording and phone stop/export/playback/relaunch. Fully
+      validate all three media files, fresh cadence, sync and resource trajectory.
 
 - [x] Keep encoder progress/telemetry writable after worker death so finalization
-  cannot fail on a broken parent pipe. Guardian owns and drains those readers;
-  bounded shutdown, focused process checks and a short FFmpeg comparison pass.
-  This fixes pipe ownership, not the still-open live A/V tail bound.
+      cannot fail on a broken parent pipe. Guardian owns and drains those readers;
+      bounded shutdown, focused process checks and a short FFmpeg comparison pass.
+      This fixes pipe ownership, not the still-open live A/V tail bound.
 
 - [x] Bounded packet-tail diagnostics survive worker death and locate incoming versus
-  outgoing A/V track ends; one live crash boundary is measured.
+      outgoing A/V track ends; one live crash boundary is measured.
 
 - [x] Interleave dual-track publisher PES by decode timestamps with finite retention
-  and lossless clean drain; SDK checks and one short native crash/media run pass.
+      and lossless clean drain; SDK checks and one short native crash/media run pass.
 
 - [x] Recheck the known simulator/software-proxy crash regression after publisher
-  interleaving. Current API/worker crash workflow passes; all six interrupted and
-  recovered output files fully decode with at most60ms A/V end offset, within the
-  unchanged100ms gate. Current native short crash also passes at59ms. Historical
-  107ms/native and508–548ms/simulator failures remain retained, not current passes.
+      interleaving. Current API/worker crash workflow passes; all six interrupted and
+      recovered output files fully decode with at most60ms A/V end offset, within the
+      unchanged100ms gate. Current native short crash also passes at59ms. Historical
+      107ms/native and508–548ms/simulator failures remain retained, not current passes.
 - [ ] Qualify interrupted output tails across remaining failure timing/load and
-  backends. The current targeted passes are not a general bound. Do not repeat
-  those same runs unchanged or widen the100ms gate.
+      backends. The current targeted passes are not a general bound. Do not repeat
+      those same runs unchanged or widen the100ms gate.
 - [x] Explicitly gate unsupported simulator/backend combinations in the immediate
-  delivery checkpoint (qualification boundaries, not product capability ceilings):
-  simulator UHD pending-input limit, simulator severe-congestion media gaps, and
-  colocated VideoToolbox/probe input drops. Preserve the working software-proxy
-  path; no repeated parameter sweeps or larger queues to hide overload. Resolving
-  these failures remains part of the backend/profile qualification below.
+      delivery checkpoint (qualification boundaries, not product capability ceilings):
+      simulator UHD pending-input limit, simulator severe-congestion media gaps, and
+      colocated VideoToolbox/probe input drops. Preserve the working software-proxy
+      path; no repeated parameter sweeps or larger queues to hide overload. Resolving
+      these failures remains part of the backend/profile qualification below.
 
 ## Later qualification (not missing local features)
 
 - [ ] Qualify remaining profiles/backends and full-match operation. Reuse the passed
-  sustained native Mac/software-proxy UHD result; do not repeat it unchanged.
+      sustained native Mac/software-proxy UHD result; do not repeat it unchanged.
 - [ ] Confirm hosted native CI when a push is authorized. Hosted builds do not
-  replace local simulator/media acceptance.
+      replace local simulator/media acceptance.
 
 ## Hardware and external acceptance
 
@@ -192,28 +192,28 @@ carry the Watch score changes; archive/export and encoded A/V checks pass. See t
 log and acceptance matrix for evidence and limits.
 
 - [x] Fix fair-temperature misclassification and high-frequency telemetry redraws;
-  retain full-rate control checks and serious/critical thermal fallback.
+      retain full-rate control checks and serious/critical thermal fallback.
 - [x] Confirm real physical1080p upload at6Mbps through the normal adaptive ladder.
 - [ ] Qualify sustained physical1080p and fallback/recovery after the current
-  proof-reset, cap-omission and heat faults are resolved; inspect
-  bounded sender-buffer gauges if the retention warning recurs. Keep measured
-  headroom/frame gates.
+      proof-reset, cap-omission and heat faults are resolved; inspect
+      bounded sender-buffer gauges if the retention warning recurs. Keep measured
+      headroom/frame gates.
 - [x] Restore Watch automation readiness and reconcile only the identified test-owned pending
-  Watch pairing. Preserve Keychain and uncertain commands until ownership is known.
+      Watch pairing. Preserve Keychain and uncertain commands until ownership is known.
 - [x] Short physical filming-phone/Ultra2 setup, takeover, point, undo, away point,
-  match end, independent archive/export and both recorded score overlays.
+      match end, independent archive/export and both recorded score overlays.
 - [ ] Verify sustained filming-phone/Watch and separate-phone/Watch scoring on Ultra 2 and
-  Series 7: wrist lowering/reopen, Wi-Fi/cellular, paired fallback and route handoff.
+      Series 7: wrist lowering/reopen, Wi-Fi/cellular, paired fallback and route handoff.
 - [ ] Run 10-minute 1080p30 and supported 4K30 capture, then two-hour release profiles;
-  measure frames, A/V sync, heat, battery, storage, reconnect and archive continuity.
+      measure frames, A/V sync, heat, battery, storage, reconnect and archive continuity.
 - [ ] Verify physical camera/audio interruption, lock/background, low space, forced
-  termination and detached-debugger behavior; record OS/profile ceilings.
+      termination and detached-debugger behavior; record OS/profile ceilings.
 - [ ] Move unchanged proxy configuration to home/cloud hosts. Qualify actual Linux
-  amd64/arm64 CPU, NVIDIA, Windows/WSL2 and other supported runtimes.
+      amd64/arm64 CPU, NVIDIA, Windows/WSL2 and other supported runtimes.
 - [ ] Test external TLS/firewalls, colocated/split relay-worker layouts, private
-  management, restart, credential revocation and explicit worker moves.
+      management, restart, credential revocation and explicit worker moves.
 - [ ] With an authorized test destination/key, verify YouTube ingest/playback,
-  reconnect, quality changes and glass-to-glass latency. Use the local mock by default.
+      reconnect, quality changes and glass-to-glass latency. Use the local mock by default.
 
 ## Iteration and completion policy
 

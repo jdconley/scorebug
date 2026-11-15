@@ -29,13 +29,11 @@ The sustained upward trial measured 7.82 Mbps video on a 4 Mbps link and remains
 
 Apple commands use Xcode 26.2 in the existing isolated worktree. Do not accept the Xcode 26.6 license. Heavy workloads run sequentially and reuse existing build directories; disk is limited. No external deployment/broadcast or physical-device qualification is implied.
 
-
 ## Pre-run verification
 
 Causal red checks cover the missing scalar scheduler, stream option/observations, DEBUG flag/dequeue capture and raw verifier enforcement. The SDK passes 168 tests, including real native paced-tail preservation, injected wait cancellation and restart, finish deadline, exact queue-overflow failure, and replacement output eligibility against the original publication anchor. The latter addresses the review's nonblocking regression suggestion. There are 212 passing app-model tests, 1017 tooling tests and 61 streaming tests. SwiftPM's existing streaming scratch directory initially retained stale source discovery for the new clock file; refreshing the unchanged manifest timestamps forced a successful graph refresh. The SDK patch verifies all 162 original hashes and its exact reverse/forward round trip. Review found no blockers.
 
 Queue ownership is at most sixteen queued compressed samples plus one current consumer-held sample, retaining the 2 MiB per-item limit. Source-cadence pacing runs only on the encoded output consumer. `dequeuedAt` measures taking that current item, not when VideoToolbox produced it; `sourceCadencePaced` comes from the executed consumer path. The independent qualifier requires actual mode=true for the experiment, checks dequeue order and eligibility across all phases, and leaves late frames visible.
-
 
 ## Measured native outcome
 

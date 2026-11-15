@@ -30,7 +30,6 @@ Counts describe diagnostic lines, not damaged frames or proof of packet causalit
 - [x] Choose the next recovery experiment from the observed categories, not from
       absent log counts. Production adaptation and device/host/soak work stay open.
 
-
 ## Verified checkpoint
 
 The parser/log-level/evidence regressions fail before implementation and pass

@@ -43,25 +43,25 @@ No classification proves rate convergence, receiver freshness or current health.
 ## Tasks
 
 - [x] Add model stubs and tests in ScorebugMedia for invalid rate/time/session,
-  capture metadata rejection, missing/future metadata, ring eviction and closure.
-  Extend VideoSourceHistoryTests with actual source metadata; preserve old counts.
+      capture metadata rejection, missing/future metadata, ring eviction and closure.
+      Extend VideoSourceHistoryTests with actual source metadata; preserve old counts.
 - [x] Implement validated values in `VideoEncodingObservation.swift`, add optional
-  encoding to VideoSourceFrame and observe(), and pass it through
-  VideoFrameObservationOwner's existing lock. No new tasks or media retention.
+      encoding to VideoSourceFrame and observe(), and pass it through
+      VideoFrameObservationOwner's existing lock. No new tasks or media retention.
 - [x] Add failing PublishingSourceIntervalTests for uniform verified/unverified,
-  missing metadata, mixed IDs/sessions, exact exclusive boundary and leading loss.
-  Implement `encodingCoverage` from precisely the matched encoded index range.
+      missing metadata, mixed IDs/sessions, exact exclusive boundary and leading loss.
+      Implement `encodingCoverage` from precisely the matched encoded index range.
 - [x] Update SRTPublisher's immutable native configuration callback to call the
-  observation owner once with source/configuration metadata. Preserve optional
-  external configuration observer and aggregate notification semantics.
+      observation owner once with source/configuration metadata. Preserve optional
+      external configuration observer and aggregate notification semantics.
 - [x] Extend DualOutputSmoke to exercise the actual production observation owner,
-  export bounded encoded history and interval coverage after joined stop, and
-  independently compare it with the existing native descriptors and barcode set.
-  Add Node regressions before qualifier implementation for missing/relabelled history,
-  mismatched interval count/range/coverage and exclusive-boundary behavior.
+      export bounded encoded history and interval coverage after joined stop, and
+      independently compare it with the existing native descriptors and barcode set.
+      Add Node regressions before qualifier implementation for missing/relabelled history,
+      mismatched interval count/range/coverage and exclusive-boundary behavior.
 - [x] Run Media, Streaming, tooling, both native suites and combined unsigned
-  iPhone/Watch Release build sequentially. Obtain bounded independent source review,
-  preserve raw events and evidence hashes, document results and commit verified work.
+      iPhone/Watch Release build sequentially. Obtain bounded independent source review,
+      preserve raw events and evidence hashes, document results and commit verified work.
 
 ## File map and checks
 

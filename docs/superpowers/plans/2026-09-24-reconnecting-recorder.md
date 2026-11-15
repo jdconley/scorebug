@@ -41,27 +41,26 @@ remain in force. No publisher means no FFmpeg process is started.
 ## Implementation and verification
 
 - [x] Add `scripts/test/reconnecting-rtmp-recorder.test.mjs`: use real loopback TCP
-  sockets and an injected owned recorder to prove byte-preserving two-session
-  forwarding, paths/ordering, idle stop, concurrent/total admission bounds,
-  rejected recorder startup, early disconnect and shutdown during startup.
-  Run `node --test scripts/test/reconnecting-rtmp-recorder.test.mjs` red first.
+      sockets and an injected owned recorder to prove byte-preserving two-session
+      forwarding, paths/ordering, idle stop, concurrent/total admission bounds,
+      rejected recorder startup, early disconnect and shutdown during startup.
+      Run `node --test scripts/test/reconnecting-rtmp-recorder.test.mjs` red first.
 - [x] Add `scripts/reconnecting-rtmp-recorder.mjs` exporting
-  `startReconnectingRTMPRecorder({artifact, ffmpeg, port}, dependencies)` with
-  `{url, finish, stop}`. Use `createServer({pauseOnConnect:true,allowHalfOpen:true})`,
-  a per-session recorder, and `client.pipe(upstream); upstream.pipe(client)`.
-  Record fixed failure categories, close the unused half on error/cancellation,
-  and join all owned lifecycle/persistence promises before returning.
+      `startReconnectingRTMPRecorder({artifact, ffmpeg, port}, dependencies)` with
+      `{url, finish, stop}`. Use `createServer({pauseOnConnect:true,allowHalfOpen:true})`,
+      a per-session recorder, and `client.pipe(upstream); upstream.pipe(client)`.
+      Record fixed failure categories, close the unused half on error/cancellation,
+      and join all owned lifecycle/persistence promises before returning.
 - [x] Run focused existing/new recorder tests; inspect cleanup and malformed-path
-  behavior. Run the complete tooling suite after review repairs.
+      behavior. Run the complete tooling suite after review repairs.
 - [x] Add a reusable local integration runner that publishes two distinct short
-  H.264/AAC FFmpeg sessions sequentially to the same URL. Join publishers/recorder,
-  decode both outputs with `-xerror`, verify frame/audio counts and distinct content,
-  and inspect per-session timing manifests. Save the actual exit statuses and
-  source hashes. No simulator/runtime or external host is needed.
+      H.264/AAC FFmpeg sessions sequentially to the same URL. Join publishers/recorder,
+      decode both outputs with `-xerror`, verify frame/audio counts and distinct content,
+      and inspect per-session timing manifests. Save the actual exit statuses and
+      source hashes. No simulator/runtime or external host is needed.
 - [x] Select the new endpoint only for the explicitly diagnostic capacity route.
-  Keep strict single-session delivery and the normal capacity qualification denial.
-  Document the new evidence and remaining causal native recovery work.
-
+      Keep strict single-session delivery and the normal capacity qualification denial.
+      Document the new evidence and remaining causal native recovery work.
 
 ## Verified checkpoint
 

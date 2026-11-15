@@ -56,29 +56,29 @@ Test in `ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/QualityTrialTests.swi
 ## Steps
 
 - [x] Create `ios/Sources/Scorebug/Capture/PublishingQualitySession.swift` API stub
-  and `ios/FilmModelTests/PublishingQualitySessionTests.swift`. API: throwing init
-  validates profiles/settings; `bootstrap() async throws`; `evaluate(Window)` and
-  `checkTrialDeadline()` synchronously actor-isolated; `apply(Recommendation) async
-  throws`; `stop() async`; immutable snapshot exposes optional settings/revision/
-  receipt and closed/busy. Internal injected operations/uptime permit deterministic
-  tests; production initializer uses PublishingSession directly.
+      and `ios/FilmModelTests/PublishingQualitySessionTests.swift`. API: throwing init
+      validates profiles/settings; `bootstrap() async throws`; `evaluate(Window)` and
+      `checkTrialDeadline()` synchronously actor-isolated; `apply(Recommendation) async
+throws`; `stop() async`; immutable snapshot exposes optional settings/revision/
+      receipt and closed/busy. Internal injected operations/uptime permit deterministic
+      tests; production initializer uses PublishingSession directly.
 - [x] Behavioral red: bootstrap creates revision zero only after matching receipt;
-  recommendation does not change applied state; success advances exactly once;
-  stale/expired/foreign advice never writes; unsupported profile change never writes;
-  concurrent apply/evaluate cannot change pending policy; late stop/cancellation or
-  wrong generation/rate/time/configuration/boundary fails terminally; full trial to
-  deadline rollback keeps native receipts associated with revisions. Integration test
-  exercises production initializer with a real PublishingSession and fake publisher.
+      recommendation does not change applied state; success advances exactly once;
+      stale/expired/foreign advice never writes; unsupported profile change never writes;
+      concurrent apply/evaluate cannot change pending policy; late stop/cancellation or
+      wrong generation/rate/time/configuration/boundary fails terminally; full trial to
+      deadline rollback keeps native receipts associated with revisions. Integration test
+      exercises production initializer with a real PublishingSession and fake publisher.
 - [x] Implement validation and actor transitions. After every await check closed and
-  cancellation before acknowledgment. Keep pending advice consistent when evaluate
-  throws or deadline polling returns no new recommendation. Use fail-closed shutdown
-  for dispatched errors; never stop live for predispatch validation failures.
+      cancellation before acknowledgment. Keep pending advice consistent when evaluate
+      throws or deadline polling returns no new recommendation. Use fail-closed shutdown
+      for dispatched errors; never stop live for predispatch validation failures.
 - [x] Generate owned Xcode project; run focused red then full Film model tests and
-  Core tests sequentially with Xcode 26.2. Run combined unsigned Release. Obtain
-  bounded independent review; add regressions for findings before fixes.
+      Core tests sequentially with Xcode 26.2. Run combined unsigned Release. Obtain
+      bounded independent review; add regressions for findings before fixes.
 - [x] Document evidence and integration limitations, preserve source/test hashes and
-  commit verified changes. Next integrate source/pressure alignment, then actual
-  automatic trial/rollback native media qualification before enabling capture usage.
+      commit verified changes. Next integrate source/pressure alignment, then actual
+      automatic trial/rollback native media qualification before enabling capture usage.
 
 Commands (all from the isolated worktree):
 `xcodegen generate --spec ios/Project.yml`;
@@ -86,7 +86,6 @@ Commands (all from the isolated worktree):
 repeat without `-only-testing` for complete model suite;
 `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer swift test --package-path ios/Packages/ScorebugCore`;
 `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer xcodebuild -project ios/Scorebug.xcodeproj -scheme Scorebug -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`.
-
 
 ## Verified checkpoint
 

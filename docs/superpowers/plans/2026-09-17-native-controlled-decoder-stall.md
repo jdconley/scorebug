@@ -32,7 +32,6 @@ retain those failures rather than labeling intentional disruption as a clean pas
       demonstrated defects or document the precise remaining gate with evidence.
 - [x] Freeze results, update main plan and commit.
 
-
 ## Findings from the first actual run
 
 `native-app-vuL6B7` completed its owned pause/resume and recorded exactly one native
@@ -55,7 +54,6 @@ no ongoing health credit and cannot turn into a new stall as it ages. Regression
 first reproduced the lost four-second recovery and now preserve it without allowing
 new stale reports or changed receipts. Rerun the actual fixture after these fixes;
 do not relabel the first overall run as passing.
-
 
 ## Verified rerun
 
@@ -102,7 +100,6 @@ Next exercise a controlled higher-profile-to-minimum native reset with actual
 receipt/media checks, then complete expected-source/deadline reconciliation and
 candidate cost/headroom before enabling production progressive adaptation. Keep
 normal minimum startup and the independent archive behavior in place meanwhile.
-
 
 ## Review follow-up
 

@@ -31,7 +31,6 @@ Prior low-latency/frame-delay property experiments are unsupported on the tested
 simulator. Existing opt-in source-cadence pacing removes drain batching but has
 not qualified live recovery; no duplicate implementation was introduced.
 
-
 Source committed f9c5b26 after both reviews; root verified all four source hashes.
 Started simulator runner73720, artifact `ordinary-native-3ux2FX`, command:
 
@@ -40,7 +39,6 @@ node scripts/test-ordinary-native-app.mjs --host 192.168.1.130 --source /Users/j
 ```
 
 Only installed runtimes are used. No capture/build/media work runs concurrently.
-
 
 ## Actual result: strict deadline blocks the comparison
 

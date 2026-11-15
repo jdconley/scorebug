@@ -89,7 +89,6 @@ source/test/raw-artifact inventory is
 `artifacts/qa/probe-campaign-restart-final-verification.json`.
 The next required implementation is campaign-aware wire and receiver support.
 
-
 ## Campaign wire follow-up
 
 The [campaign-aware wire checkpoint](2026-09-17-probe-campaign-wire.md) now adds

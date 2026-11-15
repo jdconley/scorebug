@@ -45,26 +45,26 @@ convergence, source/worker policy alignment and resolution transitions remain di
 ## Tasks
 
 - [x] Preserve a reconstructed original SDK baseline and verify maintained patch
-  provenance before edits. Add public immutable configuration/receipt/frame types
-  in `HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift` and a parallel optional
-  observer argument through VideoCodec, OutgoingStream and SRTStream. Keep the old
-  observer API and ordinary setter compatible.
+      provenance before edits. Add public immutable configuration/receipt/frame types
+      in `HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift` and a parallel optional
+      observer argument through VideoCodec, OutgoingStream and SRTStream. Keep the old
+      observer API and ordinary setter compatible.
 - [x] Write delayed fake-session tests for old/new callback interleaving, same-rate
-  IDs, failed writes, legacy writes, invalidation/recreation/stop, no-image input,
-  and last-submission boundary. Compile stubs and capture behavioral red, then
-  implement descriptor capture and receipt creation after successful verification.
+      IDs, failed writes, legacy writes, invalidation/recreation/stop, no-image input,
+      and last-submission boundary. Compile stubs and capture behavioral red, then
+      implement descriptor capture and receipt creation after successful verification.
 - [x] Add `SRTStream.setVerifiedVideoBitRateWithReceipt` scoped to current publishing
-  generation, with the old setter delegating to it. Wrap SDK descriptor types in
-  SRTPublisher's public adapter types and expose optional frame observer plus
-  `setBitRateWithReceipt`; keep lifecycle/cancellation guards and ordinary setter.
+      generation, with the old setter delegating to it. Wrap SDK descriptor types in
+      SRTPublisher's public adapter types and expose optional frame observer plus
+      `setBitRateWithReceipt`; keep lifecycle/cancellation guards and ordinary setter.
 - [x] Extend the real dual-output fixture with a bounded scalar descriptor recorder.
-  Export joined records and change receipt, independently verify old/unverified
-  versus new configuration source PTS and decoded source barcodes, and preserve
-  existing bitrate, frame, A/V, clock, pressure-window and archive gates.
+      Export joined records and change receipt, independently verify old/unverified
+      versus new configuration source PTS and decoded source barcodes, and preserve
+      existing bitrate, frame, A/V, clock, pressure-window and archive gates.
 - [x] Run SDK/Streaming tests, both native suites if their shared path changes,
-  full tooling tests and combined unsigned iPhone/Watch Release build. Review source,
-  regenerate the patch from the preserved original hashes, verify exact round trip,
-  document evidence/limits and commit only verified work.
+      full tooling tests and combined unsigned iPhone/Watch Release build. Review source,
+      regenerate the patch from the preserved original hashes, verify exact round trip,
+      document evidence/limits and commit only verified work.
 
 New files: SDK configuration types and focused SDK regression tests;
 `scripts/encoder-configuration-evidence.mjs` and its tests; boundary runbook.

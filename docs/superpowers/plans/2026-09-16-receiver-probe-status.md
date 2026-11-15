@@ -15,22 +15,22 @@ Files: `packages/protocol/src/receiver-probe.ts`, `worker-status.ts`, `index.ts`
 `worker-publication.ts`; corresponding relay and status tests.
 
 - [x] Add shared golden status fixture with a valid two-message snapshot; exercise
-  its exact bytes in both languages. Add adapter tests for sanitization, counter
-  conservation, canonical integers, zero/nonzero timestamp rules, packet/rate/clock
-  bounds, unknown invalidity, and legacy absence.
+      its exact bytes in both languages. Add adapter tests for sanitization, counter
+      conservation, canonical integers, zero/nonzero timestamp rules, packet/rate/clock
+      bounds, unknown invalidity, and legacy absence.
 - [x] Run the focused Vitest tests and preserve the missing-feature failure.
 - [x] Add contract `WorkerReceiverProbe = { snapshot: ReceiverProbeSnapshot;
-  ageUpperBoundMs: number }`. Ingest parses only the selected publisher's optional
-  snapshot using Zod, stripping unknown fields. Lifecycle returns
-  `{ publication, receiverProbe? }` only after verifying the signed attempt.
+ageUpperBoundMs: number }`. Ingest parses only the selected publisher's optional
+      snapshot using Zod, stripping unknown fields. Lifecycle returns
+      `{ publication, receiverProbe? }` only after verifying the signed attempt.
 - [x] Add status tests for attachment, scope change during lookup, unavailable
-  measurement, preserved publication, and injected monotonic age rounding/faults.
-  Run them red before implementing the timing boundary:
-  `started = monotonicNow(); found = await relay.publication(before);`
-  then resample status/scope and use `Math.ceil(monotonicNow() - started)` only
-  for finite, nonnegative, safe-integer-bounded elapsed time.
+      measurement, preserved publication, and injected monotonic age rounding/faults.
+      Run them red before implementing the timing boundary:
+      `started = monotonicNow(); found = await relay.publication(before);`
+      then resample status/scope and use `Math.ceil(monotonicNow() - started)` only
+      for finite, nonnegative, safe-integer-bounded elapsed time.
 - [x] Run `pnpm --filter @scorebug/control-plane test` and protocol/control-plane
-  typechecks. Verify worker report injection remains rejected.
+      typechecks. Verify worker report injection remains rejected.
 
 ## 2. Native decoding and freshness
 
@@ -38,20 +38,20 @@ Files: `ios/Packages/ScorebugCore/Sources/ScorebugCore/WorkerReceiverProbe.swift
 `WorkerStatus.swift`, corresponding XCTest and fixture files.
 
 - [x] Add golden round-trip, malformed optional decode, explicit expectation,
-  immutable scope, arithmetic, last-delivery age, expiry, and wrong-scope tests.
+      immutable scope, arithmetic, last-delivery age, expiry, and wrong-scope tests.
 - [x] Run `swift test --package-path ios/Packages/ScorebugCore` with the licensed
-  Xcode 26.2 developer directory and preserve the missing-feature failure.
+      Xcode 26.2 developer directory and preserve the missing-feature failure.
 - [x] Add Codable value types. Decode optional report with `try?`, independently
-  validate all scalar/cross-field invariants, require a locally supplied probe
-  expectation, and capture scope by value. Use UInt64 for strings and Int64
-  duration conversion so watchOS arm64_32 cannot overflow.
+      validate all scalar/cross-field invariants, require a locally supplied probe
+      expectation, and capture scope by value. Use UInt64 for strings and Int64
+      duration conversion so watchOS arm64_32 cannot overflow.
 - [x] Compute receipt age as server upper age plus full request duration; later age
-  adds monotonic residence. Last-delivery age additionally includes
-  `observedAtNanoseconds - lastDeliveredAtNanoseconds`. No completed messages means
-  last-delivery age is unavailable. Existing status lease limits every query.
+      adds monotonic residence. Last-delivery age additionally includes
+      `observedAtNanoseconds - lastDeliveredAtNanoseconds`. No completed messages means
+      last-delivery age is unavailable. Existing status lease limits every query.
 - [x] Run all core tests, model integration tests, simulator build-for-testing and
-  unsigned combined iPhone/Watch Release build sequentially. Review the diff and
-  document measured results and remaining policy work; commit the checkpoint.
+      unsigned combined iPhone/Watch Release build sequentially. Review the diff and
+      document measured results and remaining policy work; commit the checkpoint.
 
 ## Verification checkpoint
 

@@ -24,15 +24,14 @@ The native fixture opts into this owner, exports version 3 while retaining histo
 
 ## Tasks and verification
 
-- [x] 1. Add SDK tests before implementation for immutable bounded AAC snapshots, actual native vs passthrough, lifecycle/generation, malformed input and accepted-mux notification. Extend mux comparison tests to assert complete ordered scalar receipts. Run red, implement SDK observer/receipts, run focused green. Files: new `SRTHaishinKit/Sources/SRT/CompressedAudioFrame.swift`, `SRTStream.swift`, `CandidateTransportMeasurement.swift`, SDK tests and README.
-- [x] 2. Add independent replay verifier tests before implementation. Mutate receipts, clocks, totals, order, keyframe packaging, audio cadence/coverage/format/generation, size and freshness. Implement `scripts/candidate-transport-cost.mjs` and v3 support in `native-candidate-measurement.mjs`, preserving historical output shapes. Validate exact counts against fixtures and ultimately actual native receipts.
-- [x] 3. Add source-window/lifecycle tests, implement the new Streaming owner and optional integration in PublishingCandidateEncoder/PublishingCandidateMeasurement. Forward the optional AAC observer through SRTPublisher/SRTMediaPublisher. Check pending count/byte bounds, delayed audio, missing audio timeout, wrong generation, cancellation while finishing, raw/encoded rejection, no reentry/deadlock, exact terminal joins and unchanged video-only behavior.
-- [x] 4. Connect the native fixture via CaptureStreamingModel, pin generation from the existing live startup receipt, serialize v3 evidence and require it in `test-native-app.mjs`. Test model serialization/lifecycle. Update provenance inventory and exact patch round trip.
-- [x] 5. Run SDK, clean Streaming, model and tooling suites, simulator and unsigned combined phone/Watch builds. Run fresh simultaneous 1080p archive / 240p live / 360p, 540p and 1080p candidate trials sequentially. Inspect actual archive/live frame identity, audio markers, pressure and candidate A/V receipts; independent replay must match exact mux totals. Preserve every failed run separately and correct root causes without relaxing existing media gates.
-- [x] 6. Obtain spec then quality review, fix regressions and rerun affected checks. Freeze new native evidence, verify all 3,612 prior files unchanged, hash final sources/runtime/evidence, update the main plan and commit. Keep the full goal active: repeated headroom admission, upward/recovery trials, long sessions, physical devices and remote workers still require evidence.
+- [x]   1. Add SDK tests before implementation for immutable bounded AAC snapshots, actual native vs passthrough, lifecycle/generation, malformed input and accepted-mux notification. Extend mux comparison tests to assert complete ordered scalar receipts. Run red, implement SDK observer/receipts, run focused green. Files: new `SRTHaishinKit/Sources/SRT/CompressedAudioFrame.swift`, `SRTStream.swift`, `CandidateTransportMeasurement.swift`, SDK tests and README.
+- [x]   2. Add independent replay verifier tests before implementation. Mutate receipts, clocks, totals, order, keyframe packaging, audio cadence/coverage/format/generation, size and freshness. Implement `scripts/candidate-transport-cost.mjs` and v3 support in `native-candidate-measurement.mjs`, preserving historical output shapes. Validate exact counts against fixtures and ultimately actual native receipts.
+- [x]   3. Add source-window/lifecycle tests, implement the new Streaming owner and optional integration in PublishingCandidateEncoder/PublishingCandidateMeasurement. Forward the optional AAC observer through SRTPublisher/SRTMediaPublisher. Check pending count/byte bounds, delayed audio, missing audio timeout, wrong generation, cancellation while finishing, raw/encoded rejection, no reentry/deadlock, exact terminal joins and unchanged video-only behavior.
+- [x]   4. Connect the native fixture via CaptureStreamingModel, pin generation from the existing live startup receipt, serialize v3 evidence and require it in `test-native-app.mjs`. Test model serialization/lifecycle. Update provenance inventory and exact patch round trip.
+- [x]   5. Run SDK, clean Streaming, model and tooling suites, simulator and unsigned combined phone/Watch builds. Run fresh simultaneous 1080p archive / 240p live / 360p, 540p and 1080p candidate trials sequentially. Inspect actual archive/live frame identity, audio markers, pressure and candidate A/V receipts; independent replay must match exact mux totals. Preserve every failed run separately and correct root causes without relaxing existing media gates.
+- [x]   6. Obtain spec then quality review, fix regressions and rerun affected checks. Freeze new native evidence, verify all 3,612 prior files unchanged, hash final sources/runtime/evidence, update the main plan and commit. Keep the full goal active: repeated headroom admission, upward/recovery trials, long sessions, physical devices and remote workers still require evidence.
 
 Use the existing isolated worktree `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Set `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer` for all Apple tools. Parent owns heavy jobs sequentially; no external stream, deployment or license acceptance. New evidence prefix: `candidate-av-window-`.
-
 
 Clock verification: this Apple Silicon machine reports a 125/3 ns Mach host tick.
 An actual AVAudioTime extrapolation probe at 44.1 kHz measured cadence rounding
@@ -41,7 +40,6 @@ The implementation and independent replay allow 100 ns for host tick conversion
 and nanosecond CMTime rounding, still far below one audio sample. Both native and
 JavaScript positive clock tests failed before this correction; missing-packet,
 format, frame, coverage and lifecycle gates remain intact.
-
 
 ## Verified outcome
 
@@ -52,10 +50,10 @@ independent 1080p recording and 240p live publishing. Every candidate reconciled
 cost exactly:
 
 | Candidate | MPEG-TS bytes | SRT payload messages | AAC packets / bytes | Application payload rate |
-| --- | ---: | ---: | ---: | ---: |
-| 360p30 | 1,962,156 | 1,702 | 188 / 9,836 | 3.925 Mbps |
-| 540p30 | 1,933,392 | 1,690 | 188 / 9,836 | 3.867 Mbps |
-| 1080p30 | 3,572,376 | 2,934 | 188 / 9,867 | 7.145 Mbps |
+| --------- | ------------: | -------------------: | ------------------: | -----------------------: |
+| 360p30    |     1,962,156 |                1,702 |         188 / 9,836 |               3.925 Mbps |
+| 540p30    |     1,933,392 |                1,690 |         188 / 9,836 |               3.867 Mbps |
+| 1080p30   |     3,572,376 |                2,934 |         188 / 9,867 |               7.145 Mbps |
 
 These are measured costs for the structured test source, including startup and
 packaging; they exclude SRT control/retransmission and lower-layer network costs.

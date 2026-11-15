@@ -66,13 +66,13 @@ worker joins. The user's standing autonomy authorization covers this integration
 
 - [x] Add descriptor and optional/default publisher getter API.
 - [x] Write behavioral failing tests for origin validation; initially absent, later
-  available/equal/nil/contradictory cached mappings; stop during a suspended read;
-  retained history and replacement isolation. Add wrapper tests for prepared,
-  starting, stopped, cancelled and unhealthy reads and stop while getter suspended.
+      available/equal/nil/contradictory cached mappings; stop during a suspended read;
+      retained history and replacement isolation. Add wrapper tests for prepared,
+      starting, stopped, cancelled and unhealthy reads and stop while getter suspended.
 - [x] Implement monitor sampling/caching with no callback tasks, outside locks and
-  post-await state checks; implement exact SDK conversion and wrapper forwarding.
+      post-await state checks; implement exact SDK conversion and wrapper forwarding.
 - [x] Run focused/full Media and Streaming tests and retain red/green evidence.
-  Obtain specification and quality reviews of the foundation.
+      Obtain specification and quality reviews of the foundation.
 
 ## Task 2: Actual native transport evidence
 
@@ -80,18 +80,18 @@ worker joins. The user's standing autonomy authorization covers this integration
 `scripts/test-dual-output.mjs`, `scripts/publishing-clock-evidence.mjs` and tests.
 
 - [x] Export the actual native adapter descriptor in the normal dual-output fixture
-  after source production and before/after joined shutdown. Require a chosen mapping for
-  normal and 123.25-second-origin publication; no guessed origin for recording-only
-  or unavailable publication. Preserve all existing frame/A/V/rate/memory gates.
+      after source production and before/after joined shutdown. Require a chosen mapping for
+      normal and 123.25-second-origin publication; no guessed origin for recording-only
+      or unavailable publication. Preserve all existing frame/A/V/rate/memory gates.
 - [x] Compare the actual adapter origin exactly with this fixture's known common
-  audio/video source origin (0 or 493/4 seconds). Validate full-width generation,
-  fixed projection constants and unavailable clock after stop. Test the evidence
-  checker against malformed/lossy/contradictory values. This fixture uses SRTPublisher
-  directly; session caching/retention is covered by unit tests and the later app
-  qualification, not relabeled as an existing dual-output behavior. Keep mapping
-  availability separate from transport success in stalled/absent-receiver cases.
+      audio/video source origin (0 or 493/4 seconds). Validate full-width generation,
+      fixed projection constants and unavailable clock after stop. Test the evidence
+      checker against malformed/lossy/contradictory values. This fixture uses SRTPublisher
+      directly; session caching/retention is covered by unit tests and the later app
+      qualification, not relabeled as an existing dual-output behavior. Keep mapping
+      availability separate from transport success in stalled/absent-receiver cases.
 - [x] Clean the downstream package graph for the added source, run five-scenario
-  dual-output, and compile combined Apple device/simulator targets as warranted.
+      dual-output, and compile combined Apple device/simulator targets as warranted.
 
 ## Task 3: App scope and fixture integration
 
@@ -99,14 +99,14 @@ worker joins. The user's standing autonomy authorization covers this integration
 `VideoObservationFixture.swift`, associated Film model/export tests and native runner.
 
 - [x] Expose a scoped clock observation tied to the existing logical recording,
-  match, broadcast, publishing attempt and profile scope, with historical closure.
+      match, broadcast, publishing attempt and profile scope, with historical closure.
 - [x] Test unavailable origins, early stop, stale teardown/replacement, diagnostic
-  failure and scalar fixture serialization; no scope may silently borrow another
-  session's descriptor. Retain exact rational origin and native generation.
+      failure and scalar fixture serialization; no scope may silently borrow another
+      session's descriptor. Retain exact rational origin and native generation.
 - [x] Extend the native app qualification exporter/checker and run the complete
-  local workflow, keeping local-recording, scoring, A/V and freshness gates intact.
+      local workflow, keeping local-recording, scoring, A/V and freshness gates intact.
 - [x] Document actual evidence and remaining worker-session/matched-interval work.
-  Complete specification/quality review and commit coherent verified checkpoints.
+      Complete specification/quality review and commit coherent verified checkpoints.
 
 ## Tasks 1–2 verification checkpoint
 

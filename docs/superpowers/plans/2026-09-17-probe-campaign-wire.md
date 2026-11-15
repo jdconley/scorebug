@@ -108,11 +108,9 @@ alignment issue. Production upgrades, repeated native ramps and network-loss
 recovery remain explicitly unqualified. No physical device or remote proxy was
 used in this checkpoint.
 
-
 Unsigned combined iPhone/Watch Release builds successfully under licensed Xcode
 26.2, including the Watch arm64_32 compiler target. The final raw/source inventory
 is `artifacts/qa/probe-campaign-wire-final-verification.json`.
-
 
 Final verification rehashed all 11,836 frozen prior evidence files without changes.
 All 1,810 unit/model/API tests above pass, along with Go race checks, native

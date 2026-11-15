@@ -279,13 +279,13 @@ with SQLite, including any schema/version compatibility needed for API rollback.
 The worker does not rotate/delete recordings: monitor storage and prune only owned,
 completed exports under an explicit retention policy.
 
-| Backend/runtime                               | Evidence currently recorded                                                                 | Still required                                                    |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Native macOS software/VideoToolbox            | Local real worker/media tests and documented soaks                                          | New host/profile and sustained device acceptance                  |
-| Linux arm64 CPU image on this Mac's Docker VM | Compiled worker/timing plus120s native Mac→SRT→Linux proxy→mock RTMP/MP4; confirmed240→360, continuous saved A/V | Full ladder, sustained and actual Linux-host qualification         |
-| Linux amd64 CPU                               | CI has container/relay/software-worker jobs                                                 | Inspect a passing target-runtime result; no new pass claimed here |
-| NVIDIA Linux container/native                 | Config and file-processing harness accept NVENC                                             | Actual driver/toolkit/image/media qualification; unqualified here |
-| Windows/WSL2, remote/cloud hosts              | No transferable qualification from the Mac                                                  | Actual host/runtime/network qualification                         |
+| Backend/runtime                               | Evidence currently recorded                                                                                      | Still required                                                    |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Native macOS software/VideoToolbox            | Local real worker/media tests and documented soaks                                                               | New host/profile and sustained device acceptance                  |
+| Linux arm64 CPU image on this Mac's Docker VM | Compiled worker/timing plus120s native Mac→SRT→Linux proxy→mock RTMP/MP4; confirmed240→360, continuous saved A/V | Full ladder, sustained and actual Linux-host qualification        |
+| Linux amd64 CPU                               | CI has container/relay/software-worker jobs                                                                      | Inspect a passing target-runtime result; no new pass claimed here |
+| NVIDIA Linux container/native                 | Config and file-processing harness accept NVENC                                                                  | Actual driver/toolkit/image/media qualification; unqualified here |
+| Windows/WSL2, remote/cloud hosts              | No transferable qualification from the Mac                                                                       | Actual host/runtime/network qualification                         |
 
 `WORKER_REPORT_INTERVAL_MS` controls the delay between completed status reports
 (default 100, integer range 100–5000). The native quality-control simulator fixture

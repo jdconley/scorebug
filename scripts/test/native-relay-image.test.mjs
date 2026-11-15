@@ -61,10 +61,18 @@ test('repeated relay selection requires an actual boolean', () => {
 const owned = { ...repeated, repeatedReceiverProbe: false, ownedReceiverProbe: true };
 test('owned retries require campaign-v3 even with a staged three-rate measurement', () => {
   assert.equal(nativeRelayImageTag(owned), 'scorebug/ingest:campaign-probe-v3');
-  assert.equal(nativeRelayImageTag({ ...owned, ownedReceiverProbe: false }), 'scorebug/ingest:staged-probe-hd-v2');
+  assert.equal(
+    nativeRelayImageTag({ ...owned, ownedReceiverProbe: false }),
+    'scorebug/ingest:staged-probe-hd-v2',
+  );
 });
 test('owned relay selection requires its complete probe route and a boolean', () => {
-  for (const key of ['requirePublication', 'requireReceiverProbe', 'stagedReceiverProbe', 'candidateHeadroom'])
+  for (const key of [
+    'requirePublication',
+    'requireReceiverProbe',
+    'stagedReceiverProbe',
+    'candidateHeadroom',
+  ])
     assert.throws(() => nativeRelayImageTag({ ...owned, [key]: false }));
   for (const value of [null, 0, 1, 'true', 'false'])
     assert.throws(() => nativeRelayImageTag({ ...owned, ownedReceiverProbe: value }));

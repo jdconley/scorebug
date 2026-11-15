@@ -252,7 +252,6 @@ quality fixture described below. Production activation and real bitrate trial/ro
 under impairment remain required. See the
 [binding plan](superpowers/plans/2026-09-16-quality-telemetry-binding.md).
 
-
 ## Opt-in native control qualification
 
 The [native quality loop](superpowers/plans/2026-09-16-native-quality-loop.md) now
@@ -272,7 +271,6 @@ repeat `native-app-UN3C23` also confirms one trial, preserves all 3696 archive a
 3266 acquired live frames, and passes the frozen workload bands at roughly 12 Mbps
 local / 7.3–7.6 Mbps live. All saved media gates pass. Test-only pressure/cadence limits
 still do not qualify production capacity, physical devices or remote workers.
-
 
 ## Local pressure without receiver evidence
 

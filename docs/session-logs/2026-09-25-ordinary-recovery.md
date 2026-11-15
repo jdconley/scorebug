@@ -34,7 +34,7 @@ Preparation process11068 joins0. Four commands (copy, complete A/V decode with
 
 - 18,000consecutive source identities0–17999 over600seconds.
 - 48k audio28800602samples; maximum discontinuity~1microsecond and cumulative
- timeline error~0.5microseconds.
+  timeline error~0.5microseconds.
 - A/V start aligned, tail difference~12.542milliseconds.
 - SHA256`6c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6`.
 

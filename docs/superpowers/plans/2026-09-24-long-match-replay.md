@@ -101,7 +101,6 @@ to 4K. Inspect and select an in-game rally excerpt for additional content covera
 These two-minute checks do not establish game-length thermal reliability,
 physical capture, automatic adaptation or viewer delivery deadlines.
 
-
 ## Fresh v2 campaign declaration
 
 Preserve the original failed campaign. Run the same prepared sources and native
@@ -118,7 +117,6 @@ sample away whose correlation is within 0.005 of the winner. A repeated-tone
 negative control exercises this conservative ambiguity heuristic; it cannot
 establish uniqueness outside the search range or for arbitrary repetitive audio.
 The three windows remain sampled waveform evidence, not all-audio fidelity.
-
 
 ## Fresh v2 campaign: both cases pass
 
@@ -137,14 +135,14 @@ recorder all exit zero naturally. Both owned ports release after each case.
 All 1,173 repository and eight runner/input/executable hashes stay unchanged
 against `artifacts/qa/long-match-v2-source.json`.
 
-| Observation | 1080p CPU | 4K CPU |
-| --- | --- | --- |
-| Sender elapsed | 120.887 s | 120.913 s |
-| Maximum source scheduling lag | 59.768 ms | 2.666 ms |
-| Maximum archive / live video gap | 33.334 / 34 ms | 33.334 / 34 ms |
+| Observation                                | 1080p CPU           | 4K CPU              |
+| ------------------------------------------ | ------------------- | ------------------- |
+| Sender elapsed                             | 120.887 s           | 120.913 s           |
+| Maximum source scheduling lag              | 59.768 ms           | 2.666 ms            |
+| Maximum archive / live video gap           | 33.334 / 34 ms      | 33.334 / 34 ms      |
 | Minimum archive / live sampled correlation | 0.999438 / 0.998608 | 0.999881 / 0.999623 |
-| Measured archive / live A/V lag | 0 / 65.219 ms | 0 / 65.219 ms |
-| Sampled lag spread | 0 ms | 0 ms |
+| Measured archive / live A/V lag            | 0 / 65.219 ms       | 0 / 65.219 ms       |
+| Sampled lag spread                         | 0 ms                | 0 ms                |
 
 All sampled peaks are interior and unambiguous under the declared heuristic.
 Decoded AAC padding remains visible: 20 ms extra archive PCM and about 24 ms

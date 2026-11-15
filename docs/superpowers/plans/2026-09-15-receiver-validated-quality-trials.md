@@ -78,21 +78,21 @@ new `ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/QualityTrialTests.swift`,
 existing policy tests and documentation.
 
 - [x] Add fake-time tests and compile interface stubs. Verify failures before behavior.
-  Cover 30s prerequisite, explicit unknown-capacity trial, no trial with any other
-  missing/stale/bad input, maximum10% step, no resolution jump, exact acknowledgment,
-  10s confirmation, wrong revision/attempt, gaps, deadline, no-window rollback polling,
-  failed rollback retry,60s cooldown, and invalid input sticky rollback.
+      Cover 30s prerequisite, explicit unknown-capacity trial, no trial with any other
+      missing/stale/bad input, maximum10% step, no resolution jump, exact acknowledgment,
+      10s confirmation, wrong revision/attempt, gaps, deadline, no-window rollback polling,
+      failed rollback retry,60s cooldown, and invalid input sticky rollback.
 - [x] Implement strategy selection and recommendation kind without changing existing
-  capacity-qualified decisions. Implement the small probation state and deadline API;
-  validate exact trial/rollback acknowledgments before mutating applied truth.
+      capacity-qualified decisions. Implement the small probation state and deadline API;
+      validate exact trial/rollback acknowledgments before mutating applied truth.
 - [x] Run all Core tests. Independently review state-machine transitions, deadlines,
-  evidence freshness, rollback priority and integer limits. Add regressions for any
-  reproduced review issue.
+      evidence freshness, rollback priority and integer limits. Add regressions for any
+      reproduced review issue.
 - [x] Compile shared Core for arm64_32 watchOS 10 and run the combined unsigned
-  iPhone/Watch Release build. Keep model compatibility and legacy policy tests green.
+      iPhone/Watch Release build. Keep model compatibility and legacy policy tests green.
 - [x] Update adaptive-policy/telemetry and parent milestone plan: unknown capacity
-  blocks confirmed capacity-based increases but can permit explicitly provisional
-  receiver-validated trials. Record evidence/hashes and commit.
+      blocks confirmed capacity-based increases but can permit explicitly provisional
+      receiver-validated trials. Record evidence/hashes and commit.
 
 Commands use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`:
 `swift test --package-path ios/Packages/ScorebugCore`, and

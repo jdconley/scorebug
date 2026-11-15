@@ -25,11 +25,9 @@ Add `SRTStream.TransportSendObservation` with generation, FIFO sequence, phase (
 - [x] Run one new owned 4K VideoToolbox experiment with trace and host samples, stopping at the first failure. Reconcile last dequeued payload duration, pending count and the latched failure; keep earlier runs untouched.
 - [ ] Use measured evidence to select the smallest transport fix and a deterministic regression. Validate independent recording, native unit/build checks and new real-match runs; document unresolved scope honestly.
 
-
 Review identified that unhealthy SRT close cancels/discards the transport task without joining it; the health-failed stop policy skips finish. Therefore the tool collector deliberately exposes a sealed prefix, not a complete trace. An unmatched start cannot prove a stalled send. Tests exercise late return after seal, generation matching, idempotence and bounded overflow. The existing failed-write stream test exercises finish, not the unhealthy-close join path. No shutdown behavior is changed.
 
 Diagnostic verification: focused RED failed on missing observer API; focused GREEN and all 291 vendor tests passed. A clean Streaming rebuild passed all 170 tests. Collector RED failed on the missing type, then all nine SDKProbe tests passed and tools built. The maintained vendor patch verifies all162 original hashes and an exact round trip. Independent review approves the sealed-prefix design. Native reproduction and final simulator validation follow.
-
 
 ### Transport trace reproduction
 
@@ -55,7 +53,6 @@ resumption. It is diagnostic only; keep queues, pacing and cancellation unchange
 Use failing vendor tests, collector tests, maintained-patch verification and a new
 bounded reproduction. Do not call a long inner interval a native syscall measurement.
 
-
 The four-phase diagnostic is implemented and independently reviewed. Failing-first
 vendor tests rejected the absent phases; then all292 vendor tests and all10 SDKProbe
 tests passed. Early disconnected/stale guards omit the inner pair, failed writes
@@ -64,7 +61,6 @@ The maintained patch verifies162 upstream hashes and exact round trip. The faile
 case above delivered83 proxy-decoded frames; all six owned ports were released.
 Next run the reviewed diagnostic on a new frozen source; final native model and
 simulator checks remain required before closing this diagnostic checkpoint.
-
 
 ### Inner call localizes actor resumption
 
@@ -88,13 +84,11 @@ queue, lifecycle and failure behavior. Tests verify timing encloses the injected
 conversion, failure status remains latched and compressed inputs are excluded.
 Clean consumers after the public Swift API change, then use one bounded reproduction.
 
-
 Submission diagnostics passed failing-first tests, then all294 vendor tests and a
 clean build of all10 SDKProbe tests. Maintained vendor provenance verifies162
 upstream hashes and exact patch round trip. Independent review approves the change.
 Submission observations are emitted on return; absent rows do not prove a native
 call is still blocked. The measured wrapper includes synchronous callback work.
-
 
 ### Measured cause and implementation
 
@@ -169,7 +163,6 @@ remain unchanged. Worker and recorder exit zero; simulator deletion completes.
 The harness also reports a secondary cleanup failure related to its failed owned
 fault task. Do not claim full cleanup success or a complete media pass from UI
 success. Preserve the earlier complete `89926f4` qualification separately.
-
 
 The one-frame recovery correction is implemented in `d73461b`; 502 native model
 and 3,353 JS tool tests plus simulator build pass. Its fresh native run `hT3aOi`

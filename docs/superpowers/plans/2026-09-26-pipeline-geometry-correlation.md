@@ -31,7 +31,7 @@ return PIPELINE_READ_KEY_PREFIX + pipelineReadId;
 Node callers derive the key using:
 
 ```ts
-createHash('sha256').update(input, 'utf8').digest('hex')
+createHash('sha256').update(input, 'utf8').digest('hex');
 ```
 
 - [x] Add a third optional readonly argument `start(input, onProgress, metadata?)`, preserving compatibility with existing two-argument callbacks. Populate metadata from the already-generated `identified.pipelineReadId`. Preserve the existing identified URL and private reporter observation exactly. Metadata is immutable and tied to that single call. Invalid or unsupported identity omits the key and never fails pipeline startup. Do not generate another ID or parse the URL again.
@@ -62,6 +62,7 @@ policyDecodedFrameCount
 ```
 
 Use signed integer decimal strings in the existing1/90000 decoded clock; do not reuse the nonnegative floating-time diagnostic parser. Preserve source-PTS/capture-uptime mapping and source scope. Missing identity stays missing. Tests reject stale accepted state, changed scope, closed session and unavailable key; test exact values from a validated observation.
+
 - [x] Verify populated pressure-cause plus pending/application/trial diagnostics remain at most4096bytes, with these protected fields and appliedTransition preserved. Do not silently leave older diagnostics visible if the protected payload cannot fit. Resolve demonstrated budget failures explicitly without removing ownership or causal evidence.
 
 ## 4. Verification and completion
