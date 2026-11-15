@@ -198,22 +198,12 @@ it('matches the shared native/TypeScript JSON contract fixture', () => {
       'utf8',
     ),
   );
-  // The shared v1 fixture (mirrored byte-for-byte in the Swift test bundle)
-  // predates scorebugStyle, pendingSetEnd and output. Snapshots now add them;
-  // Swift decoding ignores unknown fields.
-  const styled = (snapshot: object) => ({
-    ...snapshot,
-    scorebugStyle: 'bar',
-    pendingSetEnd: null,
-    output: { destinationId: null, recordOnly: false },
-  });
+  // The shared v1 fixture is mirrored byte-for-byte in the Swift test bundle and
+  // carries scorebugStyle, pendingSetEnd and output, which the Swift app decodes.
   const db = store();
-  expect(db.create(fixture.creation)).toEqual(styled(fixture.snapshot));
+  expect(db.create(fixture.creation)).toEqual(fixture.snapshot);
   db.issueCredential(fixture.creation.id, fixture.creation.deviceId, 'score');
-  expect(db.execute(fixture.command)).toEqual({
-    ...fixture.outcome,
-    snapshot: styled(fixture.outcome.snapshot),
-  });
+  expect(db.execute(fixture.command)).toEqual(fixture.outcome);
 });
 it('keeps the scorebug style outside scoring history and requires the current scorer', () => {
   const db = store();
