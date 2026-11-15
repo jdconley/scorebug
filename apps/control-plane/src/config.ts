@@ -25,6 +25,19 @@ const schema = z
     /** Comma-separated origins for CORS. `*` allows any. Default `*` for personal-scale use. */
     CORS_ORIGINS: z.string().default('*'),
     DATABASE_PATH: z.string().min(1).default('data/scorebug.sqlite'),
+    /**
+     * Public HTTPS base for setup and invite links, e.g. https://scorebug.example.com.
+     * Required to mint links (the request's Host header is never used); compose
+     * requires it and install.sh always writes it.
+     */
+    PUBLIC_URL: z
+      .string()
+      .url()
+      .refine((value) => {
+        const url = new URL(value);
+        return ['http:', 'https:'].includes(url.protocol) && !url.search && !url.hash;
+      })
+      .optional(),
     RELAY_API_URL: z.string().url().optional(),
     RELAY_API_USERNAME: z.string().min(1).optional(),
     RELAY_API_PASSWORD: z.string().min(1).optional(),
@@ -59,5 +72,6 @@ const schema = z
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return schema.parse(env);
+  // Compose passes `${PUBLIC_URL:-}`: empty means unset.
+  return schema.parse({ ...env, PUBLIC_URL: env.PUBLIC_URL || undefined });
 }

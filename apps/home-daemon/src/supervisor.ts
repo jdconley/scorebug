@@ -11,6 +11,8 @@ export type WorkerInput = {
   readUrl: string;
   sourceReady: boolean;
   outputId: string;
+  /** The match's destination from the control plane (contains the stream key); null = OUTPUT_URL. */
+  publishUrl?: string | null;
 };
 export type WorkerState = {
   state:

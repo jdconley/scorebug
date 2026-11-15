@@ -18,7 +18,7 @@ import {
 } from '@scorebug/protocol';
 import { WorkerObservations, WorkerObservationError } from '../worker-observations.js';
 import { publicationStatus } from '../worker-publication.js';
-import { bearer } from '../auth.js';
+import { bearer, ownerAuth } from '../auth.js';
 import type { Config } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
 import { MediaStoreError } from '../media-store.js';
@@ -109,7 +109,7 @@ export function mediaRoutes(
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono<Env>();
-  const installation = bearer(config.PHONE_TOKEN, 'installation');
+  const installation = ownerAuth(config.PHONE_TOKEN, matches.account);
   const scoped = createMiddleware<Env>(async (c, next) => {
     const token = c.req.header('authorization')?.match(/^Bearer (.+)$/i)?.[1] ?? '';
     const credential = matches.authenticate(c.req.param('id') ?? '', token);

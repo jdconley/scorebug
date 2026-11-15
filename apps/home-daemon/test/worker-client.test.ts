@@ -91,6 +91,8 @@ it('loads source access between two snapshots and uses the latest authoritative 
     readUrl: connection().connection.readUrl,
     sourceReady: true,
     outputId: 'local-sink',
+    // Control planes from before destinations send no output: OUTPUT_URL applies.
+    publishUrl: null,
   });
   expect(f.requests.map((r) => r.path)).toEqual([
     '/prefix/v1/worker/snapshot?workerId=mac',
@@ -174,4 +176,27 @@ it('carries the scorebug style, best-of and completed sets into the overlay', as
   });
   Object.assign(styled.assignment.match, { scorebugStyle: 'hologram' });
   expect(JSON.parse((await f.client.load())!.overlay).style).toBe('bar');
+});
+
+it('takes the match destination from the latest snapshot and rejects non-RTMP outputs', async () => {
+  const withOutput = (publishUrl: string | null) => {
+    const value = snapshot() as ReturnType<typeof snapshot> & {
+      assignment: { output?: { destinationId: string | null; publishUrl: string | null } };
+    };
+    value.assignment.output = { destinationId: publishUrl ? 'youtube' : null, publishUrl };
+    return value;
+  };
+  const destination = 'rtmps://a.rtmp.youtube.com/live2/private-stream-key';
+  const f = await fixture((_path, index) => ({
+    body: index === 2 ? connection() : withOutput(destination),
+  }));
+  expect((await f.client.load())?.publishUrl).toBe(destination);
+  const fallback = await fixture((_path, index) => ({
+    body: index === 2 ? connection() : withOutput(null),
+  }));
+  expect((await fallback.client.load())?.publishUrl).toBeNull();
+  const unsafe = await fixture((_path, index) => ({
+    body: index === 2 ? connection() : withOutput('file:///etc/passwd'),
+  }));
+  await expect(unsafe.client.load()).rejects.toThrow('invalid_worker_response');
 });

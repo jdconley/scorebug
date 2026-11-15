@@ -38,6 +38,8 @@ services:
       PORT: 8787
       HOST: 0.0.0.0
       DATABASE_PATH: /data/scorebug.sqlite
+      # Base URL in phone setup and match invite links; install.sh writes it.
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL to the public https URL (re-run infra/install.sh)}
       INGEST_HOST: ${INGEST_HOST:?Set the externally reachable SRT hostname}
       INGEST_PORT: ${INGEST_PORT:-8890}
       RELAY_API_URL: http://mediamtx:9997

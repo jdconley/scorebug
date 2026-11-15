@@ -11,6 +11,10 @@ const schema = z
       .string()
       .refine((value) => value.trim().length > 0)
       .optional(),
+    /**
+     * Fallback RTMP(S) destination for matches the control plane assigns no
+     * destination; optional because destinations normally come from the server.
+     */
     OUTPUT_URL: z
       .string()
       .url()
@@ -29,12 +33,6 @@ const schema = z
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   })
   .superRefine((config, context) => {
-    if (config.OUTPUT_MODE !== 'record' && !config.OUTPUT_URL)
-      context.addIssue({
-        code: 'custom',
-        path: ['OUTPUT_URL'],
-        message: 'RTMP output requires OUTPUT_URL',
-      });
     if (config.OUTPUT_MODE !== 'rtmp' && !config.OUTPUT_RECORDING_DIR)
       context.addIssue({
         code: 'custom',
@@ -48,6 +46,8 @@ export type Config = z.infer<typeof schema>;
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return schema.parse({
     ...env,
+    // Compose passes `${OUTPUT_URL:-}`: empty means "no fallback".
+    OUTPUT_URL: env.OUTPUT_URL || undefined,
     ENCODER: env.ENCODER ?? (env.NVENC_ENABLED?.toLowerCase() === 'true' ? 'nvenc' : 'software'),
   });
 }

@@ -4,7 +4,7 @@
 #   infra/install.sh [server] [options]   set up / upgrade the server (default)
 #   infra/install.sh worker [options]     run the worker on a home Linux machine
 #   infra/install.sh status               check a running server
-#   infra/install.sh phone                print the phone app settings again
+#   infra/install.sh phone                print a new one-time phone setup link
 #
 # Run `infra/install.sh --help` for every option.
 set -eu
@@ -19,6 +19,8 @@ SPLIT_WORKER_ENV=$SERVER_DIR/worker.env
 usage() {
   cat <<'EOF'
 Usage: infra/install.sh [server|worker|status|phone] [options]
+
+phone - print a new one-time phone setup link (QR code + link, 24 hours)
 
 server (default) - install or upgrade Caddy + API + SRT relay (+ worker)
   --topology all-in-one|split  all-in-one also runs the worker on this host;
@@ -183,20 +185,41 @@ check_local_https() {
   return 1
 }
 
-# ------------------------------------------------- phone setup (placeholder)
+# ---------------------------------------------------------- phone setup
 
+control_plane_cli() {
+  server_compose exec -T control-plane node apps/control-plane/dist/cli.js "$@"
+}
+
+# Mint a one-time setup link inside the API container and print it with a QR
+# code. The link is a single-use secret that expires in 24 hours.
 print_phone_setup() {
-  # TODO(pairing): replace this block with "print the one-time phone setup
-  # link" once phone pairing exists. Until then, the phone is configured by
-  # hand in the Film tab's streaming settings.
-  step 'Phone setup (manual until setup links exist)'
-  say "In the Scorebug app, open Film -> streaming settings and enter:"
-  say "  Server:              $(https_base)"
-  say "  Installation token:  $(env_get "$SERVER_ENV" PHONE_TOKEN)"
-  say "  Worker:              $(env_get "$SERVER_ENV" WORKER_ID)"
-  say "  Output:              $(env_get "$SERVER_ENV" OUTPUT_ID)"
-  say 'Treat the installation token like a password. Print it again any time with:'
+  step 'Phone setup'
+  qr=none
+  [ -t 1 ] && qr=ansi
+  if ! control_plane_cli setup-link --server "$(https_base)" --qr "$qr"; then
+    warn "could not mint a setup link; is the API running? Try again with: $0 phone"
+    return 0
+  fi
+  say ''
+  say 'Scan the QR code with the phone camera, or text the link to yourself and'
+  say 'open it on the phone. Each link sets up one phone. Another phone: run'
   say "  $0 phone"
+  say ''
+  say 'Older app versions without setup links: open Film -> streaming settings and enter'
+  say "  Server: $(https_base)   Worker: $(env_get "$SERVER_ENV" WORKER_ID)   Output: $(env_get "$SERVER_ENV" OUTPUT_ID)"
+  say "  Installation token: run  sed -n 's/^PHONE_TOKEN=//p' $SERVER_ENV"
+}
+
+# Save the YouTube URL from the installer as the default streaming destination
+# the first time; later changes happen in the app. Reads the URL from stdin so
+# the stream key never appears in a process list.
+seed_destination() {
+  set -- --name YouTube
+  # A stream URL/key given on this run also replaces the saved default.
+  [ "$OUTPUT_URL_GIVEN" -eq 1 ] && set -- "$@" --replace
+  printf '%s' "$OUTPUT_URL" | control_plane_cli seed-destination "$@" ||
+    warn 'could not save the YouTube destination; the worker uses OUTPUT_URL instead'
 }
 
 load_server_settings() {
@@ -224,6 +247,7 @@ INGEST_BIND=$INGEST_BIND
 HTTP_PORT=$HTTP_PORT
 HTTPS_PORT=$HTTPS_PORT
 CADDY_TLS=$CADDY_TLS
+PUBLIC_URL=$(https_base)
 PHONE_TOKEN=$PHONE_TOKEN
 HOME_TOKEN=$HOME_TOKEN
 RELAY_API_PASSWORD=$RELAY_API_PASSWORD
@@ -297,6 +321,8 @@ cmd_server() {
   check_docker
   say "$(docker compose version)"
 
+  OUTPUT_URL_GIVEN=0
+  [ -n "$OUTPUT_URL$RTMP_URL$STREAM_KEY" ] && OUTPUT_URL_GIVEN=1
   # Previous settings are the defaults, so re-running is an upgrade.
   TOPOLOGY=${TOPOLOGY:-$(env_get "$SERVER_ENV" SCOREBUG_TOPOLOGY)}
   DOMAIN=${DOMAIN:-$(env_get "$SERVER_ENV" CADDY_DOMAIN)}
@@ -403,6 +429,7 @@ cmd_server() {
   Usually DNS for $DOMAIN does not point at this host yet, or ports 80/443 are blocked.
   Fix that, then check again with: $0 status
   Caddy logs: docker compose -f $SERVER_DIR/docker-compose.yml logs caddy"
+  seed_destination
 
   if [ "$TOPOLOGY" = all-in-one ]; then
     step 'Waiting for the worker'
@@ -476,6 +503,7 @@ cmd_status() {
 }
 
 cmd_phone() {
+  check_docker
   load_server_settings
   print_phone_setup
 }
@@ -505,7 +533,8 @@ cmd_worker() {
     mv "$WORKER_ENV.tmp.$$" "$WORKER_ENV"
   fi
   [ -f "$WORKER_ENV" ] || die "give --env-file with the worker.env printed by the server install"
-  for key in CONTROL_PLANE_URL HOME_TOKEN WORKER_ID OUTPUT_ID OUTPUT_URL; do
+  # OUTPUT_URL is optional: destinations normally come from the server.
+  for key in CONTROL_PLANE_URL HOME_TOKEN WORKER_ID OUTPUT_ID; do
     [ -n "$(env_get "$WORKER_ENV" "$key")" ] || die "$key is missing from $WORKER_ENV"
   done
   api=$(env_get "$WORKER_ENV" CONTROL_PLANE_URL)

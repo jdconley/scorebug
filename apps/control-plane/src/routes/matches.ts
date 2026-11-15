@@ -5,10 +5,12 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import type { MatchCredential } from '@scorebug/protocol';
 import { SCOREBUG_STYLES } from '@scorebug/protocol';
-import { bearer } from '../auth.js';
+import { ownerAuth } from '../auth.js';
 import type { Config } from '../config.js';
 import { mediaRoutes } from './media.js';
 import { watchPairingRoutes } from './watch-pairings.js';
+import { inviteRoutes } from './account.js';
+import { defaultShortName } from '../scoring.js';
 import type { RelayLifecycle } from '../relay-lifecycle.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
@@ -20,10 +22,22 @@ const id = z
 const team = z
   .object({
     name: z.string().trim().min(1).max(80),
-    shortName: z.string().trim().min(1).max(8),
+    // Scorebug label: at most 8 characters (code points); defaults from the name.
+    shortName: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((value) => Array.from(value).length <= 8, {
+        message: 'Short name must be at most 8 characters',
+      })
+      .optional(),
     color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   })
-  .strict();
+  .strict()
+  .transform(({ shortName, ...value }) => ({
+    ...value,
+    shortName: shortName ?? defaultShortName(value.name),
+  }));
 const rules = z
   .object({
     bestOf: z.union([z.literal(3), z.literal(5)]),
@@ -46,8 +60,15 @@ const create = z
     teams: z.object({ home: team, away: team }).strict(),
     rules,
     scorebugStyle: z.enum(SCOREBUG_STYLES).optional(),
+    /** Stream to this owner destination; omitted uses the default destination. */
+    destinationId: z.uuid().optional(),
+    /** No broadcast at all: the phone only records. */
+    recordOnly: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => !(value.recordOnly && value.destinationId !== undefined), {
+    message: 'recordOnly and destinationId are mutually exclusive',
+  });
 const operation = z.discriminatedUnion('type', [
   z.object({ type: z.literal('award_point'), side: z.enum(['home', 'away']) }).strict(),
   z.object({ type: z.literal('undo') }).strict(),
@@ -86,7 +107,7 @@ export function matchesRoutes(
     c.header('Cache-Control', 'no-store');
     await next();
   });
-  const bootstrap = bearer(config.PHONE_TOKEN, 'installation');
+  const bootstrap = ownerAuth(config.PHONE_TOKEN, store.account);
   const scoped = createMiddleware<Env>(async (c, next) => {
     const token = c.req.header('authorization')?.match(/^Bearer (.+)$/i)?.[1] ?? '';
     const credential = store.authenticate(c.req.param('id') ?? '', token);
@@ -139,6 +160,7 @@ export function matchesRoutes(
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
   app.route('/:id/watch-pairings', watchPairingRoutes(config, store));
+  app.route('/:id/invites', inviteRoutes(config, store));
   app.route('/:id/media', mediaRoutes(config, store, relayLifecycle, observations));
   app.onError((error, c) => {
     if (error instanceof MatchStoreError)

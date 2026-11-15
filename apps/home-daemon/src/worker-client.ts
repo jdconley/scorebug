@@ -44,6 +44,18 @@ const assignmentSchema = z.object({
         scorebugStyle: z.enum(SCOREBUG_STYLES).optional().catch(undefined),
         broadcast: z.object({ desired, generation: integer }),
       }),
+      // Control planes from before destinations omit it: use OUTPUT_URL.
+      output: z
+        .object({
+          destinationId: id.nullable(),
+          publishUrl: z
+            .string()
+            .max(4096)
+            .url()
+            .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol))
+            .nullable(),
+        })
+        .optional(),
       media: z.object({
         gameId: id,
         broadcast: z.object({
@@ -166,6 +178,7 @@ export class WorkerClient {
       readUrl: connection.readUrl,
       sourceReady: connection.source.ready,
       outputId: latest.media.broadcast.selection!.outputId,
+      publishUrl: latest.output?.publishUrl ?? null,
     };
   }
 }

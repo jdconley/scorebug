@@ -238,7 +238,7 @@ it('migrates development v3 pairing rows without losing issued capabilities or r
   );
   const migrated = new DatabaseSync(file);
   try {
-    expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 4 });
+    expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 5 });
     expect(migrated.prepare('SELECT expired FROM watch_pairings').all()).toEqual([
       { expired: 0 },
       { expired: 0 },
@@ -508,7 +508,12 @@ it('matches the canonical issued/redeemed fixture consumed by native clients', (
   ).toEqual({
     ...fixture.redeemed,
     // The shared v1 fixture predates scorebugStyle; native decoders ignore it.
-    snapshot: { ...fixture.redeemed.snapshot, scorebugStyle: 'bar' },
+    snapshot: {
+      ...fixture.redeemed.snapshot,
+      scorebugStyle: 'bar',
+      pendingSetEnd: null,
+      output: { destinationId: null, recordOnly: false },
+    },
   });
 });
 

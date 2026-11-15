@@ -3,7 +3,9 @@ import type { MatchRules, ScoringOperation, ScoringState, Side } from '@scorebug
 import {
   applyScoringOperation,
   defaultRules,
+  defaultShortName,
   initialScoringState,
+  pendingSetEnd,
   ScoringError,
   validateRules,
 } from '../src/scoring.js';
@@ -278,5 +280,60 @@ describe('match rule validation', () => {
       }),
     ).not.toThrow();
     expect(() => validateRules({ ...defaultRules, pointCap: 25 })).not.toThrow();
+  });
+});
+
+describe('pendingSetEnd', () => {
+  const end = (state: ScoringState, rules = defaultRules) =>
+    applyScoringOperation(state, rules, { type: 'end_set' });
+  it('flags set point at 25, win by 2, for either side', () => {
+    expect(pendingSetEnd(atScore(24, 23), defaultRules)).toBeNull();
+    expect(pendingSetEnd(atScore(25, 23), defaultRules)).toEqual({ winner: 'home' });
+    expect(pendingSetEnd(atScore(24, 25), defaultRules)).toBeNull();
+    expect(pendingSetEnd(atScore(24, 26), defaultRules)).toEqual({ winner: 'away' });
+    expect(pendingSetEnd(atScore(30, 28), defaultRules)).toEqual({ winner: 'home' });
+  });
+  it('agrees with end_set: pending exactly when an unforced end_set is accepted', () => {
+    const rules: MatchRules = { ...defaultRules, pointCap: 27 };
+    for (let home = 0; home <= 28; home++)
+      for (let away = 0; away <= 28; away++) {
+        if (Math.max(home, away) > 27) continue;
+        const state = atScore(home, away, rules);
+        let accepted = true;
+        try {
+          end(state, rules);
+        } catch {
+          accepted = false;
+        }
+        expect(pendingSetEnd(state, rules) !== null, `${home}-${away}`).toBe(accepted);
+      }
+  });
+  it('uses the deciding-set target and the optional cap', () => {
+    let state = finishSet(finishSet(initialScoringState(), 'home'), 'away');
+    expect(state.score.set).toBe(3);
+    expect(pendingSetEnd(points(points(state, 'home', 14), 'away', 13), defaultRules)).toBeNull();
+    state = points(points(state, 'home', 15), 'away', 13);
+    expect(pendingSetEnd(state, defaultRules)).toEqual({ winner: 'home' });
+    const capped: MatchRules = { ...defaultRules, pointCap: 27 };
+    expect(pendingSetEnd(atScore(27, 26, capped), capped)).toEqual({ winner: 'home' });
+    expect(pendingSetEnd(atScore(26, 25, capped), capped)).toBeNull();
+  });
+  it('is null once the match is decided or ended', () => {
+    const won = finishSet(finishSet(initialScoringState(), 'home'), 'home');
+    expect(pendingSetEnd(won, defaultRules)).toBeNull();
+    const ended = applyScoringOperation(atScore(25, 10), defaultRules, {
+      type: 'end_match',
+      reason: 'rain',
+    });
+    expect(pendingSetEnd(ended, defaultRules)).toBeNull();
+  });
+});
+
+describe('defaultShortName', () => {
+  it('takes the first 8 characters of the collapsed name', () => {
+    expect(defaultShortName('Spikers')).toBe('Spikers');
+    expect(defaultShortName('  Bay   Area Juniors')).toBe('Bay Area');
+    expect(defaultShortName('Volleyball Club')).toBe('Volleyba');
+    expect(defaultShortName('Team 🏐🏐🏐🏐🏐')).toBe('Team 🏐🏐🏐');
   });
 });

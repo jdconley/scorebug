@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { bearer } from '../auth.js';
+import { ownerAuth } from '../auth.js';
 import type { Config } from '../config.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
@@ -10,7 +10,7 @@ export function watchPairingRoutes(config: Config, store: MatchStore) {
   const app = new Hono();
   app.post(
     '/',
-    bearer(config.PHONE_TOKEN, 'installation'),
+    ownerAuth(config.PHONE_TOKEN, store.account),
     zValidator(
       'json',
       z

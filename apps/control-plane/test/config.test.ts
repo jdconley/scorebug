@@ -104,3 +104,11 @@ it.each(['1', '65535'])('accepts publisher port boundary %s', (port) => {
       .INGEST_PUBLISH_PORT,
   ).toBe(Number(port));
 });
+it('treats an empty PUBLIC_URL as unset and rejects non-HTTP link bases', () => {
+  expect(loadConfig({ ...env, PUBLIC_URL: '' }).PUBLIC_URL).toBeUndefined();
+  expect(loadConfig({ ...env, PUBLIC_URL: 'https://scorebug.example.com' }).PUBLIC_URL).toBe(
+    'https://scorebug.example.com',
+  );
+  for (const PUBLIC_URL of ['ftp://x', 'https://x/?a=1', 'not a url'])
+    expect(() => loadConfig({ ...env, PUBLIC_URL })).toThrow();
+});

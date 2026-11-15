@@ -50,3 +50,26 @@ it('allocates nothing for RTMP-only mode and propagates recording directory fail
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+it('prefers the control-plane destination and needs some RTMP URL unless recording only', () => {
+  const config = { OUTPUT_MODE: 'rtmp' as const, OUTPUT_URL: 'rtmps://fallback/live/key' };
+  expect(outputs.allocatePipelineOutputs(config, 'rtmps://assigned/live/key2')).toEqual({
+    publishUrl: 'rtmps://assigned/live/key2',
+  });
+  expect(outputs.allocatePipelineOutputs(config, null)).toEqual({
+    publishUrl: 'rtmps://fallback/live/key',
+  });
+  expect(() => outputs.allocatePipelineOutputs({ OUTPUT_MODE: 'rtmp' }, null)).toThrow(
+    'missing_output_url',
+  );
+  const root = mkdtempSync(join(tmpdir(), 'scorebug-recordings-'));
+  try {
+    const recordOnly = outputs.allocatePipelineOutputs(
+      { OUTPUT_MODE: 'record', OUTPUT_RECORDING_DIR: root },
+      'rtmps://assigned/live/key2',
+    );
+    expect(recordOnly.publishUrl).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
