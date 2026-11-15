@@ -168,6 +168,16 @@ public struct RecoveredArchive: Sendable {
 
     /// Streams verified fragments into a new fragmented MP4; it does not remux them.
     public func assemble(to output: URL) throws {
+        try assemble(segments, to: output)
+    }
+
+    /// The initialization segment plus the first `mediaSegments` media fragments:
+    /// a short playable preview (thumbnails) without copying a whole recording.
+    public func assemblePrefix(mediaSegments: Int, to output: URL) throws {
+        try assemble(Array(segments.prefix(1 + max(1, mediaSegments))), to: output)
+    }
+
+    private func assemble(_ segments: [ArchiveSegment], to output: URL) throws {
         guard !segments.isEmpty else { throw ArchiveStoreError.initializationRequired }
         try Disk.requireDirectory(directory)
         try Disk.requireDirectory(output.deletingLastPathComponent())

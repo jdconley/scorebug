@@ -143,7 +143,7 @@ import ScorebugStreaming
                 try persist()
                 try makeCoordinator()
             }
-        } catch { needsStorageRetry = true; message = "Streaming setup could not be restored. Retry to read the saved connection. Recording is not affected." }
+        } catch { needsStorageRetry = true; message = "Couldn't read the saved stream settings. Recording continues; the stream will retry." }
     }
 
     /// Invoked in the same MainActor turn that clears FilmModel's context, before
@@ -154,7 +154,7 @@ import ScorebugStreaming
         if let requestedStart, context?.id != requestedStart.id || context?.tap !== requestedStart.tap {
             self.requestedStart = nil
             localState = .idle
-            message = "Streaming start canceled because the recording changed."
+            message = "The stream stopped because the recording changed."
         }
         current = context
         activeRecordingID = context?.id
@@ -195,7 +195,7 @@ import ScorebugStreaming
             busy = true
             defer { busy = false }
             try await joinActiveMatch()
-            message = "Connected. Start recording, then go live."
+            message = nil
         } catch { fail(error) }
     }
 
@@ -227,7 +227,7 @@ import ScorebugStreaming
         guard !controlFailed else { localState = .failed; return }
         guard canStart else {
             localState = .failed
-            message = "Streaming could not start while a previous request is unresolved. Retry, then go live again."
+            message = "The stream is still finishing its last request. Try going live again in a moment."
             return
         }
         _ = beginStreaming()
@@ -383,7 +383,7 @@ import ScorebugStreaming
                broadcast?.selection?.recordingId != recordingID || broadcast?.selection?.captureDeviceId != setup.deviceId {
                 cancelReconnect()
                 detachPublisher()
-                message = "The broadcast was stopped or changed elsewhere. Recording continues on this device."
+                message = "The stream was stopped from another device. Recording continues."
             }
         } catch {
             controlFailed = true
@@ -439,7 +439,7 @@ import ScorebugStreaming
             } else {
                 localState = .failed
                 cancelReconnect(); shouldStopOwnedBroadcast = true
-                message = "Streaming stopped. Your recording continues on this device."
+                message = "The stream stopped. Recording continues."
             }
             return
         }
@@ -577,7 +577,7 @@ import ScorebugStreaming
         do { try storage.save(setup); needsStorageRetry = false }
         catch { needsStorageRetry = true; throw CaptureControlError.storage }
     }
-    private static let serverUnreachableMessage = "Can't reach the server. Streaming continues; retrying automatically."
+    private static let serverUnreachableMessage = "Can't reach the server. The stream keeps going and will retry."
 
     /// Control-plane availability is independent of the SRT media connection.
     /// Never resurrect starts or explicit stops.
@@ -616,15 +616,15 @@ import ScorebugStreaming
         if localState == .starting { localState = .failed }
         if error as? CaptureControlError == .storage || error as? BroadcastCoordinatorError == .storageFailure {
             needsStorageRetry = true
-            message = "Streaming state could not be saved. Retry before changing setup. Recording is not affected."
+            message = "Couldn't save stream settings on this phone. Recording continues."
         } else if error as? CaptureControlError == .unresolved || commandState?.pending != nil {
-            message = "A previous streaming request is unresolved. Retry before changing setup."
+            message = "The stream is still finishing its last request. Recording continues."
         } else if error as? CaptureControlError == .noActiveMatch {
-            message = "No active match. Create or join a match in Score, then connect streaming."
+            message = "This match isn't open on the server, so it can't stream. Recording continues."
         } else if error as? CaptureControlError == .noSetup {
-            message = "Open Setup and enter the server and installation token before streaming."
+            message = "Connect this phone to your server to stream. Recording continues."
         } else {
-            message = "Couldn't start streaming. Check the server connection and retry. Recording is not affected."
+            message = "Couldn't start the stream. Recording continues."
         }
     }
 

@@ -174,7 +174,7 @@ import XCTest
         await model.startStreaming()
         XCTAssertEqual(model.status, .recordingOnly)
         XCTAssertEqual(model.localState, .failed)
-        XCTAssertTrue(model.message?.contains("Setup") == true)
+        XCTAssertTrue(model.message?.contains("Connect this phone") == true)
     }
 
     private func eventually(_ condition: @escaping () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {

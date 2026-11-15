@@ -91,6 +91,12 @@ public struct SetPointFlow: Equatable, Sendable {
         prompt = nil
     }
 
+    /// Shows a hidden set point again (after a failed "End set").
+    public mutating func forgetDecline(_ snapshot: MatchSnapshot) {
+        declinedKey = nil
+        prompt = SetPointPrompt(snapshot: snapshot)
+    }
+
     public mutating func answerSwap() { asksToSwap = false }
 
     public static func isDecided(_ snapshot: MatchSnapshot) -> Bool {

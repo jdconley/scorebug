@@ -275,6 +275,8 @@ struct CurrentCapture: Sendable {
         freeBytes = await library.availableBytes()
     }
 
+    func thumbnail(id: String) async -> URL? { await library.thumbnail(id: id) }
+
     /// Called at a modest UI cadence; no per-sample MainActor tasks are created.
     func pollHealth() async {
         if let recorder {

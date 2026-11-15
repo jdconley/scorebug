@@ -1,42 +1,29 @@
 import ScorebugCore
 import ScorebugMedia
 import SwiftUI
+import UIKit
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    /// Portrait everywhere except the live filming screen.
+    static var orientations: UIInterfaceOrientationMask = .portrait
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        UIDevice.current.userInterfaceIdiom == .pad ? .all : Self.orientations
+    }
+}
 
 @main
 struct ScorebugApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @StateObject private var app: AppModel
     @StateObject private var film: FilmModel
     @StateObject private var streaming: CaptureStreamingModel
-    @StateObject private var scoring = ScoringModel()
-    @StateObject private var phoneWatch: PhoneWatchModel
-    @StateObject private var connectivity: WatchSetupConnectivity
+    @StateObject private var watch = PhoneWatchLink()
     #if DEBUG
     private let recoveryLoopbackBridge: RecoveryLoopbackBridge?
     #endif
+
     init() {
-        let connectivity = WatchSetupConnectivity()
-        let forwarder = WatchRelayPhoneForwarder(timeout: 1.5, clientFactory: { MatchHTTPClient(endpoint: $0) })
-        let bootstrap = WatchBootstrapPhoneForwarder(timeout: 1.5, clientFactory: { MatchHTTPClient(endpoint: $0) })
-        let phoneWatch = PhoneWatchModel(storage: PhoneWatchRequestKeychain(),
-            onRelayBindingChanged: { try? forwarder.updateBinding($0) },
-            onBootstrapAuthorityChanged: { try? bootstrap.updateAuthority($0) },
-            sendEnvelope: { try connectivity.sendEnvelope($0) })
-        connectivity.noticeHandler = { [weak phoneWatch] in phoneWatch?.receive($0) }
-        connectivity.peerChangedHandler = { [weak phoneWatch] in phoneWatch?.peerChanged() }
-        connectivity.scoringRequestHandler = { [weak phoneWatch] data in
-            guard let phoneWatch else { return Data() }
-            // Retry a locked/unavailable Keychain read before each request.
-            phoneWatch.restoreRelayAssociation()
-            return await forwarder.forward(data)
-        }
-        connectivity.bootstrapRequestHandler = { [weak phoneWatch] data in
-            guard let phoneWatch else { return Data() }
-            phoneWatch.restoreRelayAssociation()
-            return await bootstrap.forward(data)
-        }
-        phoneWatch.restoreRelayAssociation()
-        connectivity.activate()
-        _connectivity = StateObject(wrappedValue: connectivity)
-        _phoneWatch = StateObject(wrappedValue: phoneWatch)
         let streaming = CaptureStreamingModel()
         #if DEBUG && targetEnvironment(simulator)
         let film = FilmModel(preferences: .standard, configuredSourceFactory: { profile in
@@ -53,6 +40,8 @@ struct ScorebugApp: App {
         film.onCaptureFinished = { [weak streaming] context, interrupted in streaming?.captureFinished(context, interrupted: interrupted) }
         _film = StateObject(wrappedValue: film)
         _streaming = StateObject(wrappedValue: streaming)
+        _app = StateObject(wrappedValue: AppModel(store: KeychainStore(), preferences: AppPreferences(),
+                                                  deviceName: { UIDevice.current.name }))
         #if DEBUG
         if let configuration = try? RecoveryLoopbackConfiguration(environment: ProcessInfo.processInfo.environment),
            let bridge = try? RecoveryLoopbackBridge(configuration: configuration) {
@@ -61,7 +50,21 @@ struct ScorebugApp: App {
         } else { recoveryLoopbackBridge = nil }
         #endif
     }
+
     var body: some Scene {
-        WindowGroup { ContentView(film: film, streaming: streaming, scoring: scoring, phoneWatch: phoneWatch, connectivity: connectivity) }
+        WindowGroup {
+            RootView(app: app, film: film, streaming: streaming, watch: watch)
+                .preferredColorScheme(.dark)
+                .tint(Theme.text)
+                .onAppear {
+                    watch.activate()
+                    #if DEBUG
+                    // Simulator QA: SCOREBUG_TEST_SETUP_LINK opens a setup link on launch.
+                    if let link = ProcessInfo.processInfo.environment["SCOREBUG_TEST_SETUP_LINK"], app.config == nil {
+                        app.open(link)
+                    }
+                    #endif
+                }
+        }
     }
 }

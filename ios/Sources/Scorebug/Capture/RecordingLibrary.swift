@@ -1,6 +1,9 @@
+import AVFoundation
 import Darwin
 import Foundation
+import ImageIO
 import ScorebugMedia
+import UniformTypeIdentifiers
 
 struct RecordingEntry: Identifiable, Sendable {
     enum Status: String, Sendable { case completed, recoverable, unavailable }
@@ -10,7 +13,10 @@ struct RecordingEntry: Identifiable, Sendable {
     let reason: String?
     let duration: Double
     let byteCount: Int64
+    /// Recorded picture height (1080 or 2160); nil when the archive is unreadable.
+    var height: Int? = nil
     var canExport: Bool { status != .unavailable }
+    var resolutionLabel: String? { height.map { $0 >= 2160 ? "4K" : "\($0)p" } }
 }
 
 struct RecordingDraft: Sendable {
@@ -125,6 +131,30 @@ actor RecordingLibrary {
         return result.url
     }
 
+    /// A JPEG still from early in the recording, cached beside the recordings.
+    /// Only the first few fragments are assembled, never the whole match.
+    func thumbnail(id: String) async -> URL? {
+        guard active[id] == nil, let directory = try? recordingURL(id) else { return nil }
+        let thumbnails = rootDirectory.appendingPathComponent("Thumbnails", isDirectory: true)
+        let destination = thumbnails.appendingPathComponent("\(id).jpg")
+        if FileManager.default.fileExists(atPath: destination.path) { return destination }
+        do {
+            try createSafeDirectory(thumbnails)
+            let archive = try ArchiveSegmentStore.recover(directory: directory)
+            guard archive.segments.contains(where: { $0.kind == .media }) else { return nil }
+            let preview = thumbnails.appendingPathComponent(".preview-\(UUID().uuidString).mp4")
+            defer { try? FileManager.default.removeItem(at: preview) }
+            try archive.assemblePrefix(mediaSegments: 2, to: preview)
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: preview))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 480, height: 270)
+            let (image, _) = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600))
+            guard let sink = CGImageDestinationCreateWithURL(destination as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+            CGImageDestinationAddImage(sink, image, [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
+            return CGImageDestinationFinalize(sink) ? destination : nil
+        } catch { return nil }
+    }
+
     func availableBytes() -> Int64? {
         guard (try? prepareRoot()) != nil else { return nil }
         let attributes = try? FileManager.default.attributesOfFileSystem(forPath: rootDirectory.path)
@@ -158,7 +188,7 @@ actor RecordingLibrary {
             let completed = status?.completedAt != nil && status?.failure == nil
             let reason = completed ? nil : status?.failure ?? statusIssue ?? "Recording was interrupted. Recover the video saved so far."
             return RecordingEntry(id: id, createdAt: createdAt, status: completed ? .completed : .recoverable,
-                                  reason: reason, duration: duration, byteCount: bytes)
+                                  reason: reason, duration: duration, byteCount: bytes, height: archive.profile.height)
         } catch {
             return RecordingEntry(id: id, createdAt: createdAt, status: .unavailable,
                                   reason: "Archive unavailable: \(error.localizedDescription)", duration: 0, byteCount: 0)
