@@ -26,9 +26,9 @@ it('publishing pacing is explicitly relative or absent', () => {
     expect(() => loadConfig({ ...env, SRT_PUBLISH_PACING: value })).toThrow();
 });
 
-it('preserves the existing ingest defaults when no publisher endpoint is configured', () => {
+it('falls back to loopback ingest only when no relay is configured', () => {
   const config = loadConfig(env);
-  expect(config.INGEST_HOST).toBe('ingest.scorebug.live');
+  expect(config.INGEST_HOST).toBe('127.0.0.1');
   expect(config.INGEST_PORT).toBe(8890);
   expect(config.INGEST_PUBLISH_HOST).toBeUndefined();
   expect(config.INGEST_PUBLISH_PORT).toBeUndefined();
@@ -40,10 +40,24 @@ it.each(['proxy.test', 'localhost', '127.0.0.1', '::1', '2001:db8::1'])(
     const config = loadConfig({ ...env, INGEST_PUBLISH_HOST: host, INGEST_PUBLISH_PORT: '19990' });
     expect(config.INGEST_PUBLISH_HOST).toBe(host);
     expect(config.INGEST_PUBLISH_PORT).toBe(19990);
-    expect(config.INGEST_HOST).toBe('ingest.scorebug.live');
+    expect(config.INGEST_HOST).toBe('127.0.0.1');
     expect(config.INGEST_PORT).toBe(8890);
   },
 );
+
+it('requires an explicit INGEST_HOST when a relay is configured', () => {
+  const relay = {
+    ...env,
+    RELAY_API_URL: 'http://relay.test:9997',
+    RELAY_API_USERNAME: 'admin',
+    RELAY_API_PASSWORD: 'relay-password',
+  };
+  expect(() => loadConfig(relay)).toThrow(/INGEST_HOST/);
+  expect(loadConfig({ ...relay, INGEST_HOST: 'scorebug.example.com' }).INGEST_HOST).toBe(
+    'scorebug.example.com',
+  );
+  expect(() => loadConfig({ ...relay, INGEST_HOST: 'srt://bad' })).toThrow();
+});
 
 it('requires both publisher endpoint settings together', () => {
   for (const partial of [{ INGEST_PUBLISH_HOST: 'proxy.test' }, { INGEST_PUBLISH_PORT: '19990' }])

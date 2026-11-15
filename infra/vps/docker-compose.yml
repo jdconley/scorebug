@@ -1,17 +1,28 @@
-# Run from this directory after preparing the private .env file.
+# Scorebug server stack. Normally started by ../install.sh, which writes the
+# private .env next to this file. See docs/self-hosting.md.
+#
+#   Split topology (worker runs at home):  docker compose up -d
+#   All-in-one (worker on this host):      docker compose --profile worker up -d
+#
+# Only Caddy (TCP 80/443) and the SRT relay (UDP 8890) are published. The API
+# and the relay management API stay on the private Compose network.
+name: scorebug
+
 services:
   caddy:
     image: ${CADDY_IMAGE:-caddy:2-alpine}
     restart: unless-stopped
     ports:
-      - '80:80'
-      - '443:443'
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+      - '${HTTPS_PORT:-443}:443/udp'
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
       CADDY_DOMAIN: ${CADDY_DOMAIN:?Set the public API domain}
+      CADDY_TLS: ${CADDY_TLS:-}
     depends_on:
       - control-plane
 
@@ -34,11 +45,21 @@ services:
       RELAY_API_USERNAME: scorebug-admin
       RELAY_API_PASSWORD: ${RELAY_API_PASSWORD:?Set a private relay management password}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://localhost.invalid}
-      LOG_LEVEL: info
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - control_data:/data
     expose:
       - '8787'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     depends_on:
       - mediamtx
     stop_grace_period: 30s
@@ -49,12 +70,66 @@ services:
       context: ../../vendor/MediaMTX
     restart: unless-stopped
     ports:
-      - '${INGEST_PORT:-8890}:8890/udp'
+      # INGEST_BIND is normally empty (all interfaces, IPv4 and IPv6). Set it to
+      # 127.0.0.1 only for a local test on Docker Desktop for Mac, whose
+      # wildcard UDP forwarding drops replies.
+      - '${INGEST_BIND:+${INGEST_BIND}:}${INGEST_PORT:-8890}:8890/udp'
     environment:
       MTX_AUTHINTERNALUSERS_1_PASS: ${RELAY_API_PASSWORD:?Set a private relay management password}
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+    networks:
+      default:
+        # An all-in-one worker resolves the public ingest name to the relay
+        # directly, so it never depends on NAT hairpinning back to this host.
+        aliases:
+          - ${INGEST_HOST:?Set the externally reachable SRT hostname}
     stop_grace_period: 10s
+
+  # All-in-one only: `docker compose --profile worker up -d`.
+  worker:
+    profiles: [worker]
+    build:
+      context: ../..
+      dockerfile: apps/home-daemon/Dockerfile
+    image: scorebug/home-daemon:${SCOREBUG_RELEASE:-local}
+    restart: unless-stopped
+    # The image's built-in `node` user; the worker needs no root privileges.
+    user: '1000:1000'
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    environment:
+      CONTROL_PLANE_URL: http://control-plane:8787
+      HOME_TOKEN: ${HOME_TOKEN:?Set a private worker token}
+      WORKER_ID: ${WORKER_ID:-local-worker}
+      OUTPUT_ID: ${OUTPUT_ID:-local-output}
+      OUTPUT_MODE: rtmp
+      OUTPUT_URL: ${OUTPUT_URL:-}
+      ENCODER: software
+      VIDEO_PROFILE: ${VIDEO_PROFILE:-720p30}
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
+      SCORE_DIR: /tmp/scorebug-worker
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      # Healthy = the worker process is up and its own URL, token and worker ID
+      # are accepted by the control plane. It does not prove a broadcast works.
+      test: ['CMD', 'node', '/app/infra/worker-health.mjs']
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    volumes:
+      - ../worker-health.mjs:/app/infra/worker-health.mjs:ro
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
 volumes:
   control_data:
