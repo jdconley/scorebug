@@ -345,10 +345,15 @@ try {
       assert.deepEqual(await response.json(), { error: rejection });
       return;
     }
-    if (!response.ok)
-      throw Object.assign(new Error(`Native relay request failed: HTTP ${response.status}`), {
-        status: response.status,
-      });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw Object.assign(
+        new Error(
+          `Native relay request failed: ${body ? 'POST' : 'GET'} ${path.split('?')[0]} HTTP ${response.status} ${detail}`,
+        ),
+        { status: response.status },
+      );
+    }
     return response.json();
   };
   console.log('Startup orphan cleanup and installation isolation verified.');
@@ -439,10 +444,12 @@ try {
     }
   }, 'automatic path restoration after relay restart');
   nativePublisher = start(publishArgs(access.publishUrl));
+  let oldConnection;
   await until(async () => {
     try {
-      return (await request('/v1/worker/connection?workerId=mac', workerToken)).connection?.source
-        .ready;
+      // Keep the ready snapshot: an immediate re-read can still race relay recovery.
+      oldConnection = (await request('/v1/worker/connection?workerId=mac', workerToken)).connection;
+      return oldConnection?.source.ready;
     } catch (error) {
       // Management/path recovery can precede source status availability. Keep the
       // same bounded restart wait; authentication and other failures still abort.
@@ -450,8 +457,6 @@ try {
       throw error;
     }
   }, 'source reconnect after relay restart');
-  const oldConnection = (await request('/v1/worker/connection?workerId=mac', workerToken))
-    .connection;
   const firstSession = await request('/v1/worker/sessions', workerToken, {
     workerId: 'mac',
     runId: 'first-checked-worker',
