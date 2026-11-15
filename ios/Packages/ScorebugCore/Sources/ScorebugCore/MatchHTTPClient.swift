@@ -97,23 +97,9 @@ public struct MatchHTTPClient: MatchScoringClient {
         try await send(path: [credential.gameId, "media"], token: credential.token)
     }
 
-    public func workerCapabilities(workerId: String, credential: MatchCredential) async throws -> WorkerCapabilitiesResponse {
-        try await send(path: [credential.gameId, "media", "capabilities"], token: credential.token,
-            requiresFreshResponse: true, query: [.init(name: "workerId", value: workerId)])
-    }
-
-    public func workerStatus(credential: MatchCredential, delivery: DecoderDeliveryRequest? = nil) async throws -> WorkerMediaStatusResponse {
-        var query: [URLQueryItem] = []
-        if let delivery {
-            query.append(.init(name: "decoderDelivery", value: "decoder-delivery-delta-v1"))
-            if case .after(let cursor) = delivery {
-                guard cursor.isValid else { throw MatchClientError.invalidIdentifier }
-                query.append(.init(name: "deliveryScope", value: cursor.scopeID))
-                query.append(.init(name: "deliveryAfter", value: String(cursor.lastOrdinal)))
-            }
-        }
-        return try await send(path: [credential.gameId, "media", "status"], token: credential.token,
-            requiresFreshResponse: true, query: query)
+    /// Summary worker state for display only.
+    public func workerStatus(credential: MatchCredential) async throws -> WorkerMediaStatusResponse {
+        try await send(path: [credential.gameId, "media", "status"], token: credential.token, requiresFreshResponse: true)
     }
 
     public func reportRecording(_ report: RecordingReport, credential: MatchCredential) async throws -> RecordingReportResponse {
