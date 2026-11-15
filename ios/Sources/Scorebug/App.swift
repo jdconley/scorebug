@@ -24,6 +24,14 @@ struct ScorebugApp: App {
     #endif
 
     init() {
+        #if DEBUG && targetEnvironment(simulator)
+        // Simulator QA only: start from a fresh install state.
+        if ProcessInfo.processInfo.environment["SCOREBUG_TEST_RESET"] == "1" {
+            let keychain = KeychainStore()
+            for key in [StoreKey.server, StoreKey.session, StoreKey.enrollmentDeviceId] { try? keychain.set(nil, for: key) }
+            UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "")
+        }
+        #endif
         let streaming = CaptureStreamingModel()
         #if DEBUG && targetEnvironment(simulator)
         let film = FilmModel(preferences: .standard, configuredSourceFactory: { profile in
@@ -59,10 +67,8 @@ struct ScorebugApp: App {
                 .onAppear {
                     watch.activate()
                     #if DEBUG
-                    // Simulator QA: SCOREBUG_TEST_SETUP_LINK opens a setup link on launch.
-                    if let link = ProcessInfo.processInfo.environment["SCOREBUG_TEST_SETUP_LINK"], app.config == nil {
-                        app.open(link)
-                    }
+                    // Simulator QA: SCOREBUG_TEST_LINK opens a setup or invite link on launch.
+                    if let link = ProcessInfo.processInfo.environment["SCOREBUG_TEST_LINK"] { app.open(link) }
                     #endif
                 }
         }
