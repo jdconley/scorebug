@@ -356,6 +356,16 @@ try {
     }
     return response.json();
   };
+  // Relay management can briefly fail (MediaMTX HTTP 500 -> API 503) while paths
+  // are restored or replaced. Workers poll and retry; bounded waits do the same.
+  const pollConnection = async () => {
+    try {
+      return (await request('/v1/worker/connection?workerId=mac', workerToken)).connection;
+    } catch (error) {
+      if (error.status === 503) return undefined;
+      throw error;
+    }
+  };
   console.log('Startup orphan cleanup and installation isolation verified.');
   const matchId = randomUUID();
   const team = { name: 'Relay test', shortName: 'QA', color: '#123456' };
@@ -446,16 +456,9 @@ try {
   nativePublisher = start(publishArgs(access.publishUrl));
   let oldConnection;
   await until(async () => {
-    try {
-      // Keep the ready snapshot: an immediate re-read can still race relay recovery.
-      oldConnection = (await request('/v1/worker/connection?workerId=mac', workerToken)).connection;
-      return oldConnection?.source.ready;
-    } catch (error) {
-      // Management/path recovery can precede source status availability. Keep the
-      // same bounded restart wait; authentication and other failures still abort.
-      if (error.status === 503) return false;
-      throw error;
-    }
+    // Keep the ready snapshot: an immediate re-read can still race relay recovery.
+    oldConnection = await pollConnection();
+    return oldConnection?.source.ready;
   }, 'source reconnect after relay restart');
   const firstSession = await request('/v1/worker/sessions', workerToken, {
     workerId: 'mac',
@@ -532,8 +535,7 @@ try {
   nativePublisher = start(publishArgs(replacement.publishUrl));
   let currentConnection;
   await until(async () => {
-    currentConnection = (await request('/v1/worker/connection?workerId=mac', workerToken))
-      .connection;
+    currentConnection = await pollConnection();
     return currentConnection?.generation === 3 && currentConnection.source.ready;
   }, 'replacement generation source');
   assert.notEqual(currentConnection.readUrl, oldConnection.readUrl);
@@ -558,9 +560,7 @@ try {
   // really decodes both tracks; the posted worker reports above test control scope.
   const beforeLateReader = currentConnection.source.inboundBytes;
   await until(
-    async () =>
-      (await request('/v1/worker/connection?workerId=mac', workerToken)).connection.source
-        .inboundBytes > beforeLateReader,
+    async () => ((await pollConnection())?.source.inboundBytes ?? 0) > beforeLateReader,
     'source advances before late reader',
   );
   const lateReader = start(readArgs(currentConnection.readUrl));
