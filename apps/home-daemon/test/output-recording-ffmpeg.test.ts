@@ -5,13 +5,13 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 import { startPipeline } from '../src/pipeline.js';
+import { scorebugOverlay, serializeScorebugOverlay } from '../src/scorebug/state.js';
 
 // Explicit media qualification; no system FFmpeg dependency in the unit suite.
 const ffmpeg = process.env.SCOREBUG_RECORDING_FFMPEG;
 const ffprobe = process.env.SCOREBUG_RECORDING_FFPROBE;
-const fontPath = process.env.SCOREBUG_RECORDING_FONT;
 const execute = promisify(execFile);
-const qualified = it.skipIf(!ffmpeg || !ffprobe || !fontPath);
+const qualified = it.skipIf(!ffmpeg || !ffprobe);
 
 qualified(
   'real final-overlay MP4 and tee retain A/V offsets, escape names, and fail on either output error',
@@ -24,8 +24,19 @@ qualified(
     const log = { info: record, error: record, warn: record, debug: record };
     try {
       const source = join(directory, 'source.mkv');
-      const scoreFile = join(directory, 'score.txt');
-      await writeFile(scoreFile, 'HOME 12 - 7 AWAY');
+      const scoreFile = join(directory, 'scorebug.json');
+      await writeFile(
+        scoreFile,
+        serializeScorebugOverlay(
+          scorebugOverlay({
+            teams: {
+              home: { name: 'Home', shortName: 'HOME', color: '#1D4ED8' },
+              away: { name: 'Away', shortName: 'AWAY', color: '#F97316' },
+            },
+            score: { home: 12, away: 7, set: 1, homeSets: 0, awaySets: 0 },
+          }),
+        ),
+      );
       await run(ffmpeg!, [
         '-v',
         'error',
@@ -55,7 +66,6 @@ qualified(
         gameId: 'recording-proof',
         pullUrl: source,
         scoreFile,
-        fontPath: fontPath!,
         nvenc: false,
         ffmpegPath: ffmpeg!,
         profile: { width: 320, height: 180, fps: 30, bitrateKbps: 350 },
@@ -118,7 +128,7 @@ qualified(
             '-i',
             recordingPath,
             '-vf',
-            'crop=320:32:0:148',
+            'crop=320:32:0:8',
             '-frames:v',
             '1',
             '-pix_fmt',

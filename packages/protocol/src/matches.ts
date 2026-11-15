@@ -1,4 +1,5 @@
 import type { Score, Teams } from './messages.js';
+import type { ScorebugStyle } from './scorebug.js';
 
 export type Side = 'home' | 'away';
 export type MatchRules = {
@@ -26,7 +27,11 @@ export type ScoringOperation =
   | { type: 'undo' }
   | { type: 'end_set'; winner?: Side | undefined; overrideReason?: string | undefined }
   | { type: 'end_match'; reason: string };
-export type MatchOperation = ScoringOperation | { type: 'take_over' };
+export type MatchOperation =
+  | ScoringOperation
+  | { type: 'take_over' }
+  /** Presentation only: changes the broadcast graphic, never score or undo history. */
+  | { type: 'set_scorebug_style'; style: ScorebugStyle };
 export type MatchCommand = {
   commandId: string;
   gameId: string;
@@ -49,6 +54,7 @@ export type MatchSnapshot = {
   canUndo: boolean;
   scorer: { deviceId: string; epoch: number };
   broadcast: { desired: 'stopped' | 'running'; generation: number };
+  scorebugStyle: ScorebugStyle;
 };
 export type CommandOutcome = {
   commandId: string;

@@ -37,6 +37,13 @@ try {
       name,
       '--network',
       'none',
+      // Same unprivileged settings as infra/vps: bundled fonts/assets must be readable.
+      '--user',
+      '1000:1000',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges:true',
       '-e',
       'CONTROL_PLANE_URL=http://127.0.0.1:9',
       '-e',
@@ -85,13 +92,19 @@ try {
     await exec('ffmpeg', ['-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=30',
       '-f','lavfi','-i','sine=sample_rate=48000','-t','2','-c:v','libx264','-preset','ultrafast',
       '-c:a','aac','/tmp/source.mp4']);
-    await writeFile('/tmp/score.txt', 'HOME 0-0 AWAY');
+    // The real overlay contract: worker-serialized scorebug JSON, rendered in-image
+    // with the bundled font (the image has no system fonts) and fed to FFmpeg.
+    await writeFile('/tmp/scorebug.json', JSON.stringify({ style: 'bar', label: null, bestOf: 3,
+      teams: { home: { name: 'Home', shortName: 'HOM', color: '#1D4ED8' },
+               away: { name: 'Away', shortName: 'AWY', color: '#F97316' } },
+      score: { home: 18, away: 15, set: 3, homeSets: 1, awaySets: 1 },
+      completedSets: [], serving: null }));
     // Pace the finite input like a live publisher. With copyts, a clip finishing
     // before the first periodic progress report may only report out_time_us=0.
     await writeFile('/tmp/ffmpeg-paced', '#!/bin/sh\\nexec ffmpeg -re "$@"\\n', { mode: 0o700 });
     let progressed = false;
     const pipeline = startPipeline({ gameId:'image-fixture', pullUrl:'/tmp/source.mp4',
-      publishUrl:'/tmp/output.flv', recordingPath:'/tmp/overlay.mp4', scoreFile:'/tmp/score.txt', nvenc:false, encoder:'software',
+      publishUrl:'/tmp/output.flv', recordingPath:'/tmp/overlay.mp4', scoreFile:'/tmp/scorebug.json', nvenc:false, encoder:'software',
       profile:{width:1280,height:720,fps:30,bitrateKbps:3000}, ffmpegPath:'/tmp/ffmpeg-paced' }, createLogger('error'), {
         encoderTiming: true,
         onProgress: p => { if (p.frame > 0 && p.outTimeUs > 0) progressed = true; }
@@ -107,6 +120,13 @@ try {
     assert.ok(probe.streams.some(s => s.codec_type === 'video' && s.width === 1280 && s.height === 720));
     assert.ok(probe.streams.some(s => s.codec_type === 'audio'));
     await exec('ffmpeg', ['-v','error','-xerror','-i',path,'-map','0:v:0','-map','0:a:0','-f','null','-']);
+    // Bar style score box at 720p: 1080p (432..528, 76..156) scaled by 2/3. Testsrc2
+    // is busy, so require the box's flat light gray on the first and last frames.
+    for (const position of [[], ['-sseof','-0.2']]) {
+      const box = await exec('ffmpeg', ['-v','error',...position,'-i',path,'-vf','crop=40:30:300:56,format=gray',
+        '-frames:v','1','-f','rawvideo','-'], { encoding: 'buffer' });
+      assert.ok([...box.stdout].filter(v => v > 200).length > 600, 'scorebug missing from ' + path);
+    }
     }
     console.log('compiled_pipeline_decoded');
   `;

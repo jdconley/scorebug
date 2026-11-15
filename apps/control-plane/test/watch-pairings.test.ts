@@ -505,7 +505,11 @@ it('matches the canonical issued/redeemed fixture consumed by native clients', (
   expect(issued).toEqual(fixture.issued);
   expect(
     store.redeemWatchPairing(gameId, pairingId, issued.pairingToken, recovery, redeem),
-  ).toEqual(fixture.redeemed);
+  ).toEqual({
+    ...fixture.redeemed,
+    // The shared v1 fixture predates scorebugStyle; native decoders ignore it.
+    snapshot: { ...fixture.redeemed.snapshot, scorebugStyle: 'bar' },
+  });
 });
 
 it('commits exactly one winner when independent Node processes redeem concurrently', async () => {

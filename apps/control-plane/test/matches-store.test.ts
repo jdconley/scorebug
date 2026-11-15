@@ -1,5 +1,6 @@
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { MatchCommand } from '@scorebug/protocol';
@@ -197,8 +198,65 @@ it('matches the shared native/TypeScript JSON contract fixture', () => {
       'utf8',
     ),
   );
+  // The shared v1 fixture (mirrored byte-for-byte in the Swift test bundle)
+  // predates scorebugStyle. Snapshots now add it; Swift decoding ignores it.
+  const styled = (snapshot: object) => ({ ...snapshot, scorebugStyle: 'bar' });
   const db = store();
-  expect(db.create(fixture.creation)).toEqual(fixture.snapshot);
+  expect(db.create(fixture.creation)).toEqual(styled(fixture.snapshot));
   db.issueCredential(fixture.creation.id, fixture.creation.deviceId, 'score');
-  expect(db.execute(fixture.command)).toEqual(fixture.outcome);
+  expect(db.execute(fixture.command)).toEqual({
+    ...fixture.outcome,
+    snapshot: styled(fixture.outcome.snapshot),
+  });
+});
+it('keeps the scorebug style outside scoring history and requires the current scorer', () => {
+  const db = store();
+  created(db);
+  expect(db.get('game-1')?.scorebugStyle).toBe('bar');
+  db.execute(command());
+  db.issueCredential('game-1', 'watch-b', 'score');
+  expect(
+    db.execute(
+      command({
+        commandId: 'style-other',
+        deviceId: 'watch-b',
+        expectedRevision: 1,
+        operation: { type: 'set_scorebug_style', style: 'lowerThird' },
+      }),
+    ).error,
+  ).toBe('scorer_changed');
+  const styled = db.execute(
+    command({
+      commandId: 'style-1',
+      expectedRevision: 1,
+      operation: { type: 'set_scorebug_style', style: 'lowerThird' },
+    }),
+  );
+  expect(styled.accepted).toBe(true);
+  expect(styled.snapshot).toMatchObject({ scorebugStyle: 'lowerThird', revision: 2 });
+  const undone = db.execute(
+    command({ commandId: 'undo-1', expectedRevision: 2, operation: { type: 'undo' } }),
+  );
+  expect(undone.snapshot).toMatchObject({
+    scorebugStyle: 'lowerThird',
+    score: { home: 0 },
+    canUndo: false,
+  });
+});
+it('reads matches stored before scorebug styles existed as the default bar style', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scorebug-db-'));
+  dirs.push(dir);
+  const path = join(dir, 'matches.sqlite');
+  const first = store(path);
+  first.create({ id: 'game-1', deviceId: 'phone-a', teams, rules, scorebugStyle: 'setCard' });
+  first.close();
+  const legacy = new DatabaseSync(path);
+  const row = legacy.prepare('SELECT data FROM matches WHERE id=?').get('game-1') as {
+    data: string;
+  };
+  const data = JSON.parse(row.data) as Record<string, unknown>;
+  delete data.scorebugStyle;
+  legacy.prepare('UPDATE matches SET data=? WHERE id=?').run(JSON.stringify(data), 'game-1');
+  legacy.close();
+  expect(store(path).get('game-1')?.scorebugStyle).toBe('bar');
 });

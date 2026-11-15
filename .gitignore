@@ -49,3 +49,4 @@ coverage/
 artifacts/
 data/
 .nyc_output/
+scorebug-samples/

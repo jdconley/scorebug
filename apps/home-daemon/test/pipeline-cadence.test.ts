@@ -12,7 +12,7 @@ function selectedPTS(rate: number, duration: number, timestamps: string): number
     nvenc: false,
     profile: { width: 64, height: 64, fps: 30, bitrateKbps: 100 },
   });
-  const graph = args[args.indexOf('-vf') + 1]!;
+  const graph = args[args.indexOf('-filter_complex') + 1]!;
   const cap = /\[live\]settb=1\/90000,(select='[^']+'),scale=/.exec(graph)?.[1];
   expect(cap).toBeDefined();
   const result = spawnSync(
