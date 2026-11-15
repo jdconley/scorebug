@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { cancellation } from './cancellation.mjs';
+import { withDeadline } from './deadline.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const args = process.argv.slice(2);
@@ -99,37 +100,44 @@ try {
   await compose('up', '-d', '--no-build', '--pull', 'never', 'control-plane');
   let api = await endpoint('control-plane', 8787);
   const relay = await endpoint('mediamtx', 9997);
-  await until(
-    async () => (await fetch(api + '/healthz', { signal: AbortSignal.timeout(2000) })).ok,
-  );
+  const healthy = () =>
+    withDeadline(2000, async (signal) => {
+      const r = await fetch(api + '/healthz', { signal });
+      await r.arrayBuffer();
+      return r.ok;
+    });
+  await until(healthy);
   const relayAuth =
     'Basic ' + Buffer.from('scorebug-admin:' + environment.RELAY_API_PASSWORD).toString('base64');
-  async function paths(auth = relayAuth) {
-    const r = await fetch(relay + '/v3/config/paths/list', {
-      headers: auth ? { authorization: auth } : {},
-      signal: AbortSignal.timeout(3000),
+  const paths = (auth = relayAuth) =>
+    withDeadline(3000, async (signal) => {
+      const r = await fetch(relay + '/v3/config/paths/list', {
+        headers: auth ? { authorization: auth } : {},
+        signal,
+      });
+      if (!auth) {
+        await r.arrayBuffer();
+        return r.status;
+      }
+      assert.equal(r.status, 200);
+      return (await r.json()).items.map((p) => p.name);
     });
-    if (!auth) {
-      await r.arrayBuffer();
-      return r.status;
-    }
-    assert.equal(r.status, 200);
-    return (await r.json()).items.map((p) => p.name);
-  }
   await until(async () => Array.isArray(await paths()));
   assert.equal(await paths(null), 401);
   assert.deepEqual(await paths(), []);
   evidence.checks.authenticatedRelayManagement = true;
   async function request(path, token, body) {
     checkCancellation();
-    const r = await fetch(api + path, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(5000),
+    return withDeadline(5000, async (signal) => {
+      const r = await fetch(api + path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal,
+      });
+      assert(r.ok, `Native request ${path}: HTTP ${r.status}`);
+      return r.json();
     });
-    assert(r.ok, `Native request ${path}: HTTP ${r.status}`);
-    return r.json();
   }
   // One-time phone setup: the CLI in the image mints a link; the API redeems it.
   const cli = await compose(
@@ -148,18 +156,13 @@ try {
   const link = new URL(cli.stdout.split('\n')[0]);
   assert.equal(link.protocol, 'scorebug:');
   assert.equal(link.searchParams.get('server'), 'https://qa.invalid');
-  const setupResponse = await fetch(api + '/v1/setup/redeem', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
+  const owner = (
+    await request('/v1/setup/redeem', '', {
       code: link.searchParams.get('code'),
       deviceId: randomUUID(),
       deviceName: 'QA phone',
-    }),
-    signal: AbortSignal.timeout(5000),
-  });
-  assert.equal(setupResponse.status, 200);
-  const owner = (await setupResponse.json()).token;
+    })
+  ).token;
   assert.equal((await request('/v1/devices', owner)).devices.length, 1);
   evidence.checks.cliSetupLinkEnrollsOwnerPhone = true;
   // The enrolled phone creates the match; the legacy PHONE_TOKEN still drives media below.
@@ -226,9 +229,7 @@ try {
     'control-plane',
   );
   api = await endpoint('control-plane', 8787);
-  await until(
-    async () => (await fetch(api + '/healthz', { signal: AbortSignal.timeout(2000) })).ok,
-  );
+  await until(healthy);
   const restored = await publish();
   for (const key of ['gameId', 'generation', 'recordingId'])
     assert.equal(restored[key], access[key]);

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { cancellation } from './cancellation.mjs';
+import { withDeadline } from './deadline.mjs';
 
 const exec = promisify(execFile);
 const name = `scorebug-qa-api-${randomUUID()}`;
@@ -51,9 +52,12 @@ try {
     const state = await checkedDocker('inspect', '--format', '{{.State.Running}}', name);
     if (state.stdout.trim() !== 'true') throw new Error('Container exited before HTTP readiness');
     try {
-      const res = await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(1000) });
-      const body = await res.json();
-      if (res.ok && body.ok === true) {
+      const healthy = await withDeadline(1000, async (signal) => {
+        const res = await fetch(`${base}/healthz`, { signal });
+        const body = await res.json();
+        return res.ok && body.ok === true;
+      });
+      if (healthy) {
         ready = true;
         break;
       }
@@ -63,10 +67,12 @@ try {
     await delay(250);
   }
   if (!ready) throw new Error('Container did not become healthy within 20 seconds');
-  const protectedResponse = await fetch(`${base}/v1/matches/active`, {
-    signal: AbortSignal.timeout(2000),
+  const protectedStatus = await withDeadline(2000, async (signal) => {
+    const response = await fetch(`${base}/v1/matches/active`, { signal });
+    await response.arrayBuffer();
+    return response.status;
   });
-  if (protectedResponse.status !== 401) throw new Error('Match API did not require authentication');
+  if (protectedStatus !== 401) throw new Error('Match API did not require authentication');
   checkCancellation();
 } catch (error) {
   if (runAttempted) {
