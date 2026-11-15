@@ -93,9 +93,17 @@ same token), run `testScorerTour` on a second simulator with that
 builds honor `SCOREBUG_TEST_RESET=1` (fresh install state) and
 `SCOREBUG_TEST_LINK` (open a link on launch); Release builds ignore both.
 
-To try the Watch, pair a Watch simulator with the iPhone simulator
-(`xcrun simctl pair <watch> <phone>`), install `ScorebugWatch.app` from
-`Debug-watchsimulator`, open the Watch app, then start or join a match on the phone.
+To try the Watch on simulators, run the **Scorebug** scheme on an iPhone simulator
+that has a paired Watch, then run the **ScorebugWatch** scheme on that Watch from
+Xcode, and start a match on the phone. What was seen while building this with
+`simctl` only (no Xcode Run): one simctl-created pair's phone had a broken IDS
+service (`WCSession` never finished activating); on a fresh pair activation
+worked, but a Watch app installed with `simctl install` is "not installed" to the
+phone and neither side reports the other reachable, and installing the phone app
+did not push the embedded Watch app through pairing. The Watch then shows "Keep
+your iPhone nearby with Scorebug open." The mirror itself (state, intents,
+court-side order, set point) is covered by unit tests in ScorebugCore and the
+model tests.
 
 ### Needs a real device
 

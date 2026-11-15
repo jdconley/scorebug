@@ -14,6 +14,20 @@ import WatchKit
     /// A tap is on its way to the phone.
     @Published private(set) var sending = false
     private var newest: Double = 0
+    private var lastUpdate = Date.distantPast
+
+    /// While the app is on screen: ask the phone again whenever nothing fresh has arrived,
+    /// so a missed push or a phone app that opened later never leaves the Watch stale.
+    func keepFresh() async {
+        while !Task.isCancelled {
+            let session = WCSession.default
+            if session.activationState == .activated {
+                connection = session.isReachable ? .reachable : .phoneAway
+                if session.isReachable, !sending, Date().timeIntervalSince(lastUpdate) > 4 { send(.hello, haptic: nil) }
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
+    }
 
     func activate() {
         guard WCSession.isSupported() else { connection = .phoneAway; return }
@@ -56,6 +70,7 @@ import WatchKit
               envelope.state.map({ $0.version == WatchRemote.version }) ?? true,
               envelope.sentAt >= newest else { return }
         newest = envelope.sentAt
+        lastUpdate = Date()
         state = envelope.state
     }
 }

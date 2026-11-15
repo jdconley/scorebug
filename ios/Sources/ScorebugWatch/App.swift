@@ -11,6 +11,7 @@ struct ScorebugWatchApp: App {
         WindowGroup {
             WatchRootView(link: link)
                 .onAppear { link.activate() }
+                .task { await link.keepFresh() }
                 .onChange(of: phase) { _, phase in if phase == .active { link.refresh() } }
         }
     }

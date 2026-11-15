@@ -32,19 +32,21 @@ import SwiftUI
     func push(_ state: WatchRemote.State?) {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
-        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
+        guard session.activationState == .activated, session.isPaired else { return }
         if let lastSent, lastSent == state { return }
-        lastSent = .some(state)
         guard let message = try? WatchRemote.message(WatchRemote.Envelope(state: state, sentAt: Date().timeIntervalSince1970)) else { return }
-        try? session.updateApplicationContext(message)
+        // isWatchAppInstalled can lag (and stays false for a Watch app installed on its own, as on
+        // simulators); a reachable Watch app is proof enough for a live message.
+        if session.isWatchAppInstalled { try? session.updateApplicationContext(message) }
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil, errorHandler: nil)
         }
+        if session.isWatchAppInstalled || session.isReachable { lastSent = .some(state) }
     }
 
     private func refreshConnection() {
         let session = WCSession.default
-        isWatchConnected = session.activationState == .activated && session.isPaired && session.isWatchAppInstalled && session.isReachable
+        isWatchConnected = session.activationState == .activated && session.isPaired && session.isReachable
     }
 
     fileprivate func handle(_ message: [String: Any]) -> [String: Any] {
