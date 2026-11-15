@@ -35,7 +35,6 @@ services:
     environment:
       PHONE_TOKEN: ${PHONE_TOKEN:?Set a private phone token}
       HOME_TOKEN: ${HOME_TOKEN:?Set a private worker token}
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set a private installation secret}
       PORT: 8787
       HOST: 0.0.0.0
       DATABASE_PATH: /data/scorebug.sqlite
