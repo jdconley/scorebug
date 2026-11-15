@@ -123,6 +123,10 @@ final class ScreenTourTests: XCTestCase {
         let app = XCUIApplication()
         app.activate()
         XCTAssertTrue(app.buttons["live.end"].waitForExistence(timeout: 10))
+        // A relaunch mid-match resumes recording.
+        let recording = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'REC'"),
+                                                  object: app.staticTexts["live.status"])
+        wait(for: [recording], timeout: 30)
         Thread.sleep(forTimeInterval: 3)
         shot(app, "16-live-scoring-elsewhere")
         if app.buttons["live.takeOver"].exists { app.buttons["live.takeOver"].tap() }

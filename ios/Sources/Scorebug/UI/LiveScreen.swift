@@ -139,6 +139,11 @@ struct LiveScreen: View {
                 Button { board.swapSides() } label: { Label("Swap sides", systemImage: "arrow.left.arrow.right") }
                     .buttonStyle(OverlayButtonStyle())
                     .accessibilityIdentifier("live.swap")
+                if live.canStartRecording {
+                    Button { Task { await live.startRecording() } } label: { Label("Record", systemImage: "record.circle") }
+                        .buttonStyle(OverlayButtonStyle())
+                        .accessibilityIdentifier("live.record")
+                }
                 Spacer()
                 if board.scoringElsewhere {
                     Button { board.takeOver() } label: { Label("Scoring on another phone · Take over", systemImage: "hand.raised") }

@@ -37,17 +37,27 @@ import ScorebugCore
     func begin() async {
         guard !began else { return }
         began = true
-        if !film.canStop {
-            film.selectQuality(recordIn4K ? .uhd2160 : .hd1080)
-            await film.start()
-        }
+        await startRecording()
+    }
+
+    /// Starts (or restarts) the recording. Waits out the launch-time scan of saved
+    /// recordings, which briefly blocks a new recording after a relaunch mid-match.
+    func startRecording() async {
+        guard !film.canStop else { return }
+        for _ in 0..<300 where !film.canStart && film.state != .stopping { try? await Task.sleep(for: .milliseconds(100)) }
+        film.selectQuality(recordIn4K ? .uhd2160 : .hd1080)
+        await film.start()
         noteRecording()
+        // The stream rides on the recording, never the other way round.
         guard film.state == .recording, !session.recordOnly, let token = config.ownerToken else { return }
         streaming.endpoint = config.endpoint
         streaming.installationToken = token
         await streaming.connect()
         streaming.requestStartStreaming()
     }
+
+    /// Shown when the camera isn't recording (start failed, or it stopped with an error).
+    var canStartRecording: Bool { began && !finishing && !film.canStop && film.state != .stopping }
 
     var isRecording: Bool { film.state == .recording || film.state == .starting }
     var isLive: Bool { streaming.status == .live || streaming.status == .reconnecting }
