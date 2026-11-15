@@ -141,14 +141,9 @@ struct BoundedMailboxTests {
         #expect(try await mailbox.next() == 9)
     }
 
-    @Test(arguments: [false, true]) func actualRetainedElementsStayBoundedAndReleaseAfterCancel(observed: Bool) throws {
+    @Test func actualRetainedElementsStayBoundedAndReleaseAfterCancel() throws {
         let lifetime = LifetimeCounter()
-        let configuration: LiveIngressObservationConfiguration? = observed ? .init(
-            scope: .init(recordingID: "r", matchID: "m", broadcastGeneration: 1,
-                publishingAttemptID: UUID(), appliedProfileRevision: 1),
-            monotonicAnchor: ProcessInfo.processInfo.systemUptime) : nil
-        let mailbox = try BoundedMailbox<TrackedElement>(maxItems: 3, maxBytes: 7, overflowPolicy: .dropOldest,
-            ingressObservation: configuration)
+        let mailbox = try BoundedMailbox<TrackedElement>(maxItems: 3, maxBytes: 7, overflowPolicy: .dropOldest)
         for index in 0..<10_000 {
             _ = mailbox.offer(TrackedElement(index, lifetime: lifetime), bytes: 2)
             #expect(lifetime.count == min(index + 1, 3))

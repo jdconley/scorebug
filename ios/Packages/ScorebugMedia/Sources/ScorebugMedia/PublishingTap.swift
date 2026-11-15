@@ -14,14 +14,13 @@ public final class PublishingTap: @unchecked Sendable {
     /// Replaces the attachment, including while the publisher is prepared or
     /// starting. False means the recording has closed this tap. Observation owner
     /// closure belongs to the controller after any desired encoder drain.
-    @discardableResult public func attach(_ session: PublishingSession,
-                                          observations: VideoFrameObservationOwner? = nil) -> Bool {
+    @discardableResult public func attach(_ session: PublishingSession) -> Bool {
         var previous: CapturePublishingAttachment?
         let attached = lock.withLock {
             guard !closed else { return false }
             previous = attachment
             previous?.invalidatePublication()
-            attachment = CapturePublishingAttachment(session: session, observations: observations)
+            attachment = CapturePublishingAttachment(session: session)
             return true
         }
         withExtendedLifetime(previous) {}
@@ -53,11 +52,7 @@ public final class PublishingTap: @unchecked Sendable {
     /// but its later publication offer is rejected: boundary loss is never rerouted
     /// to the new attempt. Audio resolves an attachment without observing video.
     func beginCapture(_ sample: CapturedMediaSample) -> CapturePublishingAttachment? {
-        let resolved = lock.withLock { attachment }
-        if sample.kind == .video {
-            resolved?.observations?.observe(.captureVideo, sourcePTS: sample.sampleBuffer.presentationTimeStamp)
-        }
-        return resolved
+        lock.withLock { attachment }
     }
 
     // A recording permanently closes its own tap, including late attachments.
@@ -85,13 +80,9 @@ public final class PublishingTap: @unchecked Sendable {
 /// cancellation under that lock.
 final class CapturePublishingAttachment: @unchecked Sendable {
     let session: PublishingSession
-    let observations: VideoFrameObservationOwner?
     private let lock = NSLock()
     private var acceptsPublication = true
-    init(session: PublishingSession, observations: VideoFrameObservationOwner?) {
-        self.session = session
-        self.observations = observations
-    }
+    init(session: PublishingSession) { self.session = session }
     func invalidatePublication() { lock.withLock { acceptsPublication = false } }
     @discardableResult func offer(_ sample: CapturedMediaSample) -> Bool {
         lock.withLock { acceptsPublication && session.offer(sample) }
