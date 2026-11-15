@@ -55,7 +55,7 @@ it('selects real VideoToolbox without silent software fallback and applies the o
   expect(args[args.indexOf('-allow_sw') + 1]).toBe('0');
   expect(args[args.indexOf('-b:v') + 1]).toBe('3000k');
   expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
-  expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('-1');
+  expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('demux');
   expect(args).not.toContain('-fpsmax');
   expect(args[args.indexOf('-vf') + 1]).toContain('select=');
   expect(args).not.toContain('-r');
@@ -81,7 +81,7 @@ describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timesta
     expect(args.filter((arg) => arg === '-copyts')).toHaveLength(1);
     expect(args.indexOf('-copyts')).toBeLessThan(inputIndex);
     expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
-    expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('-1');
+    expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('demux');
     expect(args.filter((arg) => arg === '-avoid_negative_ts')).toHaveLength(1);
     expect(shiftIndex).toBeGreaterThan(inputIndex + 1);
     expect(args[shiftIndex + 1]).toBe('make_zero');

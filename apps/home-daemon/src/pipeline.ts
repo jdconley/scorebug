@@ -163,7 +163,7 @@ export function buildFfmpegArgs(
   // discarded ordinary 30fps frames on either side of a clock boundary. Credits
   // never grow across an outage; duplicate/regressing PTS cannot be selected or
   // mint new credits. Keep source PTS and the shared A/V timeline unchanged.
-  video.push('-fps_mode', 'passthrough', '-enc_time_base:v', '-1');
+  video.push('-fps_mode', 'passthrough', '-enc_time_base:v', 'demux');
   const cap = profile ? `${frameRateCapFilter(profile.fps)},` : '';
   const filter = profile
     ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:eval=frame,${drawtext}`

@@ -45,7 +45,7 @@ export async function runInstrumentedWorker(binary, args, diagnostics = {}) {
     });
     parser.end();
     diagnostics.invalid = invalid;
-    assert.equal(code, 0, 'Instrumented worker failed');
+    assert.equal(code, 0, `Instrumented worker failed: ${diagnostics.stderr.slice(-2000).trim()}`);
     assert.equal(invalid, undefined, 'Invalid decoder telemetry');
     return pts;
   } finally {
