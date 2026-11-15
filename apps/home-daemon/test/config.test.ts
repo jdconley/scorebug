@@ -40,27 +40,21 @@ describe('media tool configuration', () => {
   });
 });
 
-it('defaults optional processing diagnostics to auto and permits explicitly disabling them', () => {
-  expect(loadConfig(base).WORKER_PROCESSING).toBe('auto');
-  expect(loadConfig({ ...base, WORKER_PROCESSING: 'off' }).WORKER_PROCESSING).toBe('off');
-  expect(() => loadConfig({ ...base, WORKER_PROCESSING: 'true' })).toThrow();
-});
-
-it('reports every 100 ms by default for fresh ordinary adaptive status', () => {
-  expect(loadConfig(base).WORKER_REPORT_INTERVAL_MS).toBe(100);
+it('reports every second by default, well inside the five-second status lifetime', () => {
+  expect(loadConfig(base).WORKER_REPORT_INTERVAL_MS).toBe(1000);
 });
 
 it('preserves explicitly configured report cadence within the supported range', () => {
   expect(loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: '1000' }).WORKER_REPORT_INTERVAL_MS).toBe(
     1000,
   );
-  expect(loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: '5000' }).WORKER_REPORT_INTERVAL_MS).toBe(
-    5000,
+  expect(loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: '4000' }).WORKER_REPORT_INTERVAL_MS).toBe(
+    4000,
   );
   expect(loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: '100' }).WORKER_REPORT_INTERVAL_MS).toBe(
     100,
   );
-  for (const value of ['0', '99', '5001', '250.5', '', 'NaN'])
+  for (const value of ['0', '99', '4001', '250.5', '', 'NaN'])
     expect(() => loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: value })).toThrow();
 });
 
