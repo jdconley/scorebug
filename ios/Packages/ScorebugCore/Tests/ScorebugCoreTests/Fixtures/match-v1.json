@@ -75,6 +75,12 @@
     "broadcast": {
       "desired": "stopped",
       "generation": 0
+    },
+    "scorebugStyle": "bar",
+    "pendingSetEnd": null,
+    "output": {
+      "destinationId": null,
+      "recordOnly": false
     }
   },
   "outcome": {
@@ -122,6 +128,12 @@
       "broadcast": {
         "desired": "stopped",
         "generation": 0
+      },
+      "scorebugStyle": "bar",
+      "pendingSetEnd": null,
+      "output": {
+        "destinationId": null,
+        "recordOnly": false
       }
     }
   }

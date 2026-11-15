@@ -46,26 +46,48 @@ public struct MatchHTTPClient: MatchScoringClient {
 
     public func create(id: String, deviceId: String, teams: MatchTeams, rules: MatchRules,
                        installationToken: String) async throws -> MatchSessionResponse {
-        try await send(path: [], method: "POST", token: installationToken,
-                       body: JSONEncoder().encode(MatchCreation(id: id, deviceId: deviceId, teams: teams, rules: rules)))
+        try await create(MatchCreation(id: id, deviceId: deviceId, teams: teams, rules: rules), ownerToken: installationToken)
+    }
+
+    /// Owner only. Repeating the same creation (same ID) after a lost response is safe.
+    public func create(_ creation: MatchCreation, ownerToken: String) async throws -> MatchSessionResponse {
+        try await send(path: [], method: "POST", token: ownerToken, body: JSONEncoder().encode(creation))
+    }
+
+    // MARK: Phone setup, devices, destinations and invites (docs/api.md)
+
+    /// Unauthenticated. Repeating the same request with the same device ID within ten minutes returns the same token.
+    public func redeemSetup(code: String, deviceId: String, deviceName: String) async throws -> SetupRedeemed {
+        struct Request: Encodable { let code: String; let deviceId: String; let deviceName: String }
+        return try await send(root: ["setup"], path: ["redeem"], method: "POST", token: nil,
+                              body: JSONEncoder().encode(Request(code: code, deviceId: deviceId, deviceName: deviceName)))
+    }
+
+    /// Checks a stored owner token.
+    public func currentDevice(ownerToken: String) async throws -> CurrentDevice {
+        try await send(root: ["devices"], path: ["me"], token: ownerToken)
+    }
+
+    public func destinations(ownerToken: String) async throws -> [Destination] {
+        struct Response: Decodable { let destinations: [Destination] }
+        let response: Response = try await send(root: ["destinations"], path: [], token: ownerToken)
+        return response.destinations
+    }
+
+    /// Owner token or the match's capture credential token.
+    public func createInvite(gameId: String, token: String) async throws -> MatchInviteIssued {
+        try await send(path: [gameId, "invites"], method: "POST", token: token, body: Data("{}".utf8))
+    }
+
+    /// Unauthenticated. Returns a per-match score credential; send `take_over` before scoring.
+    public func redeemInvite(code: String, deviceId: String) async throws -> InviteRedeemed {
+        struct Request: Encodable { let code: String; let deviceId: String }
+        return try await send(root: ["invites"], path: ["redeem"], method: "POST", token: nil,
+                              body: JSONEncoder().encode(Request(code: code, deviceId: deviceId)))
     }
 
     public func active(installationToken: String) async throws -> ActiveMatchResponse {
         try await send(path: ["active"], token: installationToken)
-    }
-
-    public func issueWatchPairing(gameId: String, request: WatchPairingIssueRequest,
-                                  installationToken: String) async throws -> WatchPairingIssued {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        return try await send(path: [gameId, "watch-pairings"], method: "POST", token: installationToken,
-                              body: encoder.encode(request))
-    }
-
-    public func redeemWatchPairing(gameId: String, pairingId: String, pairingToken: String,
-                                   recoveryKey: String, request: WatchPairingRedeemRequest) async throws -> WatchPairingRedeemed {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        return try await send(path: [gameId, "watch-pairings", pairingId, "redeem"], method: "POST", token: pairingToken,
-                              body: encoder.encode(request), pairingRecoveryKey: recoveryKey)
     }
 
     public func join(gameId: String, deviceId: String, role: MatchRole,
@@ -158,10 +180,10 @@ public struct MatchHTTPClient: MatchScoringClient {
         }
     }
 
-    private func send<Response: Decodable>(path: [String], method: String = "GET", token: String,
-                                          body: Data? = nil, additionalStatuses: Set<Int> = [],
-                                          pairingRecoveryKey: String? = nil, requiresFreshResponse: Bool = false, query: [URLQueryItem] = []) async throws -> Response {
-        var url = endpoint.url.appendingPathComponent("v1").appendingPathComponent("matches")
+    private func send<Response: Decodable>(root: [String] = ["matches"], path: [String], method: String = "GET", token: String?,
+                                          body: Data? = nil, additionalStatuses: Set<Int> = [], requiresFreshResponse: Bool = false, query: [URLQueryItem] = []) async throws -> Response {
+        var url = endpoint.url.appendingPathComponent("v1")
+        for component in root { url.appendPathComponent(component) }
         // Identifiers follow the server's ASCII grammar, preventing a scoped path
         // from being redirected by a slash, percent escape, or dot segment.
         for component in path {
@@ -185,8 +207,7 @@ public struct MatchHTTPClient: MatchScoringClient {
         }
         request.httpMethod = method
         request.httpBody = body
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        if let pairingRecoveryKey { request.setValue(pairingRecoveryKey, forHTTPHeaderField: "X-Scorebug-Pairing-Recovery") }
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await transport(request)
