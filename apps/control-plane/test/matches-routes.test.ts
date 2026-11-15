@@ -88,10 +88,6 @@ it('binds commands to scoped device credentials and rejects capture-only scoring
       )
     ).status,
   ).toBe(403);
-  expect(
-    (await app.request('/games/native-game', { headers: phoneAuth(result.credential.token) }))
-      .status,
-  ).toBe(401);
 });
 it('supports a second native scorer joining, taking over and querying its uncertain command', async () => {
   const { app, token } = setup();

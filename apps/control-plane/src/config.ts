@@ -5,7 +5,6 @@ const schema = z
   .object({
     PHONE_TOKEN: z.string().min(16),
     HOME_TOKEN: z.string().min(16),
-    INTERNAL_TOKEN: z.string().min(16),
     PORT: z.coerce.number().int().min(0).max(65535).default(8787),
     HOST: z.string().default('0.0.0.0'),
     /**

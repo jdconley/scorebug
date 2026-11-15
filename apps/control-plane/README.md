@@ -1,35 +1,49 @@
 # @scorebug/control-plane
 
-Hono server that runs on the VPS. It:
-
-- Issues per-game SRT publish/read secrets.
-- Hands publish credentials to the iPhone via `POST /games/start`.
-- Pushes `start_game`/`score_update`/`callout`/`end_game` messages to the home daemon over a WebSocket the home initiates.
-- Accepts MediaMTX's `runOnReady` webhook on `/internal/stream-ready` to flip a game from `starting` → `live`.
-- Holds state in-memory (single live game at a time).
+Hono API on Node 22 with SQLite storage. It holds the active match and its score,
+issues device credentials, tracks recording and broadcast state, manages relay paths
+and SRT credentials through the MediaMTX API, and serves the broadcast worker its
+assignment.
 
 ## Develop
 
+From the repository root, with the dev relay running (`pnpm local:up`):
+
 ```sh
-cp .env.example .env       # then edit tokens
-pnpm install
-pnpm --filter @scorebug/control-plane dev
+pnpm dev:api
 ```
 
-Server listens on `http://localhost:8787`. WS upgrade is at `ws://localhost:8787/home/ws?token=$HOME_TOKEN`.
+This uses `infra/local/.env.example` and listens on `http://127.0.0.1:18787`. To run
+with your own settings, copy `.env.example` to `.env` and run
+`pnpm --filter @scorebug/control-plane dev`.
 
 ## Endpoints
 
-| Method | Path                     | Auth                   |
-| ------ | ------------------------ | ---------------------- |
-| GET    | `/healthz`               | none                   |
-| POST   | `/games/start`           | phone                  |
-| POST   | `/games/:id/end`         | phone                  |
-| POST   | `/games/:id/score`       | phone                  |
-| POST   | `/games/:id/callout`     | phone                  |
-| GET    | `/games/:id`             | phone                  |
-| POST   | `/internal/stream-ready` | internal               |
-| GET    | `/home/ws`               | home (query `?token=`) |
+| Method   | Path                                 | Auth                  |
+| -------- | ------------------------------------ | --------------------- |
+| GET      | `/healthz`                           | none                  |
+| POST     | `/v1/matches`                        | installation token    |
+| GET      | `/v1/matches/active`                 | installation token    |
+| POST     | `/v1/matches/:id/join`               | installation token    |
+| GET      | `/v1/matches/:id`                    | match credential      |
+| POST     | `/v1/matches/:id/commands`           | match credential      |
+| GET      | `/v1/matches/:id/commands/:id`       | match credential      |
+| GET/POST | `/v1/matches/:id/watch-pairings/...` | match credential      |
+| GET/POST | `/v1/matches/:id/media/...`          | match credential      |
+| GET/POST | `/v1/worker/...`                     | worker (`HOME_TOKEN`) |
+
+## Configuration
+
+| Variable                                                    | Purpose                                       |
+| ----------------------------------------------------------- | --------------------------------------------- |
+| `PHONE_TOKEN`                                               | Installation token used by the apps to set up |
+| `HOME_TOKEN`                                                | Worker bearer token                           |
+| `PORT`, `HOST`                                              | Listen address (default `0.0.0.0:8787`)       |
+| `DATABASE_PATH`                                             | SQLite file (default `data/scorebug.sqlite`)  |
+| `INGEST_HOST`, `INGEST_PORT`                                | Relay SRT address handed to the worker        |
+| `INGEST_PUBLISH_HOST`, `INGEST_PUBLISH_PORT`                | Optional separate SRT address for the phone   |
+| `RELAY_API_URL`, `RELAY_API_USERNAME`, `RELAY_API_PASSWORD` | MediaMTX management API                       |
+| `CORS_ORIGINS`, `LOG_LEVEL`                                 | CORS origins (default `*`) and log level      |
 
 ## Test
 

@@ -20,22 +20,25 @@ typecheck:
 test:
     pnpm test
 
-doctor:
-    pnpm run doctor
-
 test-container:
     pnpm test:container
 
 test-local:
     pnpm test:local
 
-test-apple:
-    pnpm test:apple
+test-scoring:
+    pnpm test:scoring
+
+test-relay:
+    pnpm test:relay
 
 format:
     pnpm format
 
-# --- App-level (filled in as scaffolds land) ---
+# --- Apps ---
+
+api-dev:
+    pnpm dev:api
 
 control-plane-dev:
     pnpm --filter @scorebug/control-plane dev
@@ -43,16 +46,10 @@ control-plane-dev:
 home-daemon-dev:
     pnpm --filter @scorebug/home-daemon dev
 
-overlay-dev:
-    pnpm --filter @scorebug/overlay dev
-
-scoring-dev:
-    pnpm --filter @scorebug/scoring dev
-
 # --- iOS ---
 
-ios-build:
-    cd ios && xcodebuild -scheme Scorebug -destination 'generic/platform=iOS' build
+ios-generate:
+    cd ios && xcodegen generate --spec Project.yml && xcodegen generate --spec Scoring.yml
 
-ios-lint:
-    cd ios && swiftlint
+ios-build: ios-generate
+    xcodebuild build -project ios/Scorebug.xcodeproj -scheme Scorebug -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/DerivedData/Local CODE_SIGNING_ALLOWED=NO

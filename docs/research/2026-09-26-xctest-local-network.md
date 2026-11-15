@@ -1,7 +1,0 @@
-# XCTest local-network access on physical iOS
-
-The September26 physical probe executes successfully as UI automation, but URLSession and NWConnection deny local traffic. User confirms the runner's Local Network switch is already enabled. Installed runner identity is exactly `live.scorebug.app.uitests.xctrunner`; its usage description is present. These facts contradict the earlier simple disabled-switch hypothesis.
-
-[Apple DTS discussion, thread817792](https://developer.apple.com/forums/thread/817792) describes a similar XCTest failure correlated with iOS/iPadOS26.3, including Xcode26.2. Apple recommends a loopback listener in the app under test: the runner connects locally, and the app forwards using its own granted LAN access. This is evidence for a test architecture to try, not proof that our iOS26.7 failure has precisely the same cause. The app's real scoring/streaming network path remains independently exercised.
-
-Proposed application here: a DEBUG-only, explicit per-run bridge restricted to the owned laboratory API health and network-impairment controller. Require a random token, fixed validated private destinations, bounded request/response sizes, no redirects/retries, loopback-only bind, finite lifetime and explicit joined shutdown. Preserve controller receipts and original phone clock brackets; do not move or weaken the congestion/freshness gates. The production Release app must contain no bridge. Verify with the short real-phone probe before capture.
