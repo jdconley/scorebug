@@ -1,23 +1,9 @@
-import { WORKER_OUTPUT_PROFILES } from '@scorebug/protocol';
-import {
-  deliveryPacketValid,
-  WORKER_DECODER_DELIVERY_PROTOCOL,
-  type DecoderDeliveryPacket,
-} from '@scorebug/protocol';
-import { decoderCadenceSchema } from '../decoder-cadence.js';
-import { workerProcessingSchema, processingFitsObservation } from '../worker-processing.js';
 import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import {
-  WORKER_STATES,
-  WORKER_REASONS,
-  DECODED_VIDEO_INVALID_REASONS,
-  type MatchCredential,
-} from '@scorebug/protocol';
+import { WORKER_STATES, WORKER_REASONS, type MatchCredential } from '@scorebug/protocol';
 import { WorkerObservations, WorkerObservationError } from '../worker-observations.js';
-import { publicationStatus } from '../worker-publication.js';
 import { bearer, ownerAuth } from '../auth.js';
 import type { Config } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
@@ -27,55 +13,7 @@ import { RelayLifecycleError, type RelayLifecycle } from '../relay-lifecycle.js'
 import { PUBLISHING_ATTEMPT_ID_PATTERN } from '../publishing-attempt.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
-const capabilities = z
-  .object({
-    version: z.literal(1),
-    outputId: id,
-    encoder: z.enum(['software', 'videotoolbox', 'nvenc']),
-    outputProfile: z.enum(WORKER_OUTPUT_PROFILES),
-    outputMode: z.enum(['rtmp', 'record', 'rtmp+record']),
-    startup: z.enum(['passed', 'failed', 'timeout', 'cancelled', 'unsupported_platform']),
-    sustainedPerformance: z.literal('unqualified'),
-  })
-  .strict();
 const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const pts = z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER);
-const decodedVideo = z
-  .object({
-    clock: z
-      .string()
-      .regex(/^[a-z][a-z0-9-]{0,63}$/)
-      .optional(),
-    completed: z
-      .object({
-        sequence: sequence.min(1),
-        durationMs: z.literal(5000),
-        ageMs: z.number().nonnegative().max(Number.MAX_SAFE_INTEGER),
-        firstPTS: pts.nullable(),
-        lastPTS: pts.nullable(),
-        freshFrames: sequence,
-        duplicateFrames: sequence,
-        reorderedFrames: sequence,
-        valid: z.boolean(),
-      })
-      .strict()
-      .refine((w) => {
-        if (!Number.isSafeInteger(w.freshFrames + w.duplicateFrames + w.reorderedFrames))
-          return false;
-        if (w.freshFrames === 0) return w.firstPTS === null && w.lastPTS === null;
-        if (w.firstPTS === null || w.lastPTS === null) return false;
-        return w.freshFrames === 1 ? w.firstPTS === w.lastPTS : w.firstPTS < w.lastPTS;
-      })
-      .nullable(),
-    invalidReason: z.enum(DECODED_VIDEO_INVALID_REASONS).nullable(),
-    ended: z.boolean(),
-  })
-  .strict()
-  .refine((v) => v.completed === null || v.completed.valid === (v.invalidReason === null))
-  .transform(({ clock, ...snapshot }) => ({
-    ...snapshot,
-    ...(clock !== undefined ? { clock } : {}),
-  }));
 const report = z
   .object({
     recordingId: id,
@@ -117,50 +55,7 @@ export function mediaRoutes(
     c.set('credential', credential);
     await next();
   });
-  app.get('/capabilities', scoped, zValidator('query', z.object({ workerId: id }).strict()), (c) =>
-    c.json(observations.capabilities(c.req.valid('query').workerId)),
-  );
-  app.get(
-    '/status',
-    scoped,
-    zValidator(
-      'query',
-      z
-        .object({
-          decoderDelivery: z.literal(WORKER_DECODER_DELIVERY_PROTOCOL).optional(),
-          deliveryScope: z.string().length(36).regex(PUBLISHING_ATTEMPT_ID_PATTERN).optional(),
-          deliveryAfter: z
-            .string()
-            .regex(/^(0|[1-9][0-9]*)$/)
-            .transform(Number)
-            .pipe(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER))
-            .optional(),
-        })
-        .strict()
-        .refine(
-          (q) =>
-            (q.deliveryScope === undefined) === (q.deliveryAfter === undefined) &&
-            (q.deliveryScope === undefined || q.decoderDelivery !== undefined),
-        ),
-    ),
-    async (c) => {
-      const q = c.req.valid('query');
-      const request = q.decoderDelivery
-        ? q.deliveryScope !== undefined
-          ? { scopeID: q.deliveryScope, lastOrdinal: q.deliveryAfter! }
-          : true
-        : undefined;
-      return c.json(
-        await publicationStatus(
-          c.get('credential').gameId,
-          observations,
-          relayLifecycle,
-          undefined,
-          request,
-        ),
-      );
-    },
-  );
+  app.get('/status', scoped, (c) => c.json(observations.status(c.get('credential').gameId)));
   app.get('/', scoped, (c) =>
     c.json({
       snapshot: matches.media.get(c.get('credential').gameId),
@@ -255,18 +150,8 @@ export function workerRoutes(
     await next();
   });
   app.use('*', bearer(config.HOME_TOKEN, 'worker'));
-  app.post(
-    '/sessions',
-    zValidator(
-      'json',
-      z.object({ workerId: id, runId: id, capabilities: capabilities.optional() }).strict(),
-    ),
-    (c) => c.json(observations.register(c.req.valid('json'))),
-  );
-  app.post(
-    '/sample-timing',
-    zValidator('json', z.object({ workerId: id, sessionId: id }).strict()),
-    (c) => c.json(observations.sampleTiming(c.req.valid('json'))),
+  app.post('/sessions', zValidator('json', z.object({ workerId: id, runId: id }).strict()), (c) =>
+    c.json(observations.register(c.req.valid('json'))),
   );
   app.post(
     '/observations',
@@ -276,8 +161,6 @@ export function workerRoutes(
         .object({
           workerId: id,
           sessionId: id,
-          timingToken: id.optional(),
-          pipelineReadId: z.string().length(36).regex(PUBLISHING_ATTEMPT_ID_PATTERN).optional(),
           sequence,
           observation: z
             .object({
@@ -289,13 +172,17 @@ export function workerRoutes(
               frame: sequence.nullable(),
               outTimeUs: sequence.nullable(),
               scoreRevision: sequence.nullable(),
-              decodedVideo: decodedVideo.optional(),
-              decoderCadence: decoderCadenceSchema.optional(),
-              decoderDelivery: z.custom<DecoderDeliveryPacket>(deliveryPacketValid).optional(),
-              processing: workerProcessingSchema.optional(),
+              output: z
+                .object({
+                  width: z.number().int().min(2).max(7680),
+                  height: z.number().int().min(2).max(4320),
+                  fps: z.number().int().min(1).max(60),
+                  bitrateKbps: z.number().int().min(100).max(100_000),
+                })
+                .strict()
+                .optional(),
             })
             .strict()
-            .refine(processingFitsObservation)
             .refine(
               (o) =>
                 o.state !== 'producing_output' ||
@@ -305,22 +192,12 @@ export function workerRoutes(
         .strict(),
     ),
     (c) => {
-      const body = c.req.valid('json');
-      const { decodedVideo, processing, decoderCadence, decoderDelivery, ...observation } =
-        body.observation;
-      const { timingToken, pipelineReadId, ...request } = body;
+      const { observation, ...request } = c.req.valid('json');
+      const { output, ...rest } = observation;
       return c.json(
         observations.report({
           ...request,
-          ...(timingToken !== undefined ? { timingToken } : {}),
-          ...(pipelineReadId !== undefined ? { pipelineReadId } : {}),
-          observation: {
-            ...observation,
-            ...(decodedVideo ? { decodedVideo } : {}),
-            ...(decoderCadence ? { decoderCadence } : {}),
-            ...(decoderDelivery ? { decoderDelivery } : {}),
-            ...(processing ? { processing } : {}),
-          },
+          observation: { ...rest, ...(output ? { output } : {}) },
         }),
       );
     },

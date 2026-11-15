@@ -1,35 +1,10 @@
 import { frameRateCapFilter } from './frame-rate-cap.js';
-import type { DecodedGeometrySnapshot } from './decoded-geometry.mjs';
-import type { DecoderDeliveryPacket } from '@scorebug/protocol';
-import { DecoderDeliveryTelemetry, type DecoderDeliverySnapshot } from './decoder-delivery.js';
-import { DecoderCadenceTelemetry, type DecoderCadenceSnapshot } from './decoder-cadence.js';
-import type { EncoderDiagnosticSnapshot } from './encoder-diagnostics.mjs';
-import type { WorkerPacketTimingSnapshot } from './worker-packet-timing.mjs';
-import type { WorkerProcessingReport } from '@scorebug/protocol';
-import { DecodedFrameHistory, type DecodedFrameHistorySnapshot } from './decoded-frame-history.js';
 import { observeDecodedPipe } from './decoded-pipe.js';
-import type { WorkerProcessingSnapshot } from './worker-processing.js';
-import {
-  WorkerProcessingWindows,
-  type WorkerProcessingWindow,
-} from './worker-processing-windows.js';
-import { DECODED_VIDEO_TRANSPORT_CLOCK } from '@scorebug/protocol';
-import {
-  EncoderTimingTelemetry,
-  observeEncoderTimingPipe,
-  type EncoderTimingSnapshot,
-} from './encoder-timing.js';
 import { fork, type ChildProcess } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import type { Logger } from './logger.js';
 import { OverlayFeed } from './scorebug/feed.js';
 import { overlayRegions } from './scorebug/layout.js';
-import {
-  DecodedVideoLifetime,
-  DecodedVideoTelemetry,
-  type DecodedVideoLifetimeSnapshot,
-  type DecodedVideoSnapshot,
-} from './decoded-video.js';
 
 export type PipelineSpec = {
   gameId: string;
@@ -52,21 +27,6 @@ export type PipelineHandle = {
   spec: PipelineSpec;
   stop: () => void;
   waitExit: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
-  /** Decoder ingress only; PTS ticks use 1/90000. Fresh pipeline means fresh scope. */
-  snapshotDecodedVideo?: () => DecodedVideoSnapshot;
-  /** Short decoder-arrival windows; no source-loss or viewer-delivery claim. */
-  snapshotDecoderCadence?: () => DecoderCadenceSnapshot;
-  /** Optional local arrival log, separate from negotiated packet reporting. */
-  snapshotDecoderDelivery?: () => DecoderDeliverySnapshot | null;
-  snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
-  snapshotProcessing?: () => WorkerProcessingSnapshot | null;
-  snapshotProcessingWindow?: () => WorkerProcessingWindow | null;
-  snapshotVideoEvidence?: () => {
-    decodedVideo: DecodedVideoSnapshot;
-    decoderCadence?: DecoderCadenceSnapshot;
-    decoderDelivery?: DecoderDeliveryPacket;
-    processing?: WorkerProcessingReport;
-  };
 };
 
 /** Overlay canvas: the output canvas, or 1080p for the legacy profile-less graph. */
@@ -85,15 +45,7 @@ export function videoEncoderArgs(encoder: 'software' | 'videotoolbox' | 'nvenc')
       : ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency'];
 }
 
-export function buildFfmpegArgs(
-  spec: PipelineSpec,
-  options: {
-    encoderTiming?: boolean;
-    decoderDiagnostics?: boolean;
-    packetTiming?: boolean;
-    decodedGeometry?: boolean;
-  } = {},
-): string[] {
+export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   if (!spec.publishUrl && !spec.recordingPath) throw new Error('missing_pipeline_output');
   // delay_moov preserves unequal first A/V timestamps via edit lists. An empty
   // initial moov would reset each track separately and destroy the audio lead.
@@ -184,16 +136,11 @@ export function buildFfmpegArgs(
           `[${index === labels.length - 1 ? 'video' : `${labels[index]}_done`}]`,
       )
       .join(';');
-  // A sink-only side branch observes every decoder frame without changing the
-  // live branch's timebase (the cap uses its rounding tolerance). The graph has
-  // one output; input 1 (the scorebug) feeds only the final overlays.
-  const geometry =
-    options.decoderDiagnostics && options.decodedGeometry
-      ? 'showinfo@scorebug_geometry=checksum=0:udu_sei_as_ascii=0,'
-      : '';
-  const telemetry =
+  // A sink-only side branch prints every decoded frame's PTS to fd 3 without changing
+  // the live branch's timebase; the overlay feed stamps its frames from it. The graph
+  // has one output; input 1 (the scorebug) feeds only the final overlays.
+  const decodedPts =
     'metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,' +
-    geometry +
     "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]settb=1/90000,";
 
   // copyts preserves the decoder's transport clock; avoid_negative_ts only
@@ -204,13 +151,12 @@ export function buildFfmpegArgs(
     '-progress',
     'pipe:1',
     '-loglevel',
-    options.decoderDiagnostics || options.packetTiming ? 'repeat+level+info' : 'warning',
-    ...(options.packetTiming ? ['-debug_ts'] : []),
+    'warning',
     '-fflags',
     '+genpts',
     '-copyts',
     // The fixed scale/pad canvas absorbs input dimension changes. Keep filter
-    // state so telemetry ordinals and the source-FPS cap anchor cannot reset.
+    // state so decoded-frame ordinals and the source-FPS cap anchor cannot reset.
     // The legacy profile-less graph has no canvas normalization guarantee.
     ...(profile ? ['-reinit_filter:v:0', '0'] : []),
     // Input-scoped: never changes the selected output encoder's threading.
@@ -225,24 +171,12 @@ export function buildFfmpegArgs(
     '-i',
     'pipe:0',
     '-filter_complex',
-    '[0:v:0]' + telemetry + filter,
+    '[0:v:0]' + decodedPts + filter,
     '-map',
     '[video]',
     '-map',
     '0:a:0',
     ...video,
-    ...(options.encoderTiming
-      ? [
-          '-stats_enc_pre:v:0',
-          'pipe:4',
-          '-stats_enc_pre_fmt:v:0',
-          'pre {n} {tb} {pts}',
-          '-stats_enc_post:v:0',
-          'pipe:4',
-          '-stats_enc_post_fmt:v:0',
-          'post {n} {tb} {pts}',
-        ]
-      : []),
     '-c:a',
     'aac',
     '-b:a',
@@ -258,32 +192,8 @@ export function buildFfmpegArgs(
 /** FFmpeg output counters; these do not prove fresh frames reached the destination. */
 export type PipelineProgress = Readonly<{ frame: number; outTimeUs: number }>;
 
-export type PipelineTerminal = Readonly<{
-  decodedVideo: DecodedVideoLifetimeSnapshot;
-  telemetryEOF: boolean;
-  diagnostics?: EncoderDiagnosticSnapshot;
-  packetTiming?: WorkerPacketTimingSnapshot;
-  decodedGeometry?: DecodedGeometrySnapshot;
-  /** Null means the guardian never reported the encoder status. */
-  encoderExit: { code: number | null; signal: NodeJS.Signals | null } | null;
-  outputProgress: PipelineProgress | null;
-  encoderTiming?: EncoderTimingSnapshot;
-  decodedFrameHistory?: DecodedFrameHistorySnapshot;
-  decoderCadence?: DecoderCadenceSnapshot;
-}>;
-
 export type PipelineOptions = {
-  /** Test-only numeric packet prefixes; requires onTerminal, never health evidence. */
-  packetTiming?: boolean;
-  /** Test-only pre-scale decoded dimensions; requires onTerminal. */
-  decodedGeometry?: boolean;
-  /** Enable the bounded arrival collector and negotiated reporting packets. */
-  deliveryTimeline?: boolean;
-  /** Opt-in diagnostics requiring FFmpeg stats_enc_pre/post support. Never capacity evidence. */
-  encoderTiming?: boolean;
-  /** Optional test diagnostics, emitted once after all guardian pipes close. */
-  onTerminal?: (terminal: PipelineTerminal) => void;
-  /** Monotonic milliseconds; telemetry never compares source PTS to this clock. */
+  /** Monotonic milliseconds for the overlay feed's clock. */
   monotonicNow?: () => number;
   /** Called only for complete, non-regressing records with at least one changed counter. */
   onProgress?: (progress: PipelineProgress) => void;
@@ -368,71 +278,12 @@ export function startPipeline(
   if (!Number.isInteger(stopTimeoutMs) || stopTimeoutMs < 0 || stopTimeoutMs > 60_000) {
     throw new RangeError('stopTimeoutMs must be an integer from 0 to 60000');
   }
-  // Concealment is logged at INFO. Enable it only for the bounded terminal
-  // diagnostic collector; raw stderr remains inside the guardian process.
-  const args = buildFfmpegArgs(spec, {
-    ...options,
-    decoderDiagnostics: Boolean(options.onTerminal),
-    packetTiming: Boolean(options.onTerminal && options.packetTiming),
-    decodedGeometry: Boolean(options.onTerminal && options.decodedGeometry),
-  });
-  const encoderTiming = options.encoderTiming
-    ? new EncoderTimingTelemetry(options.monotonicNow)
-    : undefined;
-  const decodedVideo = new DecodedVideoTelemetry(options.monotonicNow);
-  const decoderCadence = new DecoderCadenceTelemetry(options.monotonicNow);
-  const decoderDelivery = options.deliveryTimeline
-    ? new DecoderDeliveryTelemetry(options.monotonicNow)
-    : undefined;
-  const decodedHistory = encoderTiming
-    ? new DecodedFrameHistory(options.monotonicNow, encoderTiming.scopeID, spec.profile?.fps)
-    : undefined;
-  const processingWindows = encoderTiming ? new WorkerProcessingWindows() : undefined;
-  const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;
-  let telemetryEOF = false;
-  let diagnostics: EncoderDiagnosticSnapshot | undefined;
-  let packetTiming: WorkerPacketTimingSnapshot | undefined;
-  let decodedGeometry: DecodedGeometrySnapshot | undefined;
-  let outputProgress: PipelineProgress | null = null;
-  let terminalEmitted = false;
+  const args = buildFfmpegArgs(spec);
   let child: ChildProcess | undefined;
   let settled = false;
   let guardianSpawnFailed = false;
   let stopping = false;
   let encoderExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
-  const terminal = () => {
-    if (!lifetime || terminalEmitted) return;
-    terminalEmitted = true;
-    lifetime.end();
-    try {
-      options.onTerminal?.({
-        decodedVideo: lifetime.snapshot(),
-        decoderCadence: decoderCadence.snapshot(),
-        telemetryEOF,
-        ...(diagnostics ? { diagnostics } : {}),
-        ...(packetTiming ? { packetTiming } : {}),
-        ...(decodedGeometry ? { decodedGeometry } : {}),
-        encoderExit: encoderExit ? { ...encoderExit } : null,
-        outputProgress: outputProgress ? { ...outputProgress } : null,
-        ...(encoderTiming ? { encoderTiming: encoderTiming.snapshot() } : {}),
-        ...(decodedHistory ? { decodedFrameHistory: decodedHistory.snapshot() } : {}),
-      });
-    } catch {
-      // Diagnostics must never change shutdown, including a failing diagnostic logger.
-      try {
-        log.warn('ffmpeg_terminal_callback_failed', { gameId: spec.gameId });
-      } catch {}
-    }
-  };
-  const failedBeforeSpawn = () => {
-    decodedVideo.end();
-    decoderCadence.end();
-    decoderDelivery?.end();
-    encoderTiming?.end();
-    decodedHistory?.end();
-    terminal();
-    settle(null, null);
-  };
   let settle!: (code: number | null, signal: NodeJS.Signals | null) => void;
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     settle = (code, signal) => {
@@ -456,12 +307,13 @@ export function startPipeline(
   log.info('ffmpeg_spawning', { gameId: spec.gameId, nvenc: spec.nvenc });
   let overlay: OverlayFeed | undefined;
   try {
+    // Guardian fd3 is IPC, fd4 carries FFmpeg's decoded-PTS fd3, and fd5 is handed
+    // to FFmpeg as stdin: the scorebug overlay input.
     child = fork(new URL('./pipeline-guardian.mjs', import.meta.url), [], {
       execArgv: [],
-      stdio: ['ignore', 'pipe', 'ignore', 'ipc', 'pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'ignore', 'ipc', 'pipe', 'pipe'],
     });
-    // Guardian fd6 is handed to FFmpeg as stdin: the scorebug overlay input.
-    const overlaySink = child.stdio.at(6) as Writable | null | undefined;
+    const overlaySink = child.stdio.at(5) as Writable | null | undefined;
     overlay = overlaySink
       ? new OverlayFeed({
           scoreFile: spec.scoreFile,
@@ -475,33 +327,13 @@ export function startPipeline(
           },
         })
       : undefined;
-    // Guardian IPC remains fd3; fd4 becomes FFmpeg decoded telemetry fd3,
-    // and fd5 becomes the independent encoder timing fd4. Always drain both.
-    const timingPipe = child.stdio.at(5) as Readable;
-    observeEncoderTimingPipe(timingPipe, encoderTiming);
-    // Guardian IPC remains fd3; its fd4 becomes FFmpeg's telemetry fd3.
-    // Always drain, including after invalid evidence and without an observer.
-    const telemetry = child.stdio[4] as Readable;
-    observeDecodedPipe(
-      telemetry,
-      [
-        decodedVideo,
-        decoderCadence,
-        ...(decoderDelivery ? [decoderDelivery] : []),
-        ...(lifetime ? [lifetime] : []),
-        ...(decodedHistory ? [decodedHistory] : []),
-        ...(overlay ? [overlay.observer] : []),
-      ],
-      () => {
-        telemetryEOF = true;
-      },
-    );
-    // Drain diagnostics without retaining them: FFmpeg echoes credentialed URLs.
-    if (options.onProgress || options.onTerminal) {
+    // Always drain the decoded-PTS pipe, including after invalid records.
+    observeDecodedPipe(child.stdio[4] as Readable, overlay?.observer);
+    // Drain progress without retaining anything else: FFmpeg echoes credentialed URLs.
+    if (options.onProgress) {
       child.stdout?.on(
         'data',
         progressReader((progress) => {
-          if (lifetime) outputProgress = { ...progress };
           try {
             options.onProgress?.(progress);
           } catch {
@@ -517,16 +349,9 @@ export function startPipeline(
         event: string;
         code: number | null;
         signal: NodeJS.Signals | null;
-        diagnostics?: EncoderDiagnosticSnapshot;
-        packetTiming?: WorkerPacketTimingSnapshot;
-        decodedGeometry?: DecodedGeometrySnapshot;
       };
       if (event.event === 'exit') {
         encoderExit = { code: event.code, signal: event.signal };
-        diagnostics = event.diagnostics;
-        packetTiming = event.packetTiming;
-        decodedGeometry =
-          options.onTerminal && options.decodedGeometry ? event.decodedGeometry : undefined;
       } else if (event.event === 'sigterm' || event.event === 'sigkill') {
         log.info(`ffmpeg_${event.event}`, { gameId: spec.gameId });
       } else if (event.event === 'process_error' || event.event === 'spawn_failed') {
@@ -540,57 +365,20 @@ export function startPipeline(
     });
     child.once('close', () => {
       overlay?.stop();
-      decodedVideo.end();
-      decoderCadence.end();
-      decoderDelivery?.end();
-      encoderTiming?.end();
-      decodedHistory?.end();
-      terminal();
-      // Drain progress before resolving. Guardian death alone does not prove the
-      // encoder exited: fail closed so the supervisor cannot overlap publishers.
+      // Guardian death alone does not prove the encoder exited: fail closed so the
+      // supervisor cannot overlap publishers.
       if (encoderExit) settle(encoderExit.code, encoderExit.signal);
       else if (guardianSpawnFailed) settle(null, null);
       else if (!settled) log.error('ffmpeg_guardian_lost', { gameId: spec.gameId });
     });
-    send({
-      type: 'start',
-      binary: spec.ffmpegPath ?? 'ffmpeg',
-      args,
-      stopTimeoutMs,
-      diagnostics: Boolean(options.onTerminal),
-      packetTiming: Boolean(options.onTerminal && options.packetTiming),
-      decodedGeometry: Boolean(options.onTerminal && options.decodedGeometry),
-    });
+    send({ type: 'start', binary: spec.ffmpegPath ?? 'ffmpeg', args, stopTimeoutMs });
     void overlay?.start();
   } catch {
     overlay?.stop();
     log.error('ffmpeg_spawn_failed', { gameId: spec.gameId });
-    if (!child?.pid) failedBeforeSpawn();
+    if (!child?.pid) settle(null, null);
   }
 
-  const sampleVideoEvidence = () => {
-    const video = { ...decodedVideo.snapshot(), clock: DECODED_VIDEO_TRANSPORT_CLOCK };
-    const processing =
-      processingWindows && decodedHistory && encoderTiming
-        ? processingWindows.observe(video, {
-            decoded: decodedHistory.snapshot(),
-            encoded: encoderTiming.snapshot(),
-          })
-        : null;
-    return {
-      decodedVideo: video,
-      decoderCadence: decoderCadence.snapshot(),
-      ...(decoderDelivery ? { decoderDelivery: decoderDelivery.packet() } : {}),
-      ...(processing
-        ? {
-            processing: {
-              ...processing,
-              encoder: spec.encoder ?? (spec.nvenc ? ('nvenc' as const) : ('software' as const)),
-            },
-          }
-        : {}),
-    };
-  };
   const alive = () => !settled && child?.exitCode === null && child.signalCode === null;
   return {
     spec,
@@ -600,18 +388,5 @@ export function startPipeline(
       send({ type: 'stop' });
     },
     waitExit: () => exit,
-    snapshotDecoderCadence: () => decoderCadence.snapshot(),
-    snapshotDecoderDelivery: () => decoderDelivery?.snapshot() ?? null,
-    snapshotEncoderTiming: () => encoderTiming?.snapshot() ?? null,
-    snapshotProcessing: () =>
-      decodedHistory && encoderTiming
-        ? { decoded: decodedHistory.snapshot(), encoded: encoderTiming.snapshot() }
-        : null,
-    snapshotVideoEvidence: sampleVideoEvidence,
-    snapshotProcessingWindow: () => sampleVideoEvidence().processing ?? null,
-    snapshotDecodedVideo: () => ({
-      ...decodedVideo.snapshot(),
-      clock: DECODED_VIDEO_TRANSPORT_CLOCK,
-    }),
   };
 }

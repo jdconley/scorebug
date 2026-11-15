@@ -8,7 +8,6 @@ import { expect, it } from 'vitest';
 
 async function startup(
   body: string,
-  mode: 'auto' | 'off',
   check: (f: {
     binary: string;
     output: () => string;
@@ -48,7 +47,6 @@ async function startup(
         OUTPUT_ID: 'local',
         OUTPUT_URL: 'rtmp://127.0.0.1:9/live/local',
         ENCODER: 'software',
-        WORKER_PROCESSING: mode,
         FFMPEG_PATH: binary,
         SCORE_DIR: dir,
         LOG_LEVEL: 'info',
@@ -90,48 +88,13 @@ async function startup(
     await rm(dir, { recursive: true, force: true });
   }
 }
-it('shutdown cancels and joins startup probing before any control/report request', async () => {
-  await startup("process.on('SIGTERM',()=>{});setInterval(()=>{},100);", 'auto', async (f) => {
-    await expect
-      .poll(() => readFile(f.binary + '.pid', 'utf8'), { timeout: 3000 })
-      .toMatch(/^\d+$/);
-    const pid = Number(await readFile(f.binary + '.pid', 'utf8'));
+it('polls control immediately at startup and exits cleanly on SIGTERM', async () => {
+  await startup('process.exit(1);', async (f) => {
+    await expect.poll(f.output, { timeout: 3000 }).toContain('worker_started');
+    await expect.poll(f.requests, { timeout: 3000 }).toBeGreaterThan(0);
     const stoppingAt = performance.now();
     f.stop();
     expect(await f.exit).toEqual({ code: 0, signal: null });
     expect(performance.now() - stoppingAt).toBeLessThan(1500);
-    expect(() => process.kill(pid, 0)).toThrow();
-    expect(f.requests()).toBe(0);
-    expect(f.output()).not.toContain('worker_processing_capability');
-  });
-});
-it('unsupported statistics still start normal control/report loops', async () => {
-  await startup("process.stdout.write('old help without statistics');", 'auto', async (f) => {
-    await expect.poll(f.output, { timeout: 3000 }).toContain('"reason":"unsupported"');
-    await expect.poll(f.requests).toBeGreaterThan(0);
-    f.stop();
-    expect(await f.exit).toEqual({ code: 0, signal: null });
-  });
-});
-it('off mode skips statistics but still checks encoder initialization', async () => {
-  await startup("if(process.argv.includes('-h'))process.exit(9);", 'off', async (f) => {
-    await expect.poll(f.output, { timeout: 3000 }).toContain('worker_processing_disabled');
-    await expect.poll(f.requests).toBeGreaterThan(0);
-    expect(f.output()).toContain('worker_backend_capabilities');
-    f.stop();
-    expect(await f.exit).toEqual({ code: 0, signal: null });
-  });
-});
-it('available options enable processing diagnostics before normal polling begins', async () => {
-  const help = ['pre', 'post', 'pre_fmt', 'post_fmt']
-    .map((key) => `-stats_enc_${key}[:<stream_spec>] value`)
-    .join('\n');
-  await startup(`process.stdout.write(${JSON.stringify(help)});`, 'auto', async (f) => {
-    await expect
-      .poll(f.output, { timeout: 3000 })
-      .toContain('"available":true,"reason":"supported"');
-    await expect.poll(f.requests).toBeGreaterThan(0);
-    f.stop();
-    expect(await f.exit).toEqual({ code: 0, signal: null });
   });
 });

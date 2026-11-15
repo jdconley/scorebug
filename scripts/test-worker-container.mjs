@@ -83,10 +83,7 @@ try {
     import { writeFile } from 'node:fs/promises';
     import { startPipeline } from './apps/home-daemon/dist/pipeline.js';
     import { createLogger } from './apps/home-daemon/dist/logger.js';
-    import { probeEncoderStatistics } from './apps/home-daemon/dist/encoder-statistics-capability.js';
     const exec = promisify(execFile);
-    assert.deepEqual(await probeEncoderStatistics('ffmpeg'), { available: true, reason: 'supported' },
-      'The portable image must provide timing required for adaptive streaming');
     const protocols = await exec('ffmpeg', ['-hide_banner', '-protocols']);
     assert.match(protocols.stdout, /^\\s+srt\\s*$/m);
     await exec('ffmpeg', ['-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=30',
@@ -106,15 +103,10 @@ try {
     const pipeline = startPipeline({ gameId:'image-fixture', pullUrl:'/tmp/source.mp4',
       publishUrl:'/tmp/output.flv', recordingPath:'/tmp/overlay.mp4', scoreFile:'/tmp/scorebug.json', nvenc:false, encoder:'software',
       profile:{width:1280,height:720,fps:30,bitrateKbps:3000}, ffmpegPath:'/tmp/ffmpeg-paced' }, createLogger('error'), {
-        encoderTiming: true,
         onProgress: p => { if (p.frame > 0 && p.outTimeUs > 0) progressed = true; }
       });
     const exited = await pipeline.waitExit();
     assert.equal(exited.code, 0); assert.ok(progressed);
-    const timing = pipeline.snapshotEncoderTiming();
-    assert.ok(timing && timing.ended && timing.completedFrames > 0);
-    assert.equal(timing.pendingFrames, 0);
-    assert.equal(timing.invalidReason, null);
     for (const path of ['/tmp/output.flv', '/tmp/overlay.mp4']) {
     const probe = JSON.parse((await exec('ffprobe', ['-v','error','-show_streams','-of','json',path])).stdout);
     assert.ok(probe.streams.some(s => s.codec_type === 'video' && s.width === 1280 && s.height === 720));
@@ -152,5 +144,5 @@ try {
 }
 if (!process.exitCode)
   console.log(
-    'PASS: final worker image starts, compiled software pipeline encodes/decodes audio/video with overlay and valid encoder timing, and container stops cleanly; owned container removed.',
+    'PASS: final worker image starts, compiled software pipeline encodes/decodes audio/video with overlay, and container stops cleanly; owned container removed.',
   );

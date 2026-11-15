@@ -158,29 +158,6 @@ it('observes fixed-timebase decoder ingress before cap and strips an exact fixed
   );
 });
 
-it('adds encoder timing statistics only when explicitly enabled', () => {
-  const normal = buildFfmpegArgs({ ...baseSpec, nvenc: false });
-  expect(normal).not.toContain('-stats_enc_pre:v:0');
-  expect(normal).not.toContain('-stats_enc_post:v:0');
-  const measured = buildFfmpegArgs({ ...baseSpec, nvenc: false }, { encoderTiming: true });
-  expect(measured[measured.indexOf('-stats_enc_pre:v:0') + 1]).toBe('pipe:4');
-  expect(measured[measured.indexOf('-stats_enc_post:v:0') + 1]).toBe('pipe:4');
-  expect(measured[measured.indexOf('-stats_enc_pre_fmt:v:0') + 1]).toBe('pre {n} {tb} {pts}');
-  expect(measured[measured.indexOf('-stats_enc_post_fmt:v:0') + 1]).toBe('post {n} {tb} {pts}');
-  expect(measured.slice(-3)).toEqual(normal.slice(-3));
-});
-
-it('enables uncompressed INFO diagnostics only when explicitly requested', () => {
-  const spec = { ...baseSpec, nvenc: false };
-  const normal = buildFfmpegArgs(spec);
-  const detailed = buildFfmpegArgs(spec, { decoderDiagnostics: true });
-  expect(normal[normal.indexOf('-loglevel') + 1]).toBe('warning');
-  expect(detailed[detailed.indexOf('-loglevel') + 1]).toBe('repeat+level+info');
-  const stripped = [...detailed];
-  stripped[stripped.indexOf('-loglevel') + 1] = 'warning';
-  expect(stripped).toEqual(normal);
-});
-
 it('applies slice threading to input video only without altering output encoder options', () => {
   const spec = { ...baseSpec, nvenc: false };
   const normal = buildFfmpegArgs(spec);
@@ -193,17 +170,6 @@ it('applies slice threading to input video only without altering output encoder 
   slice.splice(at, 2);
   expect(slice).toEqual(normal);
   expect(() => buildFfmpegArgs({ ...spec, decoderThreading: 'invalid' as 'slice' })).toThrow();
-});
-
-it('enables numeric packet timing only with the explicit diagnostic option', () => {
-  const spec = { ...baseSpec, nvenc: false };
-  for (const options of [{}, { decoderDiagnostics: true }])
-    expect(buildFfmpegArgs(spec, options)).not.toContain('-debug_ts');
-  const args = buildFfmpegArgs(spec, { packetTiming: true } as any);
-  expect(args.filter((arg) => arg === '-debug_ts')).toHaveLength(1);
-  expect(args[args.indexOf('-loglevel') + 1]).toBe('repeat+level+info');
-  expect(args).toContain('-copyts');
-  expect(args[args.indexOf('-avoid_negative_ts') + 1]).toBe('make_zero');
 });
 
 it('records the final overlay as fragmented MP4 without an RTMP output', () => {
@@ -252,24 +218,4 @@ it('rejects pipelines with no output', () => {
   expect(() => buildFfmpegArgs({ ...baseSpec, nvenc: false, publishUrl: undefined })).toThrow(
     'missing_pipeline_output',
   );
-});
-
-it('gates decoded geometry and inserts it only on the existing pre-scale side branch', () => {
-  const spec = {
-    ...baseSpec,
-    nvenc: false,
-    profile: { width: 1920, height: 1080, fps: 30, bitrateKbps: 6000 },
-  };
-  const ordinary = buildFfmpegArgs(spec);
-  expect(buildFfmpegArgs(spec, { decodedGeometry: true } as any)).toEqual(ordinary);
-  const args = buildFfmpegArgs(spec, { decoderDiagnostics: true, decodedGeometry: true } as any);
-  const graph = args[args.indexOf('-filter_complex') + 1]!;
-  expect(graph).toContain(
-    '[decoded]settb=1/90000,showinfo@scorebug_geometry=checksum=0:udu_sei_as_ascii=0,metadata=mode=add',
-  );
-  expect(graph.split('showinfo')).toHaveLength(2);
-  expect(graph.split(';[live]')[1]).not.toContain('showinfo');
-  expect(graph).toContain('scale=1920:1080');
-  expect(args[args.indexOf('-reinit_filter:v:0') + 1]).toBe('0');
-  expect(args[args.indexOf('-loglevel') + 1]).toBe('repeat+level+info');
 });

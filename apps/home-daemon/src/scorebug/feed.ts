@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { Writable } from 'node:stream';
 import type { ScorebugOverlay } from '@scorebug/protocol';
-import { DecodedVideoParser } from '../decoded-video.js';
+import { DecodedPtsParser } from '../decoded-pts.js';
 import type { DecodedPipeObserver } from '../decoded-pipe.js';
 import { overlayRegions, packRegions, type OverlayRegions, type OverlaySize } from './layout.js';
 import { MatroskaFramer, matroskaHeader } from './matroska.js';
@@ -66,7 +66,7 @@ export class OverlayFeed {
     this.render = options.render ?? renderScorebugRgba;
     this.layout = overlayRegions(options.size);
     this.frame = transparentFrame(this.canvas);
-    const parser = new DecodedVideoParser(
+    const parser = new DecodedPtsParser(
       (pts) => {
         this.latest = { pts, at: this.now() };
       },
@@ -76,7 +76,6 @@ export class OverlayFeed {
     this.observer = {
       push: (chunk) => parser.push(chunk),
       end: () => parser.end(),
-      invalidatePipe: () => undefined,
     };
     options.sink.on('error', () => this.fail());
   }

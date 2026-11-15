@@ -1,10 +1,6 @@
-import type {
-  BroadcastSelection,
-  WorkerPublication,
-  ReceiverProbeSnapshot,
-} from '@scorebug/protocol';
+import type { BroadcastSelection } from '@scorebug/protocol';
 import type { IngestEndpoint } from './ingest-endpoint.js';
-import { publishAttemptQuery, verifyPublishAttemptQuery } from './publishing-attempt.js';
+import { publishAttemptQuery } from './publishing-attempt.js';
 import { formatSrtUrl } from './srt-url.js';
 import {
   deriveIngestGrant,
@@ -40,7 +36,7 @@ export type WorkerIngestAssignment = {
   source: SourceObservation;
 };
 export type RelayAdapter = Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'> &
-  Partial<Pick<IngestRelay, 'publication' | 'retire'>>;
+  Partial<Pick<IngestRelay, 'retire'>>;
 type Target = { desired: RelayDesired; grant: IngestGrant };
 type RelayConfig = {
   installationSecret: string;
@@ -187,7 +183,8 @@ export class RelayLifecycle {
         throw new RelayLifecycleError('capture_not_selected');
       let publishUrl = target.grant.publishUrl;
       if (request.publishingAttemptId !== undefined) {
-        // Validate and sign before relay I/O; keep the generation's base grant intact.
+        // The phone checks that its publish URL carries this tag for its own attempt.
+        // The relay ignores it; keep the generation's base grant intact.
         const query = publishAttemptQuery(
           this.config.installationSecret,
           target.grant.path,
@@ -211,45 +208,6 @@ export class RelayLifecycle {
         };
       });
     });
-  }
-
-  /** Diagnostic reads never queue behind provisioning or mutate the relay. */
-  async publication(scope: {
-    workerId: string;
-    gameId: string;
-    generation: number;
-    pipelineReadId: string;
-  }): Promise<
-    { publication: WorkerPublication; receiverProbe?: ReceiverProbeSnapshot } | undefined
-  > {
-    scope = { ...scope };
-    const target = this.current();
-    if (
-      !target ||
-      target.desired.gameId !== scope.gameId ||
-      target.desired.generation !== scope.generation ||
-      target.desired.selection.workerId !== scope.workerId ||
-      !this.relay.publication
-    )
-      return undefined;
-    const found = await this.relay.publication(target.grant.path, scope.pipelineReadId);
-    this.assertCurrent(target);
-    if (!found) return undefined;
-    const publishingAttemptId = verifyPublishAttemptQuery(
-      this.config.installationSecret,
-      target.grant.path,
-      found.publisherQuery,
-    );
-    if (!publishingAttemptId) return undefined;
-    return {
-      publication: {
-        readerId: found.readerId,
-        publisherId: found.publisherId,
-        publishingAttemptId,
-        clock: { ...found.clock },
-      },
-      ...(found.receiverProbe ? { receiverProbe: { ...found.receiverProbe } } : {}),
-    };
   }
 
   worker(workerId: string): Promise<WorkerIngestAssignment | null> {

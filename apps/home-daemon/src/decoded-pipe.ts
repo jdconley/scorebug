@@ -1,29 +1,18 @@
 import type { Readable } from 'node:stream';
-export type DecodedPipeObserver = {
-  push(chunk: Buffer): void;
-  end(): void;
-  invalidatePipe(): void;
-};
-/** A side-channel failure invalidates evidence, never publication ownership. */
-export function observeDecodedPipe(
-  pipe: Readable,
-  observers: readonly DecodedPipeObserver[],
-  onEOF: () => void,
-) {
-  let eof = false;
-  const invalidate = () => observers.forEach((observer) => observer.invalidatePipe());
-  const end = () => observers.forEach((observer) => observer.end());
-  pipe.on('data', (chunk: Buffer) => observers.forEach((observer) => observer.push(chunk)));
-  pipe.once('end', () => {
-    eof = true;
-    onEOF();
-    end();
+export type DecodedPipeObserver = { push(chunk: Buffer): void; end(): void };
+/** Feed FFmpeg's decoded-PTS pipe to an observer and always drain it. A pipe failure
+ * ends the observer; it never stops the broadcast. */
+export function observeDecodedPipe(pipe: Readable, observer?: DecodedPipeObserver) {
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    observer?.end();
+  };
+  pipe.on('data', (chunk: Buffer) => {
+    if (!ended) observer?.push(chunk);
   });
-  pipe.on('error', invalidate);
-  pipe.once('close', () => {
-    if (!eof) {
-      invalidate();
-      end();
-    }
-  });
+  pipe.once('end', end);
+  pipe.on('error', end);
+  pipe.once('close', end);
 }

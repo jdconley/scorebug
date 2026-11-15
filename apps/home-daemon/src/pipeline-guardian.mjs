@@ -1,18 +1,6 @@
 // @ts-check
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { DecodedGeometry } from './decoded-geometry.mjs';
-/** @type {DecodedGeometry | undefined} */
-let decodedGeometry;
-import { WorkerPacketTiming } from './worker-packet-timing.mjs';
-/** @type {WorkerPacketTiming | undefined} */
-let packetTiming;
-import { EncoderDiagnostics, observeEncoderDiagnostics } from './encoder-diagnostics.mjs';
-/** @type {EncoderDiagnostics | undefined} */
-let diagnostics;
 
 /** @type {import('node:child_process').ChildProcess | undefined} */
 let encoder;
@@ -93,41 +81,7 @@ async function finish(code, signal) {
   await Promise.all(forwards.map((output) => output.drained));
   clearTimeout(drainTimer);
   // A guardian exit is never substituted for the encoder's actual exit status.
-  diagnostics?.end();
-  packetTiming?.end();
-  decodedGeometry?.end();
-  // Opt-in lab evidence must survive worker SIGKILL. Save only parsed numeric
-  // fields, never argv, URLs or raw stderr; never overwrite an existing file.
-  const directory = process.env.SCOREBUG_TEST_WORKER_PACKET_TIMING_DIR;
-  if (packetTiming && directory && isAbsolute(directory)) {
-    try {
-      await writeFile(
-        join(directory, `packet-timing-${process.pid}-${randomUUID()}.json`),
-        JSON.stringify({
-          guardianPid: process.pid,
-          encoderPid: encoder?.pid ?? null,
-          parentDisconnected,
-          code,
-          signal,
-          packetTiming: packetTiming.snapshot(),
-        }) + '\n',
-        { flag: 'wx', mode: 0o600 },
-      );
-    } catch {
-      report({ event: 'packet_timing_file_failed' });
-    }
-  }
-  report(
-    {
-      event: 'exit',
-      code,
-      signal,
-      ...(diagnostics ? { diagnostics: diagnostics.snapshot() } : {}),
-      ...(packetTiming ? { packetTiming: packetTiming.snapshot() } : {}),
-      ...(decodedGeometry ? { decodedGeometry: decodedGeometry.snapshot() } : {}),
-    },
-    true,
-  );
+  report({ event: 'exit', code, signal }, true);
 }
 
 function alive() {
@@ -153,7 +107,7 @@ process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
 process.on('message', (message) => {
   const request =
-    /** @type {{ type: string, binary: string, args: string[], stopTimeoutMs: number, diagnostics?: boolean, packetTiming?: boolean, decodedGeometry?: boolean }} */ (
+    /** @type {{ type: string, binary: string, args: string[], stopTimeoutMs: number }} */ (
       message
     );
   if (request.type === 'stop') {
@@ -164,30 +118,13 @@ process.on('message', (message) => {
   started = true;
   stopTimeoutMs = request.stopTimeoutMs;
   try {
-    // Guardian owns all encoder readers; parent fd4 is decoded telemetry and
-    // fd5 is encoder timing. Raw diagnostics stay private to this process.
-    // Parent fd6 (the scorebug overlay feed) is shared, not copied, as the
-    // encoder's stdin; only the parent writes it, so its EOF reaches FFmpeg.
-    diagnostics = request.diagnostics === true ? new EncoderDiagnostics() : undefined;
-    packetTiming =
-      diagnostics && request.packetTiming === true ? new WorkerPacketTiming() : undefined;
-    decodedGeometry =
-      diagnostics && request.decodedGeometry === true ? new DecodedGeometry() : undefined;
-    encoder = spawn(request.binary, request.args, {
-      stdio: [6, 'pipe', diagnostics ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-    });
+    // Guardian owns the encoder's readers: stdout is progress (parent fd1) and fd3 is
+    // decoded PTS (parent fd4). Stderr is discarded; it echoes credentialed URLs.
+    // Parent fd5 (the scorebug overlay feed) is shared, not copied, as the encoder's
+    // stdin; only the parent writes it, so its EOF reaches FFmpeg.
+    encoder = spawn(request.binary, request.args, { stdio: [5, 'pipe', 'ignore', 'pipe'] });
     forward(/** @type {import('node:stream').Readable} */ (encoder.stdout), 1);
     forward(/** @type {import('node:stream').Readable} */ (encoder.stdio[3]), 4);
-    forward(/** @type {import('node:stream').Readable} */ (encoder.stdio[4]), 5);
-    if (encoder.stderr && diagnostics) observeEncoderDiagnostics(encoder.stderr, diagnostics);
-    if (encoder.stderr && packetTiming) {
-      encoder.stderr.on('data', (chunk) => packetTiming?.push(chunk));
-      encoder.stderr.on('error', () => packetTiming?.failPipe());
-    }
-    if (encoder.stderr && decodedGeometry) {
-      encoder.stderr.on('data', (chunk) => decodedGeometry?.push(chunk));
-      encoder.stderr.on('error', () => decodedGeometry?.failPipe());
-    }
     encoder.on('error', () => {
       report({ event: 'process_error' });
       if (!encoder?.pid) finish(null, null);
@@ -196,10 +133,6 @@ process.on('message', (message) => {
       // A descendant or stalled parent can retain an output after encoder exit.
       // Bound draining independently of stop(), retaining the actual exit status.
       drainTimer = setTimeout(() => {
-        diagnostics?.timeOutDrain();
-        packetTiming?.timeOutDrain();
-        decodedGeometry?.timeOutDrain();
-        encoder?.stderr?.destroy();
         for (const output of forwards) {
           output.detach();
           output.closeSource();
@@ -207,7 +140,7 @@ process.on('message', (message) => {
         void finish(code, signal);
       }, 250);
     });
-    // Normally close joins all final diagnostic writes before reporting exit.
+    // Normally close joins all final pipe writes before reporting exit.
     encoder.once('close', finish);
   } catch {
     report({ event: 'spawn_failed' });
