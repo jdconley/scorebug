@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { createServer } from 'node:http';
 import { IngestRelay, deriveIngestGrant, ingestPathPrefix } from '../src/ingest.js';
+import { formatSrtUrl } from '../src/srt-url.js';
 
 const selection = {
   workerId: 'mac',
@@ -83,6 +84,13 @@ it('derives stable, separate capabilities scoped to installation and broadcast i
   expect(publisher.searchParams.get('passphrase')).toBe(a.publishPassphrase);
   expect(reader.searchParams.get('passphrase')).toBe(a.readPassphrase);
   expect(publisher.searchParams.get('pkt_size')).toBe('1316');
+  // Older libsrt clients (FFmpeg 6.1, OBS, Larix) send query values raw; keep ':' literal.
+  expect(a.publishUrl).toBe(
+    `srt://127.0.0.1:18890?streamid=publish:${a.path}&passphrase=${a.publishPassphrase}&pkt_size=1316`,
+  );
+  expect(a.readUrl).toBe(
+    `srt://127.0.0.1:18890?streamid=read:${a.path}&passphrase=${a.readPassphrase}&pkt_size=1316`,
+  );
   for (const changed of [
     deriveIngestGrant('different-installation-secret', 'match', selection, 1, 'localhost', 8890),
     deriveIngestGrant(
@@ -307,7 +315,7 @@ it('sets native publish peer latency only, preserving read URL and capability id
   expect(new URL(changed.publishUrl).searchParams.get('peerlatency')).toBe('400');
   const publish = new URL(changed.publishUrl);
   publish.searchParams.delete('peerlatency');
-  expect(publish.toString()).toBe(baseline.publishUrl);
+  expect(formatSrtUrl(publish)).toBe(baseline.publishUrl);
   expect({ ...changed, publishUrl: baseline.publishUrl }).toEqual(baseline);
   for (const value of [0, 119, 2001, 400.5, NaN, Infinity, '400', null])
     expect(() =>
@@ -340,7 +348,7 @@ it('relative pacing changes only the native publish URL', () => {
   expect(url.searchParams.has('inputbw')).toBe(false);
   expect(url.searchParams.has('oheadbw')).toBe(false);
   url.searchParams.delete('maxbw');
-  expect(url.toString()).toBe(baseline.publishUrl);
+  expect(formatSrtUrl(url)).toBe(baseline.publishUrl);
   expect({ ...changed, publishUrl: baseline.publishUrl }).toEqual(baseline);
   for (const pacing of ['', 0, null, 'default'])
     expect(() =>
