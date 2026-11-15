@@ -52,26 +52,6 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         public let hasPendingConsumer: Bool
     }
 
-    public struct Snapshot: Sendable {
-        public let statistics: Statistics
-        public let ingressObservation: LiveIngressObservationSnapshot?
-    }
-
-    /// Depth and observation are captured in one transaction even while a consumer
-    /// dequeues. Observations measure only this mailbox, not its in-flight element.
-    public var snapshot: Snapshot {
-        lock.withLock {
-            if let time = observationTimeLocked() { ingress?.advanceClock(at: time) }
-            return Snapshot(statistics: statisticsLocked(), ingressObservation: ingress?.snapshot)
-        }
-    }
-    public let hasIngressObservation: Bool
-
-    // Scalar test clock only; no injected callback executes under the mailbox lock.
-    func setObservationTimeForTesting(_ time: Double?) {
-        lock.withLock { observationTimeOverride = time }
-    }
-
     public let maxItems: Int
     public let maxBytes: Int
     public let overflowPolicy: OverflowPolicy
@@ -79,7 +59,6 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
     private struct Entry {
         let element: Element
         let bytes: Int
-        let observation: LiveIngressSampleMetadata?
     }
 
     // All mutable state, including the cancellation token, is protected by lock.
@@ -100,24 +79,12 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
     private var rejectedCount = 0
     private var droppedCount = 0
     private var waiter: Waiter?
-    private var ingress: LiveIngressObservationAccumulator?
-    private var observationTimeOverride: Double?
 
-    public init(maxItems: Int, maxBytes: Int, overflowPolicy: OverflowPolicy,
-                ingressObservation: LiveIngressObservationConfiguration? = nil) throws {
+    public init(maxItems: Int, maxBytes: Int, overflowPolicy: OverflowPolicy) throws {
         guard maxItems > 0, maxBytes > 0 else { throw MailboxError.invalidLimits }
         self.maxItems = maxItems
         self.maxBytes = maxBytes
         self.overflowPolicy = overflowPolicy
-        if let configuration = ingressObservation,
-           configuration.initialPhase == .startup || configuration.initialPhase == .admitting {
-            ingress = try? LiveIngressObservationAccumulator(scope: configuration.scope,
-                monotonicAnchor: configuration.monotonicAnchor, maxItems: maxItems, maxBytes: maxBytes,
-                windowDuration: configuration.windowDuration, completedWindowLimit: configuration.completedWindowLimit)
-            ingress?.updateOccupancy(items: 0, bytes: 0, phase: configuration.initialPhase,
-                                     at: configuration.monotonicAnchor)
-        }
-        hasIngressObservation = ingress != nil
     }
 
     public var statistics: Statistics {
@@ -127,45 +94,39 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
     /// Immediately admits or rejects the element; it never waits for a consumer.
     /// Invalid or oversized offers never evict existing elements, even with dropOldest.
     @discardableResult
-    public func offer(_ element: Element, bytes: Int, observation: LiveIngressSampleMetadata? = nil) -> Admission {
+    public func offer(_ element: Element, bytes: Int) -> Admission {
         var continuation: CheckedContinuation<Element?, any Error>?
         // Release evicted objects outside the lock; generic element deinitializers
         // may themselves interact with the mailbox.
         var evicted: [Entry] = []
         let admission = lock.withLock {
-            let time = observationTimeLocked()
-            if let time { ingress?.advanceClock(at: time) }
-            defer { if let time { ingress?.updateOccupancy(items: queue.count, bytes: queuedBytes, at: time) } }
             guard state == .open else {
-                return reject(state == .cancelled ? .cancelled : .finished, observation: observation, at: time)
+                return reject(state == .cancelled ? .cancelled : .finished)
             }
-            guard bytes > 0 else { return reject(.invalidBytes, observation: observation, at: time) }
-            guard bytes <= maxBytes else { return reject(.oversize, observation: observation, at: time) }
+            guard bytes > 0 else { return reject(.invalidBytes) }
+            guard bytes <= maxBytes else { return reject(.oversize) }
 
             if let pending = waiter {
                 continuation = pending.continuation
                 pending.continuation = nil
                 waiter = nil
-                recordLocked(.dequeued, observation, at: time)
             } else {
                 // Subtract before comparing so even Int.max budgets cannot overflow.
                 if queue.count >= maxItems || queuedBytes > maxBytes - bytes {
-                    guard overflowPolicy == .dropOldest else { return reject(.full, observation: observation, at: time) }
+                    guard overflowPolicy == .dropOldest else { return reject(.full) }
                     while queue.count >= maxItems || queuedBytes > maxBytes - bytes {
                         let removed = queue.removeFirst()
                         queuedBytes -= removed.bytes
                         evicted.append(removed)
-                        recordLocked(.overflowEvicted, removed.observation, at: time)
                     }
                 }
-                queue.append(Entry(element: element, bytes: bytes, observation: hasIngressObservation ? observation : nil))
+                queue.append(Entry(element: element, bytes: bytes))
                 queuedBytes += bytes
                 peakItems = max(peakItems, queue.count)
                 peakBytes = max(peakBytes, queuedBytes)
             }
             acceptedCount = Self.saturatingAdd(acceptedCount, 1)
             droppedCount = Self.saturatingAdd(droppedCount, evicted.count)
-            recordLocked(.admitted, observation, at: time)
             return Admission(acceptedCount: 1, rejectedCount: 0,
                              droppedCount: evicted.count, rejectionReason: nil)
         }
@@ -184,14 +145,6 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let immediate: Result<Element?, any Error>? = lock.withLock {
-                    let time = observationTimeLocked()
-                    if let time { ingress?.advanceClock(at: time) }
-                    defer {
-                        if let time {
-                            ingress?.updateOccupancy(items: queue.count, bytes: queuedBytes, at: time)
-                            if state == .finishing, queue.isEmpty { ingress?.close(at: time) }
-                        }
-                    }
                     if token.cancelled || Task.isCancelled {
                         return .failure(CancellationError())
                     }
@@ -199,7 +152,6 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
                     if !queue.isEmpty {
                         let entry = queue.removeFirst()
                         queuedBytes -= entry.bytes
-                        recordLocked(.dequeued, entry.observation, at: time)
                         return .success(entry.element)
                     }
                     guard state == .open else { return .success(nil) }
@@ -220,10 +172,6 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         let continuation = lock.withLock {
             guard state == .open else { return nil as CheckedContinuation<Element?, any Error>? }
             state = .finishing
-            if let time = observationTimeLocked() {
-                ingress?.updateOccupancy(items: queue.count, bytes: queuedBytes, phase: .draining, at: time)
-                if queue.isEmpty { ingress?.close(at: time) }
-            }
             return takeWaiter()
         }
         continuation?.resume(returning: nil)
@@ -234,20 +182,11 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
     public func cancel() {
         var discarded: [Entry] = []
         let continuation = lock.withLock {
-            let time = observationTimeLocked()
-            if let time { ingress?.advanceClock(at: time) }
             state = .cancelled
             discarded = queue
-            if time != nil {
-                for entry in discarded { recordLocked(.cancellationDiscarded, entry.observation, at: time) }
-            }
             queue = []
             queuedBytes = 0
             droppedCount = Self.saturatingAdd(droppedCount, discarded.count)
-            if let time {
-                ingress?.updateOccupancy(items: 0, bytes: 0, at: time)
-                ingress?.close(at: time)
-            }
             return takeWaiter()
         }
         continuation?.resume(returning: nil)
@@ -264,27 +203,6 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
     }
 
     // Helpers below are only called while holding lock.
-    private func observationTimeLocked() -> Double? {
-        guard hasIngressObservation else { return nil }
-        return observationTimeOverride ?? ProcessInfo.processInfo.systemUptime
-    }
-
-    private func recordLocked(_ disposition: LiveIngressDisposition, _ metadata: LiveIngressSampleMetadata?, at time: Double?) {
-        guard let time else { return }
-        ingress?.observe(disposition, sample: metadata ?? .init(kind: .unknown, sourcePTS: .invalid), at: time)
-    }
-
-    /// Mark diagnostic admission after the owning publisher establishes readiness.
-    /// This does not gate queue acceptance or start transport. PublishingSession
-    /// calls under its readiness lock before exposing publishing state; standalone
-    /// owners must establish their own equivalent lifecycle. No callbacks occur.
-    public func beginObservedAdmission() {
-        lock.withLock {
-            guard state == .open, let time = observationTimeLocked() else { return }
-            ingress?.updateOccupancy(items: queue.count, bytes: queuedBytes, phase: .admitting, at: time)
-        }
-    }
-
     private func takeWaiter() -> CheckedContinuation<Element?, any Error>? {
         let continuation = waiter?.continuation
         waiter?.continuation = nil
@@ -292,19 +210,8 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         return continuation
     }
 
-    private func reject(_ reason: RejectionReason, observation: LiveIngressSampleMetadata?, at time: Double?) -> Admission {
+    private func reject(_ reason: RejectionReason) -> Admission {
         rejectedCount = Self.saturatingAdd(rejectedCount, 1)
-        if let time {
-            let measured: LiveIngressRejectionReason
-            switch reason {
-            case .invalidBytes: measured = .invalidBytes
-            case .oversize: measured = .oversize
-            case .full: measured = .full
-            case .finished: measured = .finished
-            case .cancelled: measured = .cancelled
-            }
-            recordLocked(.rejected(measured), observation, at: time)
-        }
         #if DEBUG
         var admission = Admission(acceptedCount: 0, rejectedCount: 1, droppedCount: 0, rejectionReason: reason)
         admission.rejectionStatistics = statisticsLocked()

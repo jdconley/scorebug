@@ -21,7 +21,8 @@ final class NativeFileRecordingTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No saved recordings"].waitForExistence(timeout: 10), "This test requires a fresh app container")
         app.tabBars.buttons["Film"].tap()
         if let quality {
-            tap(app.buttons[quality])
+            let toggle = app.switches["film.recordIn4K"]
+            if (toggle.value as? String) != "1" { tap(toggle) }
             XCTAssertTrue(app.staticTexts["\(quality) · 30 fps · Audio included"].exists)
         }
         tap(app.buttons["film.start"])

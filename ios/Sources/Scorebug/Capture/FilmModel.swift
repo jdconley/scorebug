@@ -3,12 +3,18 @@ import Combine
 import Foundation
 import ScorebugMedia
 
+/// Local recording resolution. 1080p30 by default; 4K is an opt-in that runs
+/// hotter. The live stream ladder is independent and never exceeds 1080p.
 enum RecordingQuality: String, CaseIterable, Identifiable {
     case hd1080, uhd2160
+    static let recordIn4KKey = "scorebug.recording.recordIn4K"
     var id: String { rawValue }
     var label: String { self == .hd1080 ? "1080p" : "4K" }
     var profile: ArchiveProfile {
         self == .hd1080 ? ArchiveProfile() : ArchiveProfile(width: 3840, height: 2160, videoBitRate: 30_000_000)
+    }
+    static func saved(in defaults: UserDefaults) -> RecordingQuality {
+        defaults.bool(forKey: recordIn4KKey) ? .uhd2160 : .hd1080
     }
 }
 
@@ -57,8 +63,12 @@ struct CurrentCapture: Sendable {
     @discardableResult func selectQuality(_ quality: RecordingQuality) -> Bool {
         guard canStart else { return false }
         profile = quality.profile
+        preferences?.set(quality == .uhd2160, forKey: RecordingQuality.recordIn4KKey)
         return true
     }
+    /// Persisted "Record in 4K" setting; off records 1080p30.
+    var recordsIn4K: Bool { recordingQuality == .uhd2160 }
+    private let preferences: UserDefaults?
     private let sourceFactory: (ArchiveProfile) throws -> any CaptureSource
     private let sinkFactory: RecordingLibrary.SinkFactory
     private let durationReader: @Sendable (any RecordingArchiveSink) -> Double?
@@ -94,9 +104,6 @@ struct CurrentCapture: Sendable {
         #endif
     }()
     private var fileFixtureSource: FileFixtureCameraSource?
-    #if os(iOS) && !targetEnvironment(simulator)
-    private var physicalResourceAudit: PhysicalCaptureResourceAudit?
-    #endif
     #endif
 
     convenience init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
@@ -109,14 +116,16 @@ struct CurrentCapture: Sendable {
                   sinkFactory: sinkFactory, durationReader: durationReader)
     }
 
-    init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
+    init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile? = nil,
+         preferences: UserDefaults? = nil,
          configuredSourceFactory: @escaping (ArchiveProfile) throws -> any CaptureSource,
          sinkFactory: @escaping RecordingLibrary.SinkFactory = RecordingLibrary.defaultSinkFactory,
          durationReader: @escaping @Sendable (any RecordingArchiveSink) -> Double? = {
              ($0 as? SegmentedArchiveSink)?.writer.acceptedDuration
          }) {
         self.library = library
-        self.profile = profile
+        self.preferences = preferences
+        self.profile = profile ?? preferences.map { RecordingQuality.saved(in: $0).profile } ?? ArchiveProfile()
         self.sourceFactory = configuredSourceFactory
         self.sinkFactory = sinkFactory
         self.durationReader = durationReader
@@ -140,11 +149,6 @@ struct CurrentCapture: Sendable {
                 // Do not construct a source after cancellation during archive setup.
                 guard state == .starting else { throw RecordingSessionError.cancelled }
                 source = try sourceFactory(profile)
-                #if DEBUG && os(iOS) && !targetEnvironment(simulator)
-                if let camera = source as? IOSCameraCaptureSource {
-                    physicalResourceAudit = PhysicalCaptureResourceAudit(source: camera, recordingID: created.id, profile: profile)
-                }
-                #endif
             } catch {
                 // No RecordingSession has taken ownership of this sink yet.
                 created.sink.cancel()
@@ -192,9 +196,6 @@ struct CurrentCapture: Sendable {
         guard canStop else { return }
         let wasStarting = state == .starting
         state = .stopping
-        #if DEBUG && os(iOS) && !targetEnvironment(simulator)
-        physicalResourceAudit?.sample(phase: "stopRequested", force: true)
-        #endif
         let endedCapture = currentCapture
         currentCapture = nil
         onCaptureChanged?(nil)
@@ -217,18 +218,11 @@ struct CurrentCapture: Sendable {
                 closedFileStatistics = fileFixtureSource?.statistics
                 #endif
                 await updateCounters(recorder)
-                #if DEBUG && os(iOS) && !targetEnvironment(simulator)
-                physicalResourceAudit?.sample(phase: "captureStopped", force: true)
-                #endif
             }
             if let draft {
                 do { try await library.finish(id: draft.id, failure: failure) }
                 catch { failure = error.localizedDescription }
             }
-            #if DEBUG && os(iOS) && !targetEnvironment(simulator)
-            await physicalResourceAudit?.finish()
-            physicalResourceAudit = nil
-            #endif
             #if DEBUG
             if let closedDiagnostics, closedDiagnostics.recordingID == draft?.id,
                let writer = archivePressureWriter {
@@ -294,9 +288,6 @@ struct CurrentCapture: Sendable {
         guard recorder === recording else { return }
         // Session/mailbox counters use only short locks; they do not access disk.
         let snapshot = recording.snapshot
-        #if DEBUG && os(iOS) && !targetEnvironment(simulator)
-        physicalResourceAudit?.sample()
-        #endif
         queueItems = snapshot.queue.currentItems
         queueBytes = snapshot.queue.currentBytes
         writtenSamples = snapshot.writtenSamples

@@ -81,15 +81,25 @@ Filming requires no match, server connection, or streaming key. Switching to the
 native scorer keeps local recording running. No browser scorer is used.
 
 Record explicitly starts camera/microphone permission and capture on a phone.
-The initial clean archive is 1080p/30 SDR H.264 with audio. Leaving the app requests
+Recording is 1080p/30 SDR H.264 with audio by default; the persisted "Record in 4K"
+toggle opts into 2160p/30 for the local recording only (it runs the phone hotter). Leaving the app requests
 recording stop; camera interruptions and failures preserve recoverable segments.
 Recordings distinguishes completed, recoverable, and unavailable media. Export
 retains the original and verifies the full MP4 before offering playback/sharing.
 
 Debug Simulator builds generate timed video/audio through the same recording
 owner. This is labeled in Film and does not use a physical camera. Release and
-physical-device builds choose the iPhone camera adapter. Native SRT publishing is
-connected; adaptive quality remains pending.
+physical-device builds choose the iPhone camera adapter.
+
+Streaming publishes SRT using a simple quality ladder (`QualityLadder` in
+ScorebugCore): 360p 0.8 Mbps, 540p 1.6 Mbps, 720p 3 Mbps, 1080p 6 Mbps, all 30 fps
+H.264 + AAC, never above the recording resolution. It starts at 720p, steps down
+after 3 s of SRT sender pressure (send buffer at least 800 ms, retransmits at least
+10% of sent packets, or any sender drop), steps up after 20 s of headroom (buffer
+at most 300 ms and retransmits at most 2%) but never within 30 s of a step down.
+Thermal serious/critical steps down once and caps at 720p/540p, with no step up
+while hot. A dropped connection reconnects after 1, 2, 4, 8, then 10 s at one rung
+below the last stable rung. The local recording never changes because of the stream.
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer

@@ -109,37 +109,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app.uitests
     dependencies:
       - target: Scorebug
-  ScorebugEncoderQualificationTests:
-    type: bundle.unit-test
-    platform: iOS
-    sources:
-      - path: Sources/Scorebug/Capture/FixtureCameraSource.swift
-      - path: Sources/Scorebug/Capture/FixtureMotionPattern.swift
-      - path: EncoderQualificationTests
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.encoder.qualification
-    dependencies:
-      - package: ScorebugMedia
-      - package: ScorebugStreaming
-      - package: HaishinKit
-  ScorebugEncoderMacQualificationTests:
-    type: bundle.unit-test
-    platform: macOS
-    deploymentTarget: '14.0'
-    sources:
-      - path: Sources/Scorebug/Capture/FixtureCameraSource.swift
-      - path: Sources/Scorebug/Capture/FixtureMotionPattern.swift
-      - path: EncoderQualificationTests/EncoderPayloadTests.swift
-      - path: EncoderQualificationTests/NativeEncoderSnapshot.swift
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.encoder.macqualification
-    dependencies:
-      - package: ScorebugMedia
-      - package: HaishinKit
   ScorebugFilmModelTests:
     type: bundle.unit-test
     platform: macOS
@@ -162,20 +131,6 @@ targets:
       - package: ScorebugStreaming
       - package: ScorebugCore
 schemes:
-  ScorebugEncoderMacQualificationTests:
-    build:
-      targets:
-        ScorebugEncoderMacQualificationTests: all
-    test:
-      targets:
-        - ScorebugEncoderMacQualificationTests
-  ScorebugEncoderQualificationTests:
-    build:
-      targets:
-        ScorebugEncoderQualificationTests: all
-    test:
-      targets:
-        - ScorebugEncoderQualificationTests
   ScorebugWatch:
     build:
       targets:
@@ -194,8 +149,6 @@ schemes:
     test:
       targets:
         - ScorebugFilmModelTests
-      environmentVariables:
-        SCOREBUG_TEST_DEADLINE_EXPORT: $(SCOREBUG_TEST_DEADLINE_EXPORT)
   Scorebug:
     build:
       targets:
@@ -212,25 +165,4 @@ schemes:
         SCOREBUG_TEST_API_URL: $(SCOREBUG_TEST_API_URL)
         SCOREBUG_TEST_STREAM_HOLD_SECONDS: $(SCOREBUG_TEST_STREAM_HOLD_SECONDS)
         SCOREBUG_TEST_MOTION_FIXTURE: $(SCOREBUG_TEST_MOTION_FIXTURE)
-        SCOREBUG_TEST_NATIVE_QUALITY: $(SCOREBUG_TEST_NATIVE_QUALITY)
-        SCOREBUG_TEST_CADENCE_REPORTS: $(SCOREBUG_TEST_CADENCE_REPORTS)
-        SCOREBUG_TEST_DECODER_STALL: $(SCOREBUG_TEST_DECODER_STALL)
-        SCOREBUG_TEST_TIMING_PROFILE: $(SCOREBUG_TEST_TIMING_PROFILE)
-        SCOREBUG_TEST_CAPACITY_EVIDENCE: $(SCOREBUG_TEST_CAPACITY_EVIDENCE)
-        SCOREBUG_TEST_DELIVERY_DEADLINE_MS: $(SCOREBUG_TEST_DELIVERY_DEADLINE_MS)
-        SCOREBUG_TEST_DEADLINE_RESETS: $(SCOREBUG_TEST_DEADLINE_RESETS)
-        SCOREBUG_TEST_PROFILE_TRANSITIONS: $(SCOREBUG_TEST_PROFILE_TRANSITIONS)
-        SCOREBUG_TEST_ADAPTIVE_PROFILES: $(SCOREBUG_TEST_ADAPTIVE_PROFILES)
-        SCOREBUG_TEST_SOURCE_CADENCE_PACING: $(SCOREBUG_TEST_SOURCE_CADENCE_PACING)
-        SCOREBUG_TEST_CANDIDATE_HEADROOM: $(SCOREBUG_TEST_CANDIDATE_HEADROOM)
-        SCOREBUG_TEST_MEASURED_TRIAL: $(SCOREBUG_TEST_MEASURED_TRIAL)
-        SCOREBUG_TEST_OWNED_MEASUREMENT: $(SCOREBUG_TEST_OWNED_MEASUREMENT)
-        SCOREBUG_TEST_CAPACITY_RECOVERY: $(SCOREBUG_TEST_CAPACITY_RECOVERY)
-        SCOREBUG_TEST_DIRECT_RTMP_RECORDER: $(SCOREBUG_TEST_DIRECT_RTMP_RECORDER)
-        SCOREBUG_TEST_CANDIDATE_PROFILE: $(SCOREBUG_TEST_CANDIDATE_PROFILE)
-        SCOREBUG_TEST_BANDWIDTH_PROBE: $(SCOREBUG_TEST_BANDWIDTH_PROBE)
-        SCOREBUG_TEST_LIVE_PROFILE: $(SCOREBUG_TEST_LIVE_PROFILE)
-        SCOREBUG_TEST_UPLINK_PROXY_PORT: $(SCOREBUG_TEST_UPLINK_PROXY_PORT)
-        SCOREBUG_TEST_UPLINK_PROFILE: $(SCOREBUG_TEST_UPLINK_PROFILE)
-        SCOREBUG_TEST_PROBE_POLICY: $(SCOREBUG_TEST_PROBE_POLICY)
         SCOREBUG_TEST_TOKEN: qa-phone-token-not-production

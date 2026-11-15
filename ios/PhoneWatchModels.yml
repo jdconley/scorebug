@@ -12,6 +12,8 @@ targets:
     deploymentTarget: '14.0'
     sources:
       - path: Sources/Scorebug/Companion/PhoneWatchModel.swift
+      - path: Sources/WatchSupport/WatchSetupProvenance.swift
+      - path: Sources/WatchSupport/WatchRelaySessionGate.swift
       - path: PhoneWatchModelTests
     settings:
       base:
