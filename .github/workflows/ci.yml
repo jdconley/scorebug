@@ -13,7 +13,8 @@ concurrency:
 jobs:
   ts:
     name: TypeScript (typecheck + test + build)
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04's ffmpeg 6.1 does not URL-decode SRT streamid values.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v6
 
@@ -48,7 +49,8 @@ jobs:
 
   relay:
     name: Real SRT relay access and revocation
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04's ffmpeg 6.1 does not URL-decode SRT streamid values.
+    runs-on: ubuntu-26.04
     needs: ts
     steps:
       - uses: actions/checkout@v6
