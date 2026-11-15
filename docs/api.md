@@ -192,3 +192,54 @@ defaults to the first 8 characters of the team name.
 `GET /v1/worker/snapshot` (worker token) adds `assignment.output`:
 `{ destinationId, publishUrl }`. `publishUrl` includes the stream key;
 `null` tells the worker to use its `OUTPUT_URL`.
+
+### Worker status
+
+The worker posts its state about once a second (`WORKER_REPORT_INTERVAL_MS`,
+default 1000):
+
+- `POST /v1/worker/sessions { workerId, runId }` → `{ sessionId, serverTime }`.
+  A new `runId` for the same worker retires the old run; its reports get 409
+  `worker_session_retired`.
+- `POST /v1/worker/observations { workerId, sessionId, sequence, observation }`,
+  where `observation` is `{ gameId, generation, state, reason, attempt, frame,
+outTimeUs, scoreRevision, output? }` and `output` is `{ width, height, fps,
+bitrateKbps }`. Reports for another match or generation get 409
+  `broadcast_changed`; a 409 `worker_session_unknown` (API restarted) means
+  register again.
+
+Any match credential reads `GET /v1/matches/:id/media/status`:
+
+```json
+{
+    "status": {
+        "gameId": "…",
+        "generation": 3,
+        "workerId": "home",
+        "phase": "live",
+        "output": { "width": 1920, "height": 1080, "fps": 30, "bitrateKbps": 6000 },
+        "state": "producing_output",
+        "observation": {
+            "gameId": "…",
+            "generation": 3,
+            "state": "producing_output",
+            "reason": null,
+            "attempt": 1,
+            "frame": 1800,
+            "outTimeUs": 60000000,
+            "scoreRevision": 12
+        },
+        "observedAt": "2026-11-15T20:00:00.000Z",
+        "expiresAt": "2026-11-15T20:00:05.000Z"
+    },
+    "serverTime": "2026-11-15T20:00:00.400Z"
+}
+```
+
+`phase` is the summary to show: `idle` (no broadcast requested), `starting`,
+`live`, `reconnecting` (this generation was live and is now waiting for the phone's
+stream or restarting FFmpeg) or `error` (failed, or no report for five seconds).
+`state` and `observation` are the detailed worker state the iOS app decodes;
+`state` is also `not_requested`, `unknown` (no report yet) or `stale`.
+`observedAt` is the last report; `expiresAt` is when it goes stale. Status lives in
+API memory, so an API restart shows `starting` until the next report.

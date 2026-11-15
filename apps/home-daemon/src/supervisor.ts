@@ -1,7 +1,6 @@
 import type { PipelineHandle, PipelineProgress } from './pipeline.js';
 import { atomicWrite } from './score-file.js';
-import type { WorkerPipelineObservation } from '@scorebug/protocol';
-import { identifyPipelineRead } from './pipeline-read-identity.js';
+import type { WorkerObservation } from '@scorebug/protocol';
 
 export type WorkerInput = {
   gameId: string;
@@ -44,11 +43,7 @@ export type WorkerSupervisorOptions = {
   load: () => Promise<WorkerInput | null>;
   outputId: string;
   scoreFile: string;
-  start: (
-    input: WorkerInput,
-    onProgress: (progress: PipelineProgress) => void,
-    metadata?: Readonly<{ pipelineReadId?: string }>,
-  ) => PipelineHandle;
+  start: (input: WorkerInput, onProgress: (progress: PipelineProgress) => void) => PipelineHandle;
   writeScore?: (path: string, text: string) => Promise<void>;
   onState?: (state: WorkerState) => void;
   now?: () => number;
@@ -61,7 +56,6 @@ export type WorkerSupervisorOptions = {
 type Running = {
   handle: PipelineHandle;
   input: WorkerInput;
-  pipelineReadId?: string;
   exit: Promise<void>;
   stopping: boolean;
   stopSignaled?: boolean;
@@ -133,60 +127,12 @@ export class WorkerSupervisor {
     return this.closing;
   }
 
-  /** A copied observation with optional private read identity, never a media URL or credential. */
-  observation(): WorkerPipelineObservation | null {
+  /** A copied observation of the actual encoder attempt, never a media URL or credential. */
+  observation(): WorkerObservation | null {
     const state = this.lastState;
     if (state.state === 'idle' || state.gameId === undefined || state.generation === undefined)
       return null;
     const active = this.active;
-    let decodedVideo: WorkerPipelineObservation['decodedVideo'];
-    let processing: WorkerPipelineObservation['processing'];
-    let decoderCadence: WorkerPipelineObservation['decoderCadence'];
-    let decoderDelivery: WorkerPipelineObservation['decoderDelivery'];
-    try {
-      const evidence = active?.handle.snapshotVideoEvidence?.();
-      const snapshot =
-        evidence?.decodedVideo ??
-        (active?.handle.snapshotVideoEvidence
-          ? undefined
-          : active?.handle.snapshotDecodedVideo?.());
-      if (snapshot) decodedVideo = structuredClone(snapshot);
-      if (
-        evidence?.decoderCadence &&
-        active &&
-        !active.stopping &&
-        !this.closed &&
-        (state.state === 'starting' || state.state === 'producing_output') &&
-        active.input.gameId === state.gameId &&
-        active.input.generation === state.generation &&
-        active.pipelineReadId
-      )
-        decoderCadence = structuredClone(evidence.decoderCadence);
-      if (
-        evidence?.decoderDelivery &&
-        active &&
-        !active.stopping &&
-        !this.closed &&
-        (state.state === 'starting' || state.state === 'producing_output') &&
-        active.input.gameId === state.gameId &&
-        active.input.generation === state.generation &&
-        active.pipelineReadId
-      )
-        decoderDelivery = structuredClone(evidence.decoderDelivery);
-      if (
-        evidence?.processing &&
-        active &&
-        !active.stopping &&
-        !this.closed &&
-        state.state === 'producing_output' &&
-        active.input.gameId === state.gameId &&
-        active.input.generation === state.generation &&
-        active.pipelineReadId
-      )
-        processing = structuredClone(evidence.processing);
-    } catch {
-      // Measurement failure is unknown evidence, never an encoder/control failure.
-    }
     return {
       gameId: state.gameId,
       generation: state.generation,
@@ -196,18 +142,6 @@ export class WorkerSupervisor {
       frame: active?.progress?.frame ?? null,
       outTimeUs: active?.progress?.outTimeUs ?? null,
       scoreRevision: active?.input.scoreRevision ?? null,
-      ...(decodedVideo ? { decodedVideo } : {}),
-      ...(processing ? { processing } : {}),
-      ...(decoderCadence ? { decoderCadence } : {}),
-      ...(decoderDelivery ? { decoderDelivery } : {}),
-      ...(active &&
-      !active.stopping &&
-      active.input.gameId === state.gameId &&
-      active.input.generation === state.generation &&
-      (state.state === 'starting' || state.state === 'producing_output') &&
-      active.pipelineReadId
-        ? { pipelineReadId: active.pipelineReadId }
-        : {}),
     };
   }
 
@@ -421,16 +355,11 @@ export class WorkerSupervisor {
     let running: Running | undefined;
     let earlyProgress: PipelineProgress | undefined;
     this.attempt++;
-    const identified = identifyPipelineRead(input.readUrl);
     try {
-      handle = this.options.start(
-        { ...input, readUrl: identified.readUrl },
-        (progress) => {
-          if (running) this.acceptProgress(running, progress);
-          else earlyProgress = progress;
-        },
-        identified.pipelineReadId ? { pipelineReadId: identified.pipelineReadId } : {},
-      );
+      handle = this.options.start({ ...input }, (progress) => {
+        if (running) this.acceptProgress(running, progress);
+        else earlyProgress = progress;
+      });
     } catch {
       this.emit('failed', 'start_failed');
       return;
@@ -438,7 +367,6 @@ export class WorkerSupervisor {
     running = {
       handle,
       input: { ...input },
-      ...(identified.pipelineReadId ? { pipelineReadId: identified.pipelineReadId } : {}),
       exit: Promise.resolve(),
       stopping: false,
       lastOutput: this.now(),

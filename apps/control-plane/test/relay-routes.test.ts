@@ -1,8 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { verifyPublishAttemptQuery } from '../src/publishing-attempt.js';
-import { testConfig, phoneAuth } from './helpers.js';
+import { attemptOf, testConfig, phoneAuth } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
 import type { IngestGrant } from '../src/ingest.js';
 
@@ -347,9 +346,9 @@ it.each([undefined, { host: '::1', port: 19990 }])(
     expect(publish.host).toBe(endpoint ? '[::1]:19990' : 'ingest.test:8890');
     const grant = [...f.paths.values()][0];
     const streamid = publish.searchParams.get('streamid')!;
-    expect(
-      verifyPublishAttemptQuery(f.config.PHONE_TOKEN, grant.path, streamid.split(':')[2]),
-    ).toBe(publishingAttemptId);
+    expect(attemptOf(f.config.PHONE_TOKEN, grant.path, streamid.split(':')[2])).toBe(
+      publishingAttemptId,
+    );
     expect(publish.searchParams.get('passphrase') === grant.publishPassphrase).toBe(true);
     expect(publish.searchParams.get('peerlatency')).toBe('400');
     expect(publish.searchParams.get('maxbw')).toBe('0');

@@ -3,12 +3,12 @@ FROM --platform=$BUILDPLATFORM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6
 WORKDIR /src
 RUN apk add --no-cache patch=2.8-r0
 ADD --checksum=sha256:be643437fed01827ee05c40591326549db82a19eae5c41e12c0252971ed85ac6 https://codeload.github.com/bluenviron/mediamtx/tar.gz/2c6727904fbf233615de74a6c54a9b94dbf6025d /tmp/upstream.tar.gz
-COPY scorebug.patch drain.patch uhd-probe.patch /tmp/
-RUN tar -xzf /tmp/upstream.tar.gz --strip-components=1 && patch -p1 < /tmp/scorebug.patch && patch -p1 < /tmp/drain.patch && patch -p1 < /tmp/uhd-probe.patch
+COPY h264-recovery.patch drain.patch /tmp/
+RUN tar -xzf /tmp/upstream.tar.gz --strip-components=1 && patch -p1 < /tmp/h264-recovery.patch && patch -p1 < /tmp/drain.patch
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 # Upstream downloaders verify the pinned HLS/RPi asset SHA-256 values.
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build go generate ./internal/servers/hls ./internal/staticsources/rpicamera
-RUN printf '%s' 'v1.21.0-scorebug-uhd-probe-v4' > internal/core/VERSION
+RUN printf '%s' 'v1.21.0-scorebug-h264-drain' > internal/core/VERSION
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT

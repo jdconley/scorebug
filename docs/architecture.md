@@ -40,8 +40,9 @@ A Hono server on Node 22 with SQLite storage.
   and look up the outcome of a command. Installation token for setup; per-device
   match credentials after that.
 - `/v1/matches/:id/watch-pairings`: issue match-scoped Watch credentials.
-- `/v1/matches/:id/media`: recording association and broadcast intent (start/stop,
-  selected worker and output).
+- `/v1/matches/:id/media`: recording association, broadcast intent (start/stop,
+  selected worker and output) and the worker status the app shows (`idle`,
+  `starting`, `live`, `reconnecting`, `error`, plus output resolution and bitrate).
 - `/v1/worker`: the worker's assignment, relay read credentials, and status
   reports (worker token).
 - `/healthz`: liveness.
@@ -52,8 +53,9 @@ hands the publish credential to the phone. It removes them when the broadcast en
 
 ### Relay (`vendor/MediaMTX`)
 
-MediaMTX 1.21.0 with a small patch (relay metadata and bounded reader recovery).
-It accepts the phone's SRT publish and serves SRT reads to the worker. It only
+MediaMTX 1.21.0 with two small patches: H.264 reader recovery after packet loss, and
+bounded draining so a stopped broadcast's last seconds still reach the worker. It
+accepts the phone's SRT publish and serves SRT reads to the worker. It only
 forwards media; it never re-encodes.
 
 ### Broadcast worker (`apps/home-daemon`)
@@ -61,8 +63,10 @@ forwards media; it never re-encodes.
 A Node process that wraps FFmpeg. It polls the control plane for its assignment,
 reads the stream from the relay, scales it to the selected profile, burns in the
 current score, and publishes RTMP(S) to the destination. It can also save the
-overlaid output as an MP4. Score changes rewrite a text file that FFmpeg re-reads, so
-the encoder does not restart. Encoders: software (x264), VideoToolbox (macOS) or
+overlaid output as an MP4. The worker renders the scorebug itself and streams it to
+FFmpeg as a second input, stamped from the decoded video's timestamps, so score
+changes never restart the encoder. It reports its state to the control plane about
+once a second. Encoders: software (x264), VideoToolbox (macOS) or
 NVENC. The worker only makes outbound connections, so it can run on a home machine
 behind NAT, on the relay host, or anywhere else that can reach the API and relay.
 

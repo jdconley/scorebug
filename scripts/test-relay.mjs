@@ -484,7 +484,7 @@ try {
     (await request(`/v1/matches/${matchId}/media/status`, capture.credential.token)).status;
   const firstStatus = await status();
   assert.equal(firstStatus.state, 'producing_output');
-  assert(firstStatus.workerEpoch);
+  assert.equal(firstStatus.phase, 'live');
   for (const [expectedGeneration, operation] of [
     [1, { type: 'stop' }],
     [
@@ -553,9 +553,8 @@ try {
   await request('/v1/worker/observations', workerToken, replacementReport);
   const currentStatus = await status();
   assert.equal(currentStatus.state, 'producing_output');
-  assert.notEqual(currentStatus.workerEpoch, firstStatus.workerEpoch);
   await request('/v1/worker/observations', workerToken, firstReport, 'worker_session_retired');
-  assert.equal((await status()).workerEpoch, currentStatus.workerEpoch);
+  assert.equal((await status()).observedAt, currentStatus.observedAt);
   // Attach only after independently observing continuing source bytes. The reader
   // really decodes both tracks; the posted worker reports above test control scope.
   const beforeLateReader = currentConnection.source.inboundBytes;

@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { deriveIngestGrant, type IngestGrant, type SourceObservation } from '../src/ingest.js';
 import { RelayLifecycle, RelayLifecycleError, type RelayDesired } from '../src/relay-lifecycle.js';
-import { verifyPublishAttemptQuery } from '../src/publishing-attempt.js';
+import { attemptOf } from './helpers.js';
 
 const config = {
   installationSecret: 'installation-secret-not-production',
@@ -100,9 +100,9 @@ it('attests each publishing attempt without changing the path or worker capabili
     const streamid = url.searchParams.get('streamid')!;
     expect(streamid.startsWith(`publish:${grant.path}:`)).toBe(true);
     expect(result.publishUrl).toContain(`?streamid=${streamid}&`);
-    expect(
-      verifyPublishAttemptQuery(config.installationSecret, grant.path, streamid.split(':')[2]),
-    ).toBe(result.publishingAttemptId);
+    expect(attemptOf(config.installationSecret, grant.path, streamid.split(':')[2])).toBe(
+      result.publishingAttemptId,
+    );
     expect(url.searchParams.get('passphrase')).toBe(grant.publishPassphrase);
   }
   expect([...f.paths]).toEqual([grant.path]);
@@ -137,7 +137,7 @@ it('retains the requested attempt across asynchronous provisioning', async () =>
   const result = await pending;
   expect(result.publishingAttemptId).toBe(original);
   expect(
-    verifyPublishAttemptQuery(
+    attemptOf(
       config.installationSecret,
       grantFor(running()).path,
       new URL(result.publishUrl).searchParams.get('streamid')!.split(':')[2],
@@ -454,9 +454,9 @@ it('snapshots the publisher endpoint while preserving attestation and worker cap
   const baseline = grantFor(running());
   const streamid = url.searchParams.get('streamid')!;
   expect(streamid.startsWith(`publish:${baseline.path}:`)).toBe(true);
-  expect(
-    verifyPublishAttemptQuery(config.installationSecret, baseline.path, streamid.split(':')[2]),
-  ).toBe(publishingAttemptId);
+  expect(attemptOf(config.installationSecret, baseline.path, streamid.split(':')[2])).toBe(
+    publishingAttemptId,
+  );
   expect(url.searchParams.get('passphrase') === baseline.publishPassphrase).toBe(true);
   expect(url.searchParams.get('pkt_size')).toBe('1316');
   expect(url.searchParams.get('peerlatency')).toBe('400');

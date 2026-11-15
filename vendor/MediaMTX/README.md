@@ -1,7 +1,7 @@
 # Patched MediaMTX relay
 
 Scorebug's SRT relay is MediaMTX 1.21.0 (revision
-`2c6727904fbf233615de74a6c54a9b94dbf6025d`) with three patches. The MIT notice is kept
+`2c6727904fbf233615de74a6c54a9b94dbf6025d`) with two patches. The MIT notice is kept
 in `LICENSE`. `upstream.json` pins the upstream archive and the hashes of the files
 the patches touch. Go dependencies stay pinned by the upstream `go.mod` / `go.sum`.
 The Docker build checks the archive SHA-256 and uses a pinned Go 1.26.1 builder.
@@ -22,23 +22,28 @@ stock MediaMTX.
 
 ## Patches
 
-- **`scorebug.patch`**: relay metadata and recovery.
-    - Publisher API items carry `scorebugTransportClock` (the first ingress MPEG-TS
-      PTS) and reader items carry the source they are reading.
-    - Bounded H.264 reader recovery: a timing error on an SRT read resynchronizes at
-      the next clean keyframe instead of dropping the reader. Audio continues.
-    - Accounting for in-band probe packets the phone can send to measure the link.
-      Probe packets are counted and dropped; media passes through unchanged.
-    - Go tests for each change.
+- **`h264-recovery.patch`**: keeps an SRT reader attached through damaged H.264 timing.
+  Stock MediaMTX closes a reader when packet loss leaves the H.264 DTS extractor
+  unable to continue (for example `too many reordered frames`), which ends the
+  worker's FFmpeg input and forces a destination reconnect. The patch drops video
+  until the next IDR with valid parameter sets, then resumes on the original PTS;
+  audio continues. Waiting is bounded (300 access units or ten seconds), after which
+  the reader fails as before. Go tests included.
 - **`drain.patch`**: bounded retirement. Setting `scorebugDrain: true` on a path
   rejects new publishers and readers and closes existing connections after at most
-  eight seconds. The control plane drains obsolete paths, then deletes them once the
-  source ends. If draining is not supported, it deletes the path directly.
-- **`uhd-probe.patch`**: accepts the version 4 probe format used for 4K streams.
+  eight seconds, so the worker still receives the tail of a stream (the last rally)
+  when a broadcast stops or its generation changes. The control plane drains
+  obsolete paths, then deletes them once the source ends. If draining is not
+  supported, it deletes the path directly.
+
+Stock MediaMTX config cannot do either. Earlier patches for relay telemetry (ingress
+clock origin, reader source, in-band bandwidth-probe accounting and its 4K format)
+were removed with the adaptive-bitrate qualification work.
 
 ## Test
 
 ```sh
-go test -race ./internal/core -run '^TestScorebugDrain$'   # inside the patched source tree
+go test -race ./internal/protocols/mpegts                    # inside the patched source tree
+go test -race ./internal/core -run '^TestScorebugDrain$'
 pnpm test:relay                                              # real SRT admission and media
 ```
