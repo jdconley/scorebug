@@ -199,8 +199,14 @@ it('matches the shared native/TypeScript JSON contract fixture', () => {
     ),
   );
   // The shared v1 fixture (mirrored byte-for-byte in the Swift test bundle)
-  // predates scorebugStyle. Snapshots now add it; Swift decoding ignores it.
-  const styled = (snapshot: object) => ({ ...snapshot, scorebugStyle: 'bar' });
+  // predates scorebugStyle, pendingSetEnd and output. Snapshots now add them;
+  // Swift decoding ignores unknown fields.
+  const styled = (snapshot: object) => ({
+    ...snapshot,
+    scorebugStyle: 'bar',
+    pendingSetEnd: null,
+    output: { destinationId: null, recordOnly: false },
+  });
   const db = store();
   expect(db.create(fixture.creation)).toEqual(styled(fixture.snapshot));
   db.issueCredential(fixture.creation.id, fixture.creation.deviceId, 'score');

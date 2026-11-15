@@ -8,6 +8,13 @@ import { matchesRoutes } from './routes/matches.js';
 import { workerRoutes } from './routes/media.js';
 import { IngestRelay } from './ingest.js';
 import { RelayLifecycle, type RelayAdapter } from './relay-lifecycle.js';
+import { RedeemGuard } from './rate-limit.js';
+import {
+  destinationRoutes,
+  deviceRoutes,
+  inviteRedeemRoutes,
+  setupRoutes,
+} from './routes/account.js';
 
 export type AppDeps = {
   config: Config;
@@ -16,6 +23,9 @@ export type AppDeps = {
   matches: MatchStore;
   relay: RelayAdapter | undefined;
   relayLifecycle: RelayLifecycle | undefined;
+  /** Brute-force limits for unauthenticated setup-code and invite-code redemption. */
+  setupGuard: RedeemGuard;
+  inviteGuard: RedeemGuard;
 };
 
 export function createApp(
@@ -73,6 +83,8 @@ export function createApp(
         )
       : undefined);
 
+  const setupGuard = overrides.setupGuard ?? new RedeemGuard();
+  const inviteGuard = overrides.inviteGuard ?? new RedeemGuard();
   const app = new Hono();
 
   const origins = config.CORS_ORIGINS.split(',')
@@ -82,7 +94,7 @@ export function createApp(
     '*',
     cors({
       origin: origins.includes('*') ? '*' : origins,
-      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
       allowHeaders: ['authorization', 'content-type'],
       maxAge: 600,
     }),
@@ -92,11 +104,25 @@ export function createApp(
 
   app.route('/v1/matches', matchesRoutes(config, matches, relayLifecycle, observations));
   app.route('/v1/worker', workerRoutes(config, matches, relayLifecycle, observations));
+  app.route('/v1/setup', setupRoutes(config, matches, setupGuard));
+  app.route('/v1/devices', deviceRoutes(config, matches));
+  app.route('/v1/destinations', destinationRoutes(config, matches));
+  app.route('/v1/invites', inviteRedeemRoutes(matches, inviteGuard));
 
   app.onError((err, c) => {
     log.error('unhandled_error', { msg: String(err) });
     return c.json({ error: 'internal' }, 500);
   });
 
-  return { app, config, log, matches, relay, relayLifecycle, observations };
+  return {
+    app,
+    config,
+    log,
+    matches,
+    relay,
+    relayLifecycle,
+    observations,
+    setupGuard,
+    inviteGuard,
+  };
 }

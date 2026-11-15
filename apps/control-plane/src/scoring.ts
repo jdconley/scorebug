@@ -1,5 +1,7 @@
 import type {
   MatchRules,
+  Score,
+  Side,
   ScoringFrame,
   ScoringOperation,
   ScoringState,
@@ -43,6 +45,37 @@ export function validateRules(rules: MatchRules): void {
       !inRange(rules.pointCap, Math.max(rules.pointsToWin, rules.decidingPointsToWin), 199))
   )
     throw new ScoringError('invalid_rules');
+}
+
+/**
+ * The side that has won the current set under the rules (target 25, deciding
+ * set 15, win by 2, optional cap), or null. Ignores whether the match is over.
+ */
+export function setWinner(score: Score, rules: MatchRules): Side | null {
+  const { home, away, set } = score;
+  if (home === away) return null;
+  const target = set === rules.bestOf ? rules.decidingPointsToWin : rules.pointsToWin;
+  const highest = Math.max(home, away);
+  const reachedCap = rules.pointCap !== null && highest >= rules.pointCap;
+  return highest >= target && (Math.abs(home - away) >= rules.winBy || reachedCap)
+    ? home > away
+      ? 'home'
+      : 'away'
+    : null;
+}
+
+/** Snapshot helper: set point reached and waiting for the scorer to confirm `end_set`. */
+export function pendingSetEnd(state: ScoringState, rules: MatchRules): { winner: Side } | null {
+  if (state.status !== 'active') return null;
+  const setsToWin = Math.ceil(rules.bestOf / 2);
+  if (state.score.homeSets >= setsToWin || state.score.awaySets >= setsToWin) return null;
+  const winner = setWinner(state.score, rules);
+  return winner ? { winner } : null;
+}
+
+/** Default scorebug label: the team name, whitespace collapsed, first 8 characters. */
+export function defaultShortName(name: string): string {
+  return Array.from(name.trim().replace(/\s+/g, ' ')).slice(0, 8).join('').trim();
 }
 
 function frameOf(state: ScoringFrame): ScoringFrame {
@@ -93,15 +126,7 @@ export function applyScoringOperation(
     throw new ScoringError('invalid_override');
 
   const winner = operation.winner ?? (home > away ? 'home' : 'away');
-  const target = set === rules.bestOf ? rules.decidingPointsToWin : rules.pointsToWin;
-  const highest = Math.max(home, away);
-  const reachedCap = rules.pointCap !== null && highest >= rules.pointCap;
-  if (
-    !hasOverride &&
-    !(highest >= target && (Math.abs(home - away) >= rules.winBy || reachedCap))
-  ) {
-    throw new ScoringError('set_not_won');
-  }
+  if (!hasOverride && setWinner(state.score, rules) === null) throw new ScoringError('set_not_won');
 
   const score = {
     ...state.score,

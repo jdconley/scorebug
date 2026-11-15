@@ -1,5 +1,6 @@
 import type { Score, Teams } from './messages.js';
 import type { ScorebugStyle } from './scorebug.js';
+import type { MatchOutput } from './setup.js';
 
 export type Side = 'home' | 'away';
 export type MatchRules = {
@@ -55,6 +56,12 @@ export type MatchSnapshot = {
   scorer: { deviceId: string; epoch: number };
   broadcast: { desired: 'stopped' | 'running'; generation: number };
   scorebugStyle: ScorebugStyle;
+  /**
+   * Set point reached under the match rules: prompt the scorer to confirm with
+   * `end_set`. Further points remain allowed and recompute this.
+   */
+  pendingSetEnd: { winner: Side } | null;
+  output: MatchOutput;
 };
 export type CommandOutcome = {
   commandId: string;

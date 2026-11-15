@@ -32,11 +32,20 @@ const supervisor = new WorkerSupervisor({
   onState: createWorkerStateLogger(log),
   start: (input, onProgress, metadata) => {
     const diagnostics = terminalDiagnostics.scope(input, metadata);
+    let outputs: ReturnType<typeof allocatePipelineOutputs>;
+    try {
+      outputs = allocatePipelineOutputs(config, input.publishUrl);
+    } catch (error) {
+      // Never log the URL itself: it contains the stream key.
+      if (error instanceof Error && error.message === 'missing_output_url')
+        log.error('worker_output_missing', { gameId: input.gameId });
+      throw error;
+    }
     return startPipeline(
       {
         gameId: input.gameId,
         pullUrl: input.readUrl,
-        ...allocatePipelineOutputs(config),
+        ...outputs,
         scoreFile,
         nvenc: false,
         encoder: config.ENCODER,

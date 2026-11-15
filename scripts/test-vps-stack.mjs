@@ -130,10 +130,42 @@ try {
     assert(r.ok, `Native request ${path}: HTTP ${r.status}`);
     return r.json();
   }
+  // One-time phone setup: the CLI in the image mints a link; the API redeems it.
+  const cli = await compose(
+    'exec',
+    '-T',
+    'control-plane',
+    'node',
+    'apps/control-plane/dist/cli.js',
+    'setup-link',
+    '--server',
+    'https://qa.invalid',
+    '--qr',
+    'none',
+  );
+  assert.equal(cli.stderr, '');
+  const link = new URL(cli.stdout.split('\n')[0]);
+  assert.equal(link.protocol, 'scorebug:');
+  assert.equal(link.searchParams.get('server'), 'https://qa.invalid');
+  const setupResponse = await fetch(api + '/v1/setup/redeem', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      code: link.searchParams.get('code'),
+      deviceId: randomUUID(),
+      deviceName: 'QA phone',
+    }),
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(setupResponse.status, 200);
+  const owner = (await setupResponse.json()).token;
+  assert.equal((await request('/v1/devices', owner)).devices.length, 1);
+  evidence.checks.cliSetupLinkEnrollsOwnerPhone = true;
+  // The enrolled phone creates the match; the legacy PHONE_TOKEN still drives media below.
   const matchId = randomUUID(),
     token = environment.PHONE_TOKEN;
   const team = { name: 'QA', shortName: 'QA', color: '#123456' };
-  await request('/v1/matches', token, {
+  await request('/v1/matches', owner, {
     id: matchId,
     deviceId: 'scorer',
     teams: { home: team, away: team },
@@ -143,6 +175,13 @@ try {
     deviceId: 'phone',
     role: 'capture',
   });
+  const invite = await request(`/v1/matches/${matchId}/invites`, joined.credential.token, {});
+  const invited = await request('/v1/invites/redeem', '', {
+    code: invite.code,
+    deviceId: 'invited-scorer',
+  });
+  assert.equal(invited.credential.role, 'score');
+  evidence.checks.matchInviteRedeemsScorer = true;
   await request(`/v1/matches/${matchId}/media/recordings`, joined.credential.token, {
     recordingId: 'archive',
     sequence: 0,

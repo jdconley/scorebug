@@ -1,10 +1,13 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type {
   CommandOutcome,
+  InviteRedeemRequest,
   MatchCommand,
+  MatchInvite,
+  MatchOutput,
   MatchCredential,
   MatchRules,
   MatchSnapshot,
@@ -16,10 +19,21 @@ import type {
   WatchPairingIssued,
   WatchPairingRedeemed,
 } from '@scorebug/protocol';
-import { DEFAULT_SCOREBUG_STYLE } from '@scorebug/protocol';
+import {
+  DEFAULT_SCOREBUG_STYLE,
+  INVITE_CODE_ALPHABET,
+  INVITE_CODE_LENGTH,
+  normalizeInviteCode,
+} from '@scorebug/protocol';
+import { AccountStore } from './account-store.js';
 import { canonical } from './canonical-json.js';
 import { MediaStore } from './media-store.js';
-import { applyScoringOperation, initialScoringState, ScoringError } from './scoring.js';
+import {
+  applyScoringOperation,
+  initialScoringState,
+  pendingSetEnd,
+  ScoringError,
+} from './scoring.js';
 
 export type CreateMatch = {
   id: string;
@@ -27,13 +41,38 @@ export type CreateMatch = {
   teams: Teams;
   rules: MatchRules;
   scorebugStyle?: ScorebugStyle | undefined;
+  destinationId?: string | undefined;
+  recordOnly?: boolean | undefined;
 };
+export const INVITE_TTL_MS = 6 * 60 * 60 * 1000;
+const NO_OUTPUT: MatchOutput = { destinationId: null, recordOnly: false };
 // Match rows are JSON documents: rows written before scorebugStyle existed lack
 // the field and read back as the default style, so no SQL migration is needed.
+// Rows from before destinations lack `output` and use the worker's OUTPUT_URL.
 type StoredMatch = Omit<
   MatchSnapshot,
-  'score' | 'completedSets' | 'canUndo' | 'endReason' | 'status' | 'scorebugStyle'
-> & { scoring: ScoringState; creationRequest: string; scorebugStyle?: ScorebugStyle };
+  | 'score'
+  | 'completedSets'
+  | 'canUndo'
+  | 'endReason'
+  | 'status'
+  | 'scorebugStyle'
+  | 'pendingSetEnd'
+  | 'output'
+> & {
+  scoring: ScoringState;
+  creationRequest: string;
+  scorebugStyle?: ScorebugStyle;
+  output?: MatchOutput;
+};
+type InviteRow = {
+  id: string;
+  game_id: string;
+  code_hash: string;
+  created_at: number;
+  expires_at: number;
+  revoked_at: number | null;
+};
 export class MatchStoreError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -70,6 +109,8 @@ function snapshot(match: StoredMatch): MatchSnapshot {
     scorer: match.scorer,
     broadcast: match.broadcast,
     scorebugStyle: match.scorebugStyle ?? DEFAULT_SCOREBUG_STYLE,
+    pendingSetEnd: pendingSetEnd(match.scoring, match.rules),
+    output: match.output ?? NO_OUTPUT,
   };
 }
 
@@ -77,6 +118,7 @@ function snapshot(match: StoredMatch): MatchSnapshot {
 export class MatchStore {
   private readonly db: DatabaseSync;
   readonly media: MediaStore;
+  readonly account: AccountStore;
   private closed = false;
   constructor(
     path: string,
@@ -91,7 +133,7 @@ export class MatchStore {
         'PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;',
       );
       const version = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-      if (version.user_version > 4) throw new MatchStoreError('unsupported_database_version');
+      if (version.user_version > 5) throw new MatchStoreError('unsupported_database_version');
       this.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS matches(id TEXT PRIMARY KEY, status TEXT NOT NULL, data TEXT NOT NULL);
@@ -107,6 +149,14 @@ export class MatchStore {
 
         `);
         MediaStore.migrate(this.db);
+        AccountStore.migrate(this.db);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS match_invites(id TEXT PRIMARY KEY, game_id TEXT NOT NULL REFERENCES matches(id),
+            code_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL, created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL, revoked_at INTEGER);
+          CREATE TABLE IF NOT EXISTS invite_redemptions(game_id TEXT NOT NULL REFERENCES matches(id), device_id TEXT NOT NULL,
+            invite_id TEXT NOT NULL REFERENCES match_invites(id), redeemed_at INTEGER NOT NULL, PRIMARY KEY(game_id,device_id));
+        `);
         // Development v3 databases already contain pairing receipts. Add the terminal
         // expiry flag in place, without replacing rows or losing uncertain redemptions.
         const pairingColumns = this.db.prepare('PRAGMA table_info(watch_pairings)').all();
@@ -114,7 +164,12 @@ export class MatchStore {
           this.db.exec(
             'ALTER TABLE watch_pairings ADD COLUMN expired INTEGER NOT NULL DEFAULT 0 CHECK(expired IN (0,1))',
           );
-        this.db.exec('PRAGMA user_version=4;');
+        this.db.exec('PRAGMA user_version=5;');
+      });
+      this.account = new AccountStore(this.db, {
+        transaction: (body) => this.transaction(body),
+        now: this.now,
+        destinationInUse: (id) => this.active()?.output.destinationId === id,
       });
       this.media = new MediaStore(this.db, {
         transaction: (body) => this.transaction(body),
@@ -125,6 +180,13 @@ export class MatchStore {
           match.broadcast = { desired: broadcast.desired, generation: broadcast.generation };
           match.revision++;
           this.save(match);
+        },
+        output: (id) => {
+          const output = this.get(id)?.output ?? NO_OUTPUT;
+          return {
+            destinationId: output.destinationId,
+            publishUrl: output.destinationId ? this.account.publishUrl(output.destinationId) : null,
+          };
         },
         now: this.now,
       });
@@ -186,6 +248,16 @@ export class MatchStore {
         return snapshot(match);
       }
       if (this.active()) throw new MatchStoreError('match_in_flight');
+      if (input.recordOnly && input.destinationId !== undefined)
+        throw new MatchStoreError('invalid_output');
+      if (input.destinationId !== undefined && !this.account.getDestination(input.destinationId))
+        throw new MatchStoreError('destination_not_found');
+      const output: MatchOutput = input.recordOnly
+        ? { destinationId: null, recordOnly: true }
+        : {
+            destinationId: input.destinationId ?? this.account.defaultDestinationId(),
+            recordOnly: false,
+          };
       const match: StoredMatch = {
         id: input.id,
         createdAt: new Date(this.now()).toISOString(),
@@ -196,6 +268,7 @@ export class MatchStore {
         scorer: { deviceId: input.deviceId, epoch: 1 },
         broadcast: { desired: 'stopped', generation: 0 },
         scorebugStyle: input.scorebugStyle ?? DEFAULT_SCOREBUG_STYLE,
+        output,
         creationRequest: canonical(input),
       };
       this.db
@@ -377,6 +450,132 @@ export class MatchStore {
     // Only a durable terminal expiry permits a client to discard uncertain intent.
     if (outcome === null) throw new MatchStoreError('pairing_expired');
     return outcome;
+  }
+  // ---------------------------------------------------------------- invites
+
+  private inviteView(row: InviteRow): MatchInvite {
+    const { count } = this.db
+      .prepare('SELECT COUNT(*) AS count FROM invite_redemptions WHERE invite_id=?')
+      .get(row.id) as { count: number };
+    return {
+      id: row.id,
+      gameId: row.game_id,
+      createdAt: new Date(row.created_at).toISOString(),
+      expiresAt: new Date(row.expires_at).toISOString(),
+      revokedAt: row.revoked_at === null ? null : new Date(row.revoked_at).toISOString(),
+      redemptions: count,
+    };
+  }
+  /** Multi-use until revoked, expired or the match ends. Returns the only copy of the code. */
+  issueInvite(
+    gameId: string,
+    createdBy: string,
+    ttlMs = INVITE_TTL_MS,
+  ): { invite: MatchInvite; code: string } {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000 || ttlMs > 24 * 60 * 60 * 1000)
+      throw new MatchStoreError('invalid_ttl');
+    return this.transaction(() => {
+      if (this.load(gameId).scoring.status !== 'active') throw new MatchStoreError('match_ended');
+      const now = this.now();
+      const { count } = this.db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM match_invites WHERE game_id=? AND revoked_at IS NULL AND expires_at>?',
+        )
+        .get(gameId, now) as { count: number };
+      if (count >= 16) throw new MatchStoreError('invite_limit');
+      for (let attempt = 0; attempt < 8; attempt++) {
+        let code = '';
+        for (let i = 0; i < INVITE_CODE_LENGTH; i++)
+          code += INVITE_CODE_ALPHABET[randomInt(INVITE_CODE_ALPHABET.length)];
+        const hash = this.account.codeHash('match-invite', code);
+        if (this.db.prepare('SELECT 1 FROM match_invites WHERE code_hash=?').get(hash)) continue;
+        const id = randomUUID();
+        this.db
+          .prepare(
+            'INSERT INTO match_invites(id,game_id,code_hash,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)',
+          )
+          .run(id, gameId, hash, createdBy, now, now + ttlMs);
+        return { invite: this.inviteView(this.inviteRow(gameId, id)!), code };
+      }
+      throw new MatchStoreError('invite_code_exhausted');
+    });
+  }
+  private inviteRow(gameId: string, inviteId: string): InviteRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM match_invites WHERE game_id=? AND id=?')
+      .get(gameId, inviteId) as InviteRow | undefined;
+  }
+  listInvites(gameId: string): MatchInvite[] {
+    return this.transaction(() => {
+      this.load(gameId);
+      return (
+        this.db
+          .prepare('SELECT * FROM match_invites WHERE game_id=? ORDER BY created_at, rowid')
+          .all(gameId) as InviteRow[]
+      ).map((row) => this.inviteView(row));
+    });
+  }
+  /** Also removes the scoring credentials handed out through this invite. */
+  revokeInvite(gameId: string, inviteId: string): MatchInvite {
+    return this.transaction(() => {
+      const row = this.inviteRow(gameId, inviteId);
+      if (!row) throw new MatchStoreError('invite_not_found');
+      if (row.revoked_at === null) {
+        this.db
+          .prepare('UPDATE match_invites SET revoked_at=? WHERE id=?')
+          .run(this.now(), inviteId);
+        this.db
+          .prepare(
+            `DELETE FROM credentials WHERE game_id=? AND role='score' AND device_id IN
+            (SELECT device_id FROM invite_redemptions WHERE invite_id=?)`,
+          )
+          .run(gameId, inviteId);
+      }
+      return this.inviteView(this.inviteRow(gameId, inviteId)!);
+    });
+  }
+  /** Unauthenticated: the code is the capability. Returns a per-match `score` credential. */
+  redeemInvite(input: InviteRedeemRequest): {
+    credential: MatchCredential;
+    snapshot: MatchSnapshot;
+  } {
+    return this.transaction(() => {
+      const code = normalizeInviteCode(input.code);
+      if (!code) throw new MatchStoreError('invite_invalid');
+      const hash = this.account.codeHash('match-invite', code);
+      const row = this.db.prepare('SELECT * FROM match_invites WHERE code_hash=?').get(hash) as
+        | InviteRow
+        | undefined;
+      if (!row || !timingSafeEqual(Buffer.from(row.code_hash), Buffer.from(hash)))
+        throw new MatchStoreError('invite_invalid');
+      if (row.revoked_at !== null) throw new MatchStoreError('invite_revoked');
+      if (this.now() >= row.expires_at) throw new MatchStoreError('invite_expired');
+      if (this.load(row.game_id).scoring.status !== 'active')
+        throw new MatchStoreError('match_ended');
+      const redeemed = this.db
+        .prepare('SELECT 1 FROM invite_redemptions WHERE game_id=? AND device_id=?')
+        .get(row.game_id, input.deviceId);
+      // Invite device IDs must not alias the owner's or another device's existing credentials.
+      if (
+        !redeemed &&
+        this.db
+          .prepare('SELECT 1 FROM credentials WHERE game_id=? AND device_id=?')
+          .get(row.game_id, input.deviceId)
+      )
+        throw new MatchStoreError('device_id_taken');
+      const credential = this.issueCredentialWithinTransaction(
+        row.game_id,
+        input.deviceId,
+        'score',
+      );
+      this.db
+        .prepare(
+          `INSERT INTO invite_redemptions(game_id,device_id,invite_id,redeemed_at) VALUES(?,?,?,?)
+          ON CONFLICT(game_id,device_id) DO UPDATE SET invite_id=excluded.invite_id`,
+        )
+        .run(row.game_id, input.deviceId, row.id, this.now());
+      return { credential, snapshot: snapshot(this.load(row.game_id)) };
+    });
   }
   authenticate(gameId: string, token: string): Omit<MatchCredential, 'token'> | undefined {
     const row = this.db

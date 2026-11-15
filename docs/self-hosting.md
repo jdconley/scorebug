@@ -125,7 +125,9 @@ Stream URL and key (the key is not echoed). Then it:
 4. starts Caddy, the API, the relay and the worker,
 5. waits until `https://your-domain/healthz` answers through Caddy and the worker
    reports healthy,
-6. prints the phone settings and next steps.
+6. saves the YouTube URL and key as the default streaming destination
+   ("YouTube") the first time,
+7. prints a one-time phone setup link (with a QR code) and next steps.
 
 For scripts or automation, pass everything as flags (or `SCOREBUG_*`
 environment variables) and add `--yes` so it never prompts:
@@ -173,18 +175,48 @@ follow that guide's "Check, run, install and stop" section.
 
 ## Phone setup
 
-> Phone setup links are planned. Until then, enter the settings by hand.
+Set up the phone once, at home. The installer ends by printing a QR code and a
+one-time setup link like
 
-The installer prints the settings at the end. Print them again any time:
+```
+scorebug://connect?server=https%3A%2F%2Fscorebug.example.com&code=…
+```
+
+Scan the QR code with the iPhone camera, or text the link to yourself and open
+it on the phone. The app connects to your server and gets its own credential;
+there is nothing to type. Each link works for one phone and expires after 24
+hours. For another phone, or if the link expired, print a new one:
 
 ```bash
 infra/install.sh phone
 ```
 
-In the Scorebug app open **Film → streaming settings** and enter the Server,
-Installation token, Worker and Output exactly as printed. The worker and output
-names default to the app's own defaults (`local-worker`, `local-output`). The
-installation token works like a password for your server.
+That runs the setup-link command inside the API container; you can also run it
+directly:
+
+```bash
+docker compose -f infra/vps/docker-compose.yml exec control-plane \
+  node apps/control-plane/dist/cli.js setup-link
+```
+
+A lost phone can be cut off without touching anything else:
+
+```bash
+docker compose -f infra/vps/docker-compose.yml exec control-plane \
+  node apps/control-plane/dist/cli.js devices
+docker compose -f infra/vps/docker-compose.yml exec control-plane \
+  node apps/control-plane/dist/cli.js revoke-device DEVICE_ID
+```
+
+At the game you never need the server: the filming phone starts the match and
+shares an invite (QR code, link or a short code like `K7P-4QX`) so other phones
+can keep score. See [the API reference](api.md).
+
+**Older app versions** without setup links still work with the shared
+installation token: open **Film → streaming settings** and enter the Server,
+Installation token, Worker and Output. `infra/install.sh phone` prints the
+server, worker and output, and how to read the token from `infra/vps/.env`.
+Treat that token like a password.
 
 ## Test without a phone
 
@@ -310,7 +342,9 @@ infra/install.sh --rotate-secrets
 
 This replaces all four secrets and restarts the stack. Afterwards:
 
-- every phone needs the new installation token (`infra/install.sh phone`),
+- phones set up with a setup link keep working (their credentials are stored in
+  the database; revoke a lost one with `revoke-device`, see Phone setup),
+- phones on an older app version need the new installation token,
 - a split home worker needs the new `infra/vps/worker.env` copied over and
   `infra/install.sh worker --env-file ./worker.env` run again (all-in-one picks
   it up automatically).
@@ -319,7 +353,8 @@ Matches already in the database stay, but a broadcast that was set up before the
 rotation must be started again from the phone.
 
 To change only the YouTube stream key, re-run the installer with
-`--rtmp-url ... --stream-key ...`; no other secret changes.
+`--rtmp-url ... --stream-key ...`. It updates the default destination and the
+worker's fallback `OUTPUT_URL`; no other secret changes.
 
 ## Troubleshooting
 
@@ -329,8 +364,12 @@ certificate. Check that the domain's DNS points at this server
 firewall, and look at `docker compose -f infra/vps/docker-compose.yml logs caddy`.
 Fix it, then run `infra/install.sh status`.
 
-**The phone says the server rejected it.** The installation token is wrong.
-Print it with `infra/install.sh phone` and re-enter it.
+**The phone says the server rejected it.** Its credential was revoked, or (older
+app versions) the installation token is wrong. Set it up again with a new link
+from `infra/install.sh phone`.
+
+**A setup link says "already used" or "expired".** Each link sets up one phone
+within 24 hours. Print a new one with `infra/install.sh phone`.
 
 **The phone connects but streaming never starts.** The phone could not reach the
 relay over UDP 8890. Check the firewall rule is UDP (not TCP) and, for a home
@@ -349,6 +388,8 @@ the server. Test from home with the smoke test above.
 
 **Nothing appears on YouTube.** Check the worker log for RTMP errors. A wrong or
 expired stream key fails immediately; re-run the installer with the new key.
+`worker_output_missing` in the worker log means the match has no destination
+and the worker has no fallback `OUTPUT_URL`.
 YouTube can take 10–20 seconds to show a new stream in the preview.
 
 **Video stutters or the worker falls behind.** The server is short on CPU. Use a

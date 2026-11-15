@@ -12,3 +12,4 @@ export * from './decoder-delivery-report.js';
 export * from './pipeline-read-key.js';
 export * from './worker-capabilities.js';
 export * from './scorebug.js';
+export * from './setup.js';

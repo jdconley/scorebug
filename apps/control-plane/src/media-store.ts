@@ -7,6 +7,7 @@ import type {
   MediaSnapshot,
   RecordingAssociation,
   RecordingReport,
+  WorkerOutputAssignment,
 } from '@scorebug/protocol';
 import { canonical } from './canonical-json.js';
 import { applyBroadcastOperation, applyRecordingReport, MediaStateError } from './media-state.js';
@@ -21,6 +22,7 @@ type Dependencies = {
   match: (id: string) => MatchSnapshot | undefined;
   active: () => MatchSnapshot | undefined;
   updateBroadcast: (id: string, broadcast: MediaBroadcast) => void;
+  output: (id: string) => WorkerOutputAssignment;
   now: () => number;
 };
 
@@ -64,14 +66,17 @@ export class MediaStore {
   get(gameId: string): MediaSnapshot {
     return this.deps.transaction(() => this.read(gameId));
   }
-  workerAssignment(workerId: string): { match: MatchSnapshot; media: MediaSnapshot } | null {
+  /** `output` carries the stream key and is only for the authenticated worker. */
+  workerAssignment(
+    workerId: string,
+  ): { match: MatchSnapshot; media: MediaSnapshot; output: WorkerOutputAssignment } | null {
     return this.deps.transaction(() => {
       const match = this.deps.active();
       if (!match) return null;
       const media = this.read(match.id);
       return media.broadcast.desired === 'running' &&
         media.broadcast.selection?.workerId === workerId
-        ? { match, media }
+        ? { match, media, output: this.deps.output(match.id) }
         : null;
     });
   }
@@ -144,6 +149,8 @@ export class MediaStore {
         command.expectedGeneration !== snapshot.broadcast.generation
       )
         error = 'generation_conflict';
+      else if (command.operation.type === 'start' && this.match(command.gameId).output.recordOnly)
+        error = 'record_only_match';
       else {
         try {
           const broadcast = applyBroadcastOperation(

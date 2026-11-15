@@ -91,7 +91,9 @@ it('supports the experimental240 publishing candidate without changing the defau
 
 it('defaults to RTMP and validates output requirements for each mode', () => {
   expect(loadConfig(base).OUTPUT_MODE).toBe('rtmp');
-  expect(() => loadConfig({ ...base, OUTPUT_URL: undefined })).toThrow();
+  // OUTPUT_URL is only the fallback: destinations normally come from the control plane.
+  expect(loadConfig({ ...base, OUTPUT_URL: undefined }).OUTPUT_URL).toBeUndefined();
+  expect(loadConfig({ ...base, OUTPUT_URL: '' }).OUTPUT_URL).toBeUndefined();
   expect(
     loadConfig({
       ...base,
@@ -111,14 +113,14 @@ it('defaults to RTMP and validates output requirements for each mode', () => {
     for (const OUTPUT_RECORDING_DIR of [undefined, '', '   '])
       expect(() => loadConfig({ ...base, OUTPUT_MODE, OUTPUT_RECORDING_DIR })).toThrow();
   }
-  expect(() =>
+  expect(
     loadConfig({
       ...base,
       OUTPUT_MODE: 'rtmp+record',
       OUTPUT_RECORDING_DIR: '/tmp',
       OUTPUT_URL: undefined,
-    }),
-  ).toThrow();
+    }).OUTPUT_MODE,
+  ).toBe('rtmp+record');
   expect(() => loadConfig({ ...base, OUTPUT_MODE: 'unknown' })).toThrow();
   expect(() =>
     loadConfig({

@@ -3,12 +3,21 @@ import { join, resolve } from 'node:path';
 import type { Config } from './config.js';
 import type { PipelineSpec } from './pipeline.js';
 
-/** Called once per pipeline attempt, including retries; old recordings are retained. */
+/**
+ * Called once per pipeline attempt, including retries; old recordings are retained.
+ * `assignedUrl` is the match's destination from the control plane; the worker's
+ * own OUTPUT_URL is the fallback for matches without one.
+ */
 export function allocatePipelineOutputs(
   config: Pick<Config, 'OUTPUT_MODE' | 'OUTPUT_URL' | 'OUTPUT_RECORDING_DIR'>,
+  assignedUrl?: string | null,
 ): Pick<PipelineSpec, 'publishUrl' | 'recordingPath'> {
   const output: Pick<PipelineSpec, 'publishUrl' | 'recordingPath'> = {};
-  if (config.OUTPUT_MODE !== 'record') output.publishUrl = config.OUTPUT_URL!;
+  if (config.OUTPUT_MODE !== 'record') {
+    const publishUrl = assignedUrl ?? config.OUTPUT_URL;
+    if (!publishUrl) throw new Error('missing_output_url');
+    output.publishUrl = publishUrl;
+  }
   if (config.OUTPUT_MODE !== 'rtmp') {
     const root = resolve(config.OUTPUT_RECORDING_DIR!);
     mkdirSync(root, { recursive: true, mode: 0o700 });
