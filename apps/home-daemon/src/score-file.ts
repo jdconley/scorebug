@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 /**
- * Atomically write `text` to `path` so ffmpeg drawtext's `reload=1` never sees
+ * Atomically write `text` to `path` so the scorebug overlay feed never reads
  * a partial file. Writes to `<path>.tmp.<rand>` then renames, which is atomic
  * on the same filesystem.
  */
@@ -15,5 +15,5 @@ export async function atomicWrite(path: string, text: string): Promise<void> {
 }
 
 export function scoreFilePath(dir: string): string {
-  return join(dir, 'score.txt');
+  return join(dir, 'scorebug.json');
 }

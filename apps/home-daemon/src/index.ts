@@ -43,7 +43,6 @@ const supervisor = new WorkerSupervisor({
         decoderThreading: config.DECODER_THREADING,
         profile: videoProfiles[config.VIDEO_PROFILE],
         ffmpegPath: config.FFMPEG_PATH,
-        fontPath: config.FONT_PATH,
       },
       diagnostics.log,
       {

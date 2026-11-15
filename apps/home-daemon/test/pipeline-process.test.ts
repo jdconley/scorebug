@@ -38,17 +38,15 @@ it('executes the configured media binary instead of the one on PATH', async () =
   }
 });
 
-it('uses the selected font for the overlay', () => {
+it('needs no system font: the scorebug is rasterized by the worker', () => {
   const args = buildFfmpegArgs({
     gameId: 'qa',
     pullUrl: 'unused',
     publishUrl: 'unused',
     scoreFile: '/tmp/score.txt',
     nvenc: false,
-    fontPath: '/custom/score.ttf',
   });
-  expect(args[args.indexOf('-vf') + 1]).toContain('/custom/score.ttf');
-  expect(args[args.indexOf('-vf') + 1]).not.toContain('/usr/share/fonts');
+  expect(args.join(' ')).not.toMatch(/fontfile|drawtext|\/usr\/share\/fonts/);
 });
 
 it('settles a missing binary without an unhandled error or a pending exit', async () => {

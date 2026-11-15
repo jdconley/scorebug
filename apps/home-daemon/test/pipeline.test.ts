@@ -29,13 +29,37 @@ describe('buildFfmpegArgs', () => {
     expect(args).toContain(baseSpec.pullUrl);
   });
 
-  it('wires drawtext with reload=1 against the scoreFile', () => {
+  it('composites the worker scorebug feed (stdin, Matroska) over the live video', () => {
     const args = buildFfmpegArgs({ ...baseSpec, nvenc: true });
-    const vfIndex = args.indexOf('-vf');
-    expect(vfIndex).toBeGreaterThan(-1);
-    const filter = args[vfIndex + 1] ?? '';
-    expect(filter).toContain(`drawtext=textfile=${baseSpec.scoreFile}`);
-    expect(filter).toContain('reload=1');
+    const inputs = args.flatMap((arg, index) => (arg === '-i' ? [args[index + 1]] : []));
+    expect(inputs).toEqual([baseSpec.pullUrl, 'pipe:0']);
+    expect(args[args.lastIndexOf('-i') - 1]).toBe('matroska');
+    const filter = args[args.indexOf('-filter_complex') + 1] ?? '';
+    expect(filter.startsWith('[0:v:0]metadata=mode=delete')).toBe(true);
+    expect(filter).toContain(
+      '[1:v:0]split=3[scorebug_bar_packed][scorebug_setCard_packed][scorebug_lowerThird_packed];',
+    );
+    // 1080p default canvas: each style's box is cropped from the packed feed...
+    expect(filter).toContain(
+      '[scorebug_bar_packed]crop=520:244:0:0,format=yuva420p[scorebug_bar];',
+    );
+    expect(filter).toContain('[scorebug_setCard_packed]crop=648:252:520:0,');
+    expect(filter).toContain('[scorebug_lowerThird_packed]crop=1448:172:0:252,');
+    // ...and blended at its own place in the frame, in sequence.
+    expect(filter).toContain(
+      '[base][scorebug_bar]overlay=x=32:y=24:eof_action=pass:format=auto[scorebug_bar_done];',
+    );
+    expect(filter).toContain('[scorebug_bar_done][scorebug_setCard]overlay=x=1240:y=24:');
+    expect(filter).toContain(
+      '[scorebug_setCard_done][scorebug_lowerThird]overlay=x=236:y=854:eof_action=pass:format=auto[video]',
+    );
+    expect(filter).not.toContain('drawtext');
+    expect(args.slice(args.indexOf('-map'), args.indexOf('-map') + 4)).toEqual([
+      '-map',
+      '[video]',
+      '-map',
+      '0:a:0',
+    ]);
   });
 });
 
@@ -57,10 +81,10 @@ it('selects real VideoToolbox without silent software fallback and applies the o
   expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
   expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('demux');
   expect(args).not.toContain('-fpsmax');
-  expect(args[args.indexOf('-vf') + 1]).toContain('select=');
+  expect(args[args.indexOf('-filter_complex') + 1]).toContain('select=');
   expect(args).not.toContain('-r');
-  expect(args[args.indexOf('-vf') + 1]).toContain('scale=1280:720');
-  expect(args[args.indexOf('-vf') + 1]).toContain('expansion=none');
+  expect(args[args.indexOf('-filter_complex') + 1]).toContain('scale=1280:720');
+  expect(args[args.indexOf('-filter_complex') + 1]).toContain('crop=348:164:0:0,');
 });
 it('lets explicit software selection override the legacy NVENC flag', () => {
   expect(buildFfmpegArgs({ ...baseSpec, nvenc: true, encoder: 'software' })).toContain('libx264');
@@ -76,7 +100,7 @@ describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timesta
     });
     const inputIndex = args.indexOf('-i');
     const shiftIndex = args.indexOf('-avoid_negative_ts');
-    const filter = args[args.indexOf('-vf') + 1]!;
+    const filter = args[args.indexOf('-filter_complex') + 1]!;
 
     expect(args.filter((arg) => arg === '-copyts')).toHaveLength(1);
     expect(args.indexOf('-copyts')).toBeLessThan(inputIndex);
@@ -85,7 +109,7 @@ describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timesta
     expect(args.filter((arg) => arg === '-avoid_negative_ts')).toHaveLength(1);
     expect(shiftIndex).toBeGreaterThan(inputIndex + 1);
     expect(args[shiftIndex + 1]).toBe('make_zero');
-    expect(shiftIndex).toBeLessThan(args.indexOf('-f'));
+    expect(shiftIndex).toBeLessThan(args.lastIndexOf('-f'));
     expect(args.slice(-3)).toEqual(['-f', 'flv', baseSpec.publishUrl]);
     expect(args).not.toContain('-start_at_zero');
     expect(args).not.toContain('-r');
@@ -94,7 +118,7 @@ describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timesta
 
     if (withProfile) {
       expect(args[args.indexOf('-reinit_filter:v:0') + 1]).toBe('0');
-      expect(filter).toContain(':(ow-iw)/2:(oh-ih)/2:eval=frame,drawtext=');
+      expect(filter).toContain(':(ow-iw)/2:(oh-ih)/2:eval=frame[base];');
       expect(args.indexOf('-reinit_filter:v:0')).toBeLessThan(inputIndex);
       expect(filter).toContain(
         "nullsink;[live]settb=1/90000,select='st(0,if(isnan(prev_t),2,min(2,ld(0)+max(0,t-ld(1))*30)))",
@@ -125,7 +149,7 @@ it('observes fixed-timebase decoder ingress before cap and strips an exact fixed
     nvenc: false,
     profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
   });
-  const vf = args[args.indexOf('-vf') + 1]!;
+  const vf = args[args.indexOf('-filter_complex') + 1]!;
   expect(vf).toContain(
     'metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,',
   );
@@ -200,7 +224,7 @@ it('records the final overlay as fragmented MP4 without an RTMP output', () => {
   expect(args).not.toContain('-y');
   expect(args).not.toContain('flv');
   expect(args).toContain('-copyts');
-  expect(args[args.indexOf('-vf') + 1]).toContain('drawtext=');
+  expect(args[args.indexOf('-filter_complex') + 1]).toContain('[scorebug_bar_done]');
 });
 
 it('shares one A/V encode between RTMP and fragmented MP4 with safe tee escaping', () => {
@@ -239,7 +263,7 @@ it('gates decoded geometry and inserts it only on the existing pre-scale side br
   const ordinary = buildFfmpegArgs(spec);
   expect(buildFfmpegArgs(spec, { decodedGeometry: true } as any)).toEqual(ordinary);
   const args = buildFfmpegArgs(spec, { decoderDiagnostics: true, decodedGeometry: true } as any);
-  const graph = args[args.indexOf('-vf') + 1]!;
+  const graph = args[args.indexOf('-filter_complex') + 1]!;
   expect(graph).toContain(
     '[decoded]settb=1/90000,showinfo@scorebug_geometry=checksum=0:udu_sei_as_ascii=0,metadata=mode=add',
   );

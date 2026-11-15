@@ -4,6 +4,7 @@ import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import type { MatchCredential } from '@scorebug/protocol';
+import { SCOREBUG_STYLES } from '@scorebug/protocol';
 import { bearer } from '../auth.js';
 import type { Config } from '../config.js';
 import { mediaRoutes } from './media.js';
@@ -44,6 +45,7 @@ const create = z
     deviceId: id,
     teams: z.object({ home: team, away: team }).strict(),
     rules,
+    scorebugStyle: z.enum(SCOREBUG_STYLES).optional(),
   })
   .strict();
 const operation = z.discriminatedUnion('type', [
@@ -58,6 +60,7 @@ const operation = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('end_match'), reason: z.string().trim().min(1).max(500) }).strict(),
   z.object({ type: z.literal('take_over') }).strict(),
+  z.object({ type: z.literal('set_scorebug_style'), style: z.enum(SCOREBUG_STYLES) }).strict(),
 ]);
 const command = z
   .object({

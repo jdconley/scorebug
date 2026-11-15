@@ -141,3 +141,45 @@ it('rejects a match ID reserved for active-match discovery', async () => {
   const { app, token } = setup();
   expect((await post(app, '/v1/matches', { ...input, id: 'active' }, token)).status).toBe(400);
 });
+it('sets the scorebug style on create and changes it with a scorer command', async () => {
+  const { app, token } = setup();
+  const defaulted = await (await post(app, '/v1/matches', input, token)).json();
+  expect(defaulted.snapshot.scorebugStyle).toBe('bar');
+  const cmd = {
+    commandId: 'style-1',
+    gameId: input.id,
+    deviceId: input.deviceId,
+    expectedRevision: 0,
+    scorerEpoch: 1,
+    issuedAt: new Date().toISOString(),
+    operation: { type: 'set_scorebug_style', style: 'setCard' },
+  };
+  const changed = await post(
+    app,
+    '/v1/matches/native-game/commands',
+    cmd,
+    defaulted.credential.token,
+  );
+  expect(changed.status).toBe(200);
+  const outcome = await changed.json();
+  expect(outcome.snapshot.scorebugStyle).toBe('setCard');
+  expect(outcome.snapshot.revision).toBe(1);
+  expect(outcome.snapshot.canUndo).toBe(false);
+  const invalid = await post(
+    app,
+    '/v1/matches/native-game/commands',
+    { ...cmd, commandId: 'style-2', operation: { type: 'set_scorebug_style', style: 'giant' } },
+    defaulted.credential.token,
+  );
+  expect(invalid.status).toBe(400);
+});
+it('accepts an explicit scorebug style on create and rejects unknown styles', async () => {
+  const { app, token } = setup();
+  expect((await post(app, '/v1/matches', { ...input, scorebugStyle: 'neon' }, token)).status).toBe(
+    400,
+  );
+  const created = await (
+    await post(app, '/v1/matches', { ...input, scorebugStyle: 'lowerThird' }, token)
+  ).json();
+  expect(created.snapshot.scorebugStyle).toBe('lowerThird');
+});
