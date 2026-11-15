@@ -7,10 +7,10 @@
   "builderImage": "golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039",
   "patchPackage": "patch=2.8-r0",
   "originalFiles": {
-    "internal/defs/api_srt.go": "54cb2ecb94f643ffcf960ee1f68a86845e40aff27034b284e0ae79a510ff00d5",
-    "internal/protocols/mpegts/to_stream.go": "71ddcc9181189972e9a7114e176c9880558e1c7f3348dcc8867c18d0b02107a1",
-    "internal/servers/srt/conn.go": "2dc29d85fbeb7b8036f58c7f27e918936fd42a8d57866bb867284e5db53a0b29",
-    "internal/servers/srt/server_test.go": "230d249796a953d34ad53ca7831619144891a10f54756867d8e7ce17dd88f490",
+    "internal/protocols/mpegts/from_stream.go": "5c8fbe59f9c9707984dd0c2ed68801dc6c4701cdf30e8456725aa251931ae1c1",
+    "internal/conf/path.go": "8af1949dc5af32e4da4bb048f45f04d2230a0591975f509b07eee03e65a4ad3d",
+    "internal/core/path.go": "28ee3d8c6722ed44f2e59f6713cbecbed2028883492b08299b43ba0033252789",
+    "internal/core/path_manager.go": "7bffdb77ee94dcb82a66b276cbc4d6e5f3a5a517778c86ece89516ac2ea882fe",
     "go.mod": "2356f72294d1ea270b43fbb77f22de8995b65bf7290e73e9450f0f327aab7a83",
     "go.sum": "2f8407e35088b76c6d8247ed690f8585ff60d7194aed50337bef3dd41b39e908",
     "LICENSE": "ecae73b0a23185a35a1222edc0aae5245bb9739420bad0125b0c42e935301a80",
@@ -18,27 +18,15 @@
     "internal/servers/hls/hlsjsdownloader/HASH": "ebec275802b486340d1babb47e64f0456213f321619316dc0f34595e7524aad1",
     "internal/staticsources/rpicamera/mtxrpicamdownloader/VERSION": "df9d41ca51168884ddd5095b76cc421220dfa4fa8a7800e77441c0224dd0f404",
     "internal/staticsources/rpicamera/mtxrpicamdownloader/HASH_MTXRPICAM_64_TAR_GZ": "1a75b5d943dfa8ca964fb44fe429efbd4d3b985c235f0c621c462c3c205bc6ca",
-    "internal/staticsources/rpicamera/mtxrpicamdownloader/HASH_MTXRPICAM_32_TAR_GZ": "f384a49249ca2066c967d3462c607d3c199010b9bcda0f6d32b4594e0d0174d3",
-    "internal/core/path.go": "28ee3d8c6722ed44f2e59f6713cbecbed2028883492b08299b43ba0033252789",
-    "internal/defs/path.go": "000e20711cfb62dfdc914f5fe42240d888c812e5fde24079384e4a4571f4406f",
-    "internal/protocols/mpegts/from_stream.go": "5c8fbe59f9c9707984dd0c2ed68801dc6c4701cdf30e8456725aa251931ae1c1",
-    "internal/conf/path.go": "8af1949dc5af32e4da4bb048f45f04d2230a0591975f509b07eee03e65a4ad3d",
-    "internal/core/path_manager.go": "7bffdb77ee94dcb82a66b276cbc4d6e5f3a5a517778c86ece89516ac2ea882fe"
+    "internal/staticsources/rpicamera/mtxrpicamdownloader/HASH_MTXRPICAM_32_TAR_GZ": "f384a49249ca2066c967d3462c607d3c199010b9bcda0f6d32b4594e0d0174d3"
   },
-  "patchSHA256": "0527758e3cca89b922ba5f380e43ab8299c7efbc1e9f51994ee6e28eb63200f4",
+  "h264RecoveryPatchSHA256": "a5203baeaa9e5083a3476d7e461ba0a8aacf3c6f246b6851dcd42fb1a796ea74",
+  "drainPatchSHA256": "72d0d2e476aa82eeee3e207017179bfbb82815aad862a9e2a96c0ea7320aea7e",
   "addedFiles": [
-    "internal/core/path_reader_source_test.go",
     "internal/protocols/mpegts/from_stream_recovery_test.go",
     "internal/protocols/mpegts/h264_recovery.go",
     "internal/protocols/mpegts/h264_recovery_prefix.go",
     "internal/protocols/mpegts/h264_recovery_test.go",
-    "internal/protocols/mpegts/to_stream_clock_origin_test.go",
-    "internal/servers/srt/conn_clock_origin_test.go",
-    "internal/servers/srt/conn_reader_source_test.go",
-    "internal/servers/srt/probe_reader.go",
-    "internal/servers/srt/probe_reader_campaign_test.go",
-    "internal/servers/srt/probe_reader_test.go",
     "internal/core/scorebug_drain_test.go"
-  ],
-  "drainPatchSHA256": "72d0d2e476aa82eeee3e207017179bfbb82815aad862a9e2a96c0ea7320aea7e"
+  ]
 }

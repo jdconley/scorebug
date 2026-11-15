@@ -33,7 +33,7 @@ ios/                  iPhone and Apple Watch apps (filming, recording, scoring)
 apps/control-plane/   HTTP API: matches, scoring, credentials, broadcast state
 apps/home-daemon/     Broadcast worker: pulls SRT, burns in the score, pushes RTMP(S)
 packages/protocol/    Shared TypeScript contracts and JSON fixtures
-vendor/MediaMTX/      Pinned MediaMTX relay with a small patch
+vendor/MediaMTX/      Pinned MediaMTX relay with two small patches
 vendor/HaishinKit/    Pinned HaishinKit streaming library for the iPhone app
 infra/                Local fixture config and the VPS deployment
 scripts/              Integration tests run in CI
