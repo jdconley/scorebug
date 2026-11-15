@@ -313,9 +313,9 @@ final class FileFixtureCameraSourceTests: XCTestCase {
     }
 
     func testAdapterRecordsThroughNativeArchiveUntilExplicitStop() async throws {
-        // Paced delivery never exceeds 30 fps, so after the 10th frame the 90-frame
-        // file needs ~2.7 s more to reach its end (which reports .interrupted).
-        let frames = 90
+        // Paced delivery never exceeds 30 fps, so after the 10th frame the 60-frame
+        // file needs ~1.7 s more to reach its end (which reports .interrupted).
+        let frames = 60
         let movie = try await FileSourceTestMovie.make(frames: frames)
         defer { movie.remove() }
         let source = FileFixtureCameraSource(url: movie.url, profile: profile)
@@ -434,7 +434,8 @@ private struct FileSourceTestMovie {
         guard writer.startWriting() else { throw writer.error! }
         writer.startSession(atSourceTime: origin - CMTime(seconds: offset, preferredTimescale: 60))
         try await generator.start()
-        let generated = await XCTWaiter.fulfillment(of: [done], timeout: 6)
+        // Generation is real-time paced; allow slow CI hosts several times real time.
+        let generated = await XCTWaiter.fulfillment(of: [done], timeout: max(6, Double(frames) / 30 * 4))
         await generator.stop()
         XCTAssertEqual(generated, .completed)
         video.markAsFinished()
