@@ -8,7 +8,12 @@ const schema = z
     INTERNAL_TOKEN: z.string().min(16),
     PORT: z.coerce.number().int().min(0).max(65535).default(8787),
     HOST: z.string().default('0.0.0.0'),
-    INGEST_HOST: z.string().default('ingest.scorebug.live'),
+    /**
+     * SRT host the worker reads from (and the phone publishes to unless
+     * INGEST_PUBLISH_HOST is set). Required whenever a relay is configured;
+     * relay-less development falls back to loopback.
+     */
+    INGEST_HOST: z.string().refine(isIngestEndpointHost).optional(),
     INGEST_PORT: z.coerce.number().int().positive().default(8890),
     /** Native publisher override; the worker reader retains INGEST_HOST/INGEST_PORT. */
     INGEST_PUBLISH_HOST: z.string().refine(isIngestEndpointHost).optional(),
@@ -26,6 +31,12 @@ const schema = z
     RELAY_API_PASSWORD: z.string().min(1).optional(),
   })
   .superRefine((config, context) => {
+    if (config.RELAY_API_URL !== undefined && config.INGEST_HOST === undefined)
+      context.addIssue({
+        code: 'custom',
+        path: ['INGEST_HOST'],
+        message: 'INGEST_HOST is required when a relay is configured',
+      });
     if ((config.INGEST_PUBLISH_HOST === undefined) !== (config.INGEST_PUBLISH_PORT === undefined))
       context.addIssue({
         code: 'custom',
@@ -43,7 +54,8 @@ const schema = z
             path: [field],
             message: 'All relay management settings are required together',
           });
-  });
+  })
+  .transform((config) => ({ ...config, INGEST_HOST: config.INGEST_HOST ?? '127.0.0.1' }));
 
 export type Config = z.infer<typeof schema>;
 
