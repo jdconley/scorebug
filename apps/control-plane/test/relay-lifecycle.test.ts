@@ -99,6 +99,7 @@ it('attests each publishing attempt without changing the path or worker capabili
     const url = new URL(result.publishUrl);
     const streamid = url.searchParams.get('streamid')!;
     expect(streamid.startsWith(`publish:${grant.path}:`)).toBe(true);
+    expect(result.publishUrl).toContain(`?streamid=${streamid}&`);
     expect(
       verifyPublishAttemptQuery(config.installationSecret, grant.path, streamid.split(':')[2]),
     ).toBe(result.publishingAttemptId);

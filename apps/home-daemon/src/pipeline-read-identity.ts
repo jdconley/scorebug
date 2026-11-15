@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { formatSrtUrl } from './srt-url.js';
 
 const productionRead = /^read:scorebug-[0-9a-f]{16}-[0-9a-f]{32}$/;
 
@@ -23,7 +24,7 @@ export function identifyPipelineRead(readUrl: string): {
       return { readUrl };
     const pipelineReadId = randomUUID();
     url.searchParams.set('streamid', `${streamId}:sbw1=${pipelineReadId}`);
-    return { readUrl: url.toString(), pipelineReadId };
+    return { readUrl: formatSrtUrl(url), pipelineReadId };
   } catch {
     return { readUrl };
   }

@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { z } from 'zod';
 import { isIngestEndpoint, type IngestEndpoint } from './ingest-endpoint.js';
 import { parseReceiverProbe } from './receiver-probe.js';
+import { formatSrtUrl } from './srt-url.js';
 import type { BroadcastSelection, ReceiverProbeSnapshot } from '@scorebug/protocol';
 
 const pathPattern = /^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$/;
@@ -104,7 +105,7 @@ export function deriveIngestGrant(
     if (action === 'publish' && publishPeerLatencyMs !== undefined)
       result.searchParams.set('peerlatency', String(publishPeerLatencyMs));
     if (action === 'publish' && publishPacing === 'relative') result.searchParams.set('maxbw', '0');
-    return result.toString();
+    return formatSrtUrl(result);
   };
   return {
     path,

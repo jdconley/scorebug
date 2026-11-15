@@ -5,6 +5,7 @@ import type {
 } from '@scorebug/protocol';
 import type { IngestEndpoint } from './ingest-endpoint.js';
 import { publishAttemptQuery, verifyPublishAttemptQuery } from './publishing-attempt.js';
+import { formatSrtUrl } from './srt-url.js';
 import {
   deriveIngestGrant,
   ingestPathPrefix,
@@ -194,7 +195,7 @@ export class RelayLifecycle {
         );
         const url = new URL(publishUrl);
         url.searchParams.set('streamid', `publish:${target.grant.path}:${query}`);
-        publishUrl = url.toString();
+        publishUrl = formatSrtUrl(url);
       }
       return this.withTarget(target, async () => {
         await this.reconcileTarget(target);

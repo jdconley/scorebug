@@ -12,6 +12,10 @@ it('adds a distinct private read ID while preserving credentials and unrelated U
   expect(second.pipelineReadId).not.toBe(first.pipelineReadId);
   const parsed = new URL(first.readUrl);
   expect(parsed.searchParams.get('streamid')).toBe(`${streamId}:sbw1=${first.pipelineReadId}`);
+  // Older libsrt clients (FFmpeg 6.1) send query values raw; keep ':' and '=' literal.
+  expect(first.readUrl).toBe(
+    readUrl.replace(`streamid=${streamId}`, `streamid=${streamId}:sbw1=${first.pipelineReadId}`),
+  );
   parsed.searchParams.set('streamid', streamId);
   const expected = new URL(readUrl);
   expected.searchParams.set('streamid', streamId);
