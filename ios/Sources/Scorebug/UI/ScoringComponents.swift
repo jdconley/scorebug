@@ -30,6 +30,8 @@ struct CompactScore: View {
             Text("\(board.points(right))").font(Theme.score(36)).monospacedDigit()
             TeamChip(team: board.info(right), size: 22, trailingBar: true)
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .padding(.horizontal, 16).padding(.vertical, 6)
         .background(Theme.scrim, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .accessibilityElement(children: .ignore)
@@ -122,7 +124,7 @@ struct MatchOverCard: View {
     let done: () -> Void
     var body: some View {
         VStack(spacing: 16) {
-            Text(board.snapshot?.endReason == "Match complete" ? "Final" : "Match ended").font(.title3.weight(.bold))
+            Text(board.snapshot.map(SetPointFlow.isDecided) == true ? "Final" : "Match ended").font(.title3.weight(.bold))
             HStack(spacing: 18) {
                 TeamChip(team: board.info(.team1), size: 26, dim: board.sets(.team1) < board.sets(.team2))
                 Text("\(board.sets(.team1)) – \(board.sets(.team2))").font(Theme.score(44)).monospacedDigit()

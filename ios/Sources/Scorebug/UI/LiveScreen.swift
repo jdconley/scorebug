@@ -102,8 +102,14 @@ struct LiveScreen: View {
                 Spacer(minLength: 12)
                 HStack(spacing: 8) {
                     if session.kind == .filming, app.config?.isOwner == true {
-                        Button { inviting = true } label: { Label("Invite scorer", systemImage: "person.badge.plus") }
+                        Button { inviting = true } label: {
+                            ViewThatFits {
+                                Label("Invite scorer", systemImage: "person.badge.plus")
+                                Image(systemName: "person.badge.plus")
+                            }
+                        }
                             .buttonStyle(OverlayButtonStyle())
+                            .accessibilityLabel("Invite scorer")
                             .accessibilityIdentifier("live.invite")
                     }
                     Button("End") { confirmEnd = true }
@@ -152,6 +158,7 @@ struct LiveScreen: View {
     }
 
     private var statusPills: some View {
+        VStack(alignment: .leading, spacing: 6) {
         HStack(spacing: 8) {
             if live.isLive {
                 HStack(spacing: 6) {
@@ -168,6 +175,7 @@ struct LiveScreen: View {
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
             .background(Theme.scrim, in: RoundedRectangle(cornerRadius: 6))
+        }
             Text([live.recordingLabel, live.streamLabel].compactMap { $0 }.joined(separator: " · "))
                 .font(.footnote.weight(.medium)).foregroundStyle(Theme.muted)
                 .padding(.horizontal, 10).padding(.vertical, 5)

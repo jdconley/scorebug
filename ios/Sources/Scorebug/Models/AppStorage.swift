@@ -110,7 +110,8 @@ struct MatchRecap: Codable, Equatable {
         }
         team1 = team(.team1); team2 = team(.team2)
         setScores = MatchSummary.setScores(snapshot)
-        final = snapshot.status == .ended
+        // "Final" only when a team actually won; the End button can stop a match early.
+        final = SetPointFlow.isDecided(snapshot)
         self.date = date
     }
 

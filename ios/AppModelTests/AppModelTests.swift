@@ -142,6 +142,9 @@ import XCTest
         relaunched.finish(lastSnapshot: makeSnapshot(home: 15, away: 12, set: 3, homeSets: 2, awaySets: 1, status: .ended))
         XCTAssertEqual(relaunched.route, .home)
         XCTAssertEqual(relaunched.preferences.lastMatch?.title, "CASCADE 2–1 SUMMIT")
+        XCTAssertEqual(relaunched.preferences.lastMatch?.final, true)
+        XCTAssertFalse(MatchRecap(snapshot: makeSnapshot(home: 5, homeSets: 1, status: .ended), date: Date()).final,
+                       "ended early is not a final")
         XCTAssertNil(try store.value(MatchSession.self, for: StoreKey.session))
     }
 
