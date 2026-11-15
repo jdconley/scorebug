@@ -153,6 +153,36 @@ import XCTest
         XCTAssertTrue(other.ownsScoring)
     }
 
+    /// The screens poll right after start(); that must not starve the queued take-over.
+    func testTakeOverSurvivesAnImmediatePoll() async {
+        await server.addMatch(makeSnapshot(scorer: "filming-phone"))
+        let credential = await server.issueCredential(gameId: "m1", deviceId: "phone", role: .score)
+        let server = server!
+        let session = MatchSession(kind: .scoring, endpoint: "https://score.example.com", credential: credential,
+                                   recordOnly: true, layout: CourtLayout(), startedAt: Date())
+        let board = ScoreboardModel(session: session,
+                                    client: MatchHTTPClient(endpoint: try! ScoringEndpoint(session.endpoint),
+                                                            transport: { try await server.respond($0) }),
+                                    pendingStore: MemoryPendingCommandStore(), takeOverOnStart: true)
+        await board.start()
+        async let polled: Void = board.poll()
+        async let again: Void = board.poll()
+        _ = await (polled, again)
+        await settle(board)
+        XCTAssertTrue(board.ownsScoring, String(describing: board.problem))
+        XCTAssertNil(board.problem)
+    }
+
+    func testPollKeepsARejectionVisible() async {
+        let board = await makeBoard()
+        await server.force("m1", home: 3, away: 3)
+        board.tap(.left)
+        await settle(board)
+        XCTAssertNotNil(board.problem)
+        await board.poll()
+        XCTAssertNotNil(board.problem, "only connection problems clear on a good poll")
+    }
+
     func testRejectedChangeShowsAPlainMessage() async {
         let board = await makeBoard()
         // Someone else scored on the server since our last look.

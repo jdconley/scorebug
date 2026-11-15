@@ -18,6 +18,8 @@ import ScorebugCore
     @Published private(set) var sending = false
     /// A small, non-blocking line ("Can't reach the server…"). Never a modal.
     @Published private(set) var problem: String?
+    /// Connection problems clear on the next good poll; rejections stay until the next change.
+    private var problemIsConnection = false
 
     let session: MatchSession
     var onLayoutChange: (CourtLayout) -> Void = { _ in }
@@ -78,10 +80,11 @@ import ScorebugCore
     /// Refreshes the score from the server (another phone or the Watch may have scored).
     /// Also finishes checking a change whose reply was lost.
     func poll() async {
-        guard !draining else { return }
+        // Never compete with queued changes for the one-command outbox.
+        guard !draining, queue.isEmpty else { return }
         do {
             apply(try await coordinator.recover())
-            if problem != nil, !sending { problem = nil }
+            if problemIsConnection, !sending { problem = nil }
         } catch MatchCoordinatorError.busy {
             return
         } catch {
@@ -94,7 +97,10 @@ import ScorebugCore
     func tap(_ side: CourtSide) { point(layout.team(on: side)) }
 
     func point(_ team: TeamSlot) {
-        guard canScore else { if scoringElsewhere { problem = "Another device is scoring. Tap Take over to score here." }; return }
+        guard canScore else {
+            if scoringElsewhere { problem = "Another device is scoring. Tap Take over to score here."; problemIsConnection = false }
+            return
+        }
         feedback(.point)
         enqueue(.awardPoint(side: team.side))
     }
@@ -183,13 +189,13 @@ import ScorebugCore
             do {
                 var state: MatchCoordinatorState
                 do {
-                    state = try await coordinator.submit(operation)
+                    state = try await submitWhenFree(operation)
                 } catch MatchCoordinatorError.pendingCommand {
                     // An earlier change is still unconfirmed: settle it, then send this one.
                     state = try await coordinator.recover()
                     apply(state)
                     guard state.pending == nil else { throw MatchCoordinatorError.pendingCommand }
-                    state = try await coordinator.submit(operation)
+                    state = try await submitWhenFree(operation)
                 }
                 apply(state)
                 if let outcome = state.outcome, !outcome.accepted {
@@ -205,6 +211,15 @@ import ScorebugCore
         }
     }
 
+    /// A refresh that started just before a tap holds the outbox for a moment; wait for it.
+    private func submitWhenFree(_ operation: MatchOperation) async throws -> MatchCoordinatorState {
+        for attempt in 0..<50 {
+            do { return try await coordinator.submit(operation) }
+            catch MatchCoordinatorError.busy where attempt < 49 { try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        throw MatchCoordinatorError.busy
+    }
+
     private func apply(_ state: MatchCoordinatorState) {
         if let incoming = state.snapshot {
             let previousSets = snapshot?.completedSets.count
@@ -215,6 +230,7 @@ import ScorebugCore
         if state.status == .reconciliationRequired {
             // Too old to resend safely. Drop it once the server proves it never arrived.
             problem = "A change may not have reached the server. Check the score."
+            problemIsConnection = false
             Task { [coordinator] in
                 if let settled = try? await coordinator.discardExpired() { self.apply(settled) }
             }
@@ -225,14 +241,17 @@ import ScorebugCore
     private func rejected(_ code: String?) {
         feedback(.problem)
         problem = FriendlyError.message(code: code, status: 409)
+        problemIsConnection = false
         if let snapshot, code == "set_not_won" || code == "tied_set" { flow.forgetDecline(snapshot) }
     }
 
     private func report(_ error: Error) {
+        problemIsConnection = false
         if case MatchCoordinatorError.scoringNotAllowed = error {
             problem = "Another device is scoring. Tap Take over to score here."
         } else if error is URLError || error as? MatchCoordinatorError == .pendingCommand {
             problem = "Can't reach the server. The last change will be checked and sent."
+            problemIsConnection = true
         } else {
             problem = FriendlyError.message(error)
         }

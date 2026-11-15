@@ -17,7 +17,8 @@ final class ScreenTourTests: XCTestCase {
 
     private func shot(_ app: XCUIApplication, _ name: String) {
         Thread.sleep(forTimeInterval: 0.8)
-        let screenshot = app.screenshot()
+        // The whole screen: app.screenshot() crops landscape apps on the Simulator.
+        let screenshot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -64,7 +65,8 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(team1.waitForExistence(timeout: 5))
         team1.tap(); team1.typeText("Cascade 14 Black")
         let team2 = app.textFields["newMatch.team2.name"]
-        team2.tap(); team2.typeText("Summit 14 Red")
+        team2.tap(); team2.typeText("Summit 14 Red\n")
+        app.staticTexts["New match"].firstMatch.tap() // dismiss the keyboard
         shot(app, "05-new-match")
         app.swipeUp()
         shot(app, "06-new-match-bottom")
