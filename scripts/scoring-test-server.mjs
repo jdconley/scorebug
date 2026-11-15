@@ -23,7 +23,6 @@ export async function startScoringTestServer(databasePath, environment = {}, { l
         DATABASE_PATH: databasePath,
         PHONE_TOKEN: scoringTestToken,
         HOME_TOKEN: 'qa-home-token-not-production',
-        INTERNAL_TOKEN: 'qa-internal-token-not-production',
         LOG_LEVEL: 'info',
         // Ordinary scoring tests must never reconcile an ambient real relay.
         RELAY_API_URL: undefined,

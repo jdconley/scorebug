@@ -36,8 +36,6 @@ try {
     'PHONE_TOKEN=qa-phone-token-not-production',
     '-e',
     'HOME_TOKEN=qa-home-token-not-production',
-    '-e',
-    'INTERNAL_TOKEN=qa-internal-token-not-production',
     image,
   );
   const { stdout } = await checkedDocker(
@@ -55,7 +53,7 @@ try {
     try {
       const res = await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(1000) });
       const body = await res.json();
-      if (res.ok && body.ok === true && body.home === false) {
+      if (res.ok && body.ok === true) {
         ready = true;
         break;
       }
@@ -65,8 +63,10 @@ try {
     await delay(250);
   }
   if (!ready) throw new Error('Container did not become healthy within 20 seconds');
-  const protectedResponse = await fetch(`${base}/games/qa`, { signal: AbortSignal.timeout(2000) });
-  if (protectedResponse.status !== 401) throw new Error('Game API did not require authentication');
+  const protectedResponse = await fetch(`${base}/v1/matches/active`, {
+    signal: AbortSignal.timeout(2000),
+  });
+  if (protectedResponse.status !== 401) throw new Error('Match API did not require authentication');
   checkCancellation();
 } catch (error) {
   if (runAttempted) {

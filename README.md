@@ -1,99 +1,65 @@
 # Scorebug
 
-Live streaming of volleyball games with a scoreboard, operated from the stands.
-An iPhone films and keeps a clean local recording. Score from its paired Apple Watch
-or the native Scorebug app on another iPhone, including a watch paired to that iPhone. A portable worker adds the score and sends the broadcast
-to YouTube.
+Live-stream a volleyball match to YouTube with a scoreboard on the video, run by one
+parent in the stands.
 
-> Status: native iPhone/Watch scoring and clean recording/export have passing local
-> and simulator checks. Native Mac/software-proxy streaming passes recovery and
-> over ten minutes of actual adaptive 4K delivery with complete saved A/V. Physical
-> phone/Watch reliability, full-match operation and other proxy hosts remain
-> unqualified. Not ready for a real game; see the current plan below.
+An iPhone films the match, keeps a clean recording on the phone, and streams the
+video to a small server. You keep score on that phone, on its paired Apple Watch,
+or on a second phone. The server adds the score to the video and sends it to
+YouTube.
 
-## Try the current system locally
+## Status
 
-The accepted simulator workflow includes native phone/Watch scoring, clean local
-recording/export, streaming through the overlay proxy, and both final MP4 outputs.
-On the configured development Mac, start a hands-on session without UI tests:
+The whole path works end to end on a development Mac: the iPhone and Watch apps
+score a match, the phone records and streams, the worker draws the score on the
+video and publishes it to a local stand-in for YouTube. It has not yet been used
+with a real YouTube stream, on a remote server, or through a full match. Work in
+progress: a simpler adaptive-quality ladder, a dark camera-first app redesign,
+configurable scorebug styles, and phone-to-phone match invites.
 
-```sh
-node scripts/simulator-lab.mjs --host YOUR_PRIVATE_LAN_IP --duration 1800
-```
-
-Follow the [setup steps](docs/fast-iteration.md#hands-on-simulator-session), or add
-`--source /absolute/prepared/input.mov` for representative footage. Use the software
-proxy locally. Simulator UHD, severe-congestion media and abrupt crash tails remain
-[explicit limits](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md#immediate-delivery-checkpoint).
-This working demo does not imply full-match or physical-device qualification.
-
-## Current plan
-
-- [Architecture and requirements](docs/architecture.md)
-- [Encoding formats and streaming protocols](docs/streaming-formats-and-protocols.md)
-- [Delivery milestones and acceptance gates](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-- [Simulator acceptance and tested platform matrix](docs/simulator-acceptance.md)
-- [Local, simulator, phone, and watch validation](docs/local-testing.md)
-- [Native scoring API progress](docs/native-scoring-api.md)
-- [Media control API and recovery evidence](docs/media-control-api.md)
-- [Real SRT relay access and process supervision](docs/relay-conformance.md)
-- [Native worker setup and local media checks](apps/home-daemon/README.md)
-- [Worker status and native display](docs/worker-status.md)
-- [Worker capabilities and startup preflight](docs/worker-capabilities.md)
-- [Local sustained media qualification](docs/media-soak.md)
-- [Capture SDK compatibility findings](docs/capture-sdk-compatibility.md)
-- [Milestone 0 verification results](docs/milestone-0-results.md)
-
-The plan prioritizes reliable local recording, adaptive live quality with a measured
-24 fps floor during viable connectivity, watch scoring, and a worker that runs on
-home or cloud systems. Qualify the Mac first, physical phone/watch next, and other
-worker hosts afterward. Target iPhone 14 and newer, with capability-based support for
-older phones; support the current OS and two prior release generations.
-
-## Components
+## How it fits together
 
 ```text
-ios/                    Native iPhone/Watch scoring, capture, archive and streaming
-apps/scoring/           Legacy PWA prototype; superseded by native scoring
-apps/control-plane/     Hono API and game state
-apps/home-daemon/       Broadcast worker (name retained from initial implementation)
-packages/protocol/      Shared TypeScript contracts
-docs/                   Design and validation plans
-infra/vps/              Persistent API and managed relay deployment configuration
+iPhone (film + record) ──SRT──▶ MediaMTX relay ──SRT──▶ worker (FFmpeg + score) ──RTMPS──▶ YouTube
+iPhone / Watch scoring ──HTTPS──▶ control plane (Hono + SQLite) ◀──HTTPS── worker
 ```
 
-The initial overlay is FFmpeg text. Animated graphics and player callouts are later
-work; there is no separate overlay app yet. Local recording, native scoring and both proxy outputs are implemented; remaining
-qualification is tracked in the plan.
+See [docs/architecture.md](docs/architecture.md) for details.
 
-## Development
+## Repository layout
 
-Node 22.13+ and the repository-pinned pnpm 9.15.0 are used for the TypeScript apps.
+```text
+ios/                  iPhone and Apple Watch apps (filming, recording, scoring)
+apps/control-plane/   HTTP API: matches, scoring, credentials, broadcast state
+apps/home-daemon/     Broadcast worker: pulls SRT, burns in the score, pushes RTMP(S)
+packages/protocol/    Shared TypeScript contracts and JSON fixtures
+vendor/MediaMTX/      Pinned MediaMTX relay with a small patch
+vendor/HaishinKit/    Pinned HaishinKit streaming library for the iPhone app
+infra/                Local fixture config and the VPS deployment
+scripts/              Integration tests run in CI
+```
+
+## Quickstart
+
+Requires Node 22.13+, pnpm 9.15.0, Docker, and FFmpeg with SRT and drawtext support.
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm test
 ```
 
-Use the [fast iteration guide](docs/fast-iteration.md) to launch a hands-on simulator
-session, select focused checks, or run the full native simulator checkpoint. The full suite is a release/integration tool,
-not the default after every edit. Existing local feature evidence is recorded in
-the [acceptance matrix](docs/simulator-acceptance.md).
+Run the API locally with a relay and a mock RTMP sink:
 
-Start the isolated fixtures with `pnpm local:up` and the local API with
-`pnpm dev:api`. On a clean host, first build the maintained ingest with
-`docker compose -f docker-compose.dev.yml build ingest`; retain an existing
-`scorebug/ingest:drain-v1` image. The mock output sink remains stock
-MediaMTX. Use `pnpm local:down` when finished. See [local testing](docs/local-testing.md)
-and [device testing](docs/device-testing.md) for build and 100 ms worker-report defaults.
+```sh
+docker compose -f docker-compose.dev.yml build ingest   # first time only
+pnpm local:up
+pnpm dev:api                                            # http://127.0.0.1:18787
+```
 
-For `pnpm test:apple` and Apple development, see the validation runbook's Xcode, XcodeGen, and simulator
-matrix. On this Mac use the installed `ffmpeg-full` binary for SRT and text overlays;
-the default `ffmpeg` lacks those capabilities. Native macOS workers can use
-VideoToolbox; a GPU is not required for lower-profile CPU operation.
-
-The original production hostname is `scorebug.live`; deployment remains unverified.
-Hosts and endpoints are configurable rather than fixed product requirements.
+See [docs/development.md](docs/development.md) for the worker, the iPhone apps, and
+the integration tests.
 
 ## License and security
 
-[MIT](LICENSE) © Conley Chaos LLC. See [SECURITY.md](SECURITY.md) for disclosures.
+[MIT](LICENSE) © Conley Chaos LLC. See [SECURITY.md](SECURITY.md) to report a
+vulnerability.

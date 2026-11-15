@@ -74,7 +74,7 @@ test('successful HTTP checks cannot hide a failed container cleanup', async () =
     response.writeHead(request.url === '/healthz' ? 200 : 401, {
       'Content-Type': 'application/json',
     });
-    response.end(JSON.stringify({ ok: true, home: false }));
+    response.end(JSON.stringify({ ok: true }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
