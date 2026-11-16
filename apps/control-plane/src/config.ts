@@ -1,9 +1,15 @@
 import { z } from 'zod';
 import { isIngestEndpointHost } from './ingest-endpoint.js';
 
+const workerId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+
 const schema = z
   .object({
-    PHONE_TOKEN: z.string().min(16),
+    /**
+     * Server-only key for match credentials and SRT secrets. Never a bearer
+     * token: owner phones authenticate with device tokens from setup links.
+     */
+    SERVER_SECRET: z.string().min(16),
     HOME_TOKEN: z.string().min(16),
     PORT: z.coerce.number().int().min(0).max(65535).default(8787),
     HOST: z.string().default('0.0.0.0'),
@@ -38,6 +44,12 @@ const schema = z
         return ['http:', 'https:'].includes(url.protocol) && !url.search && !url.hash;
       })
       .optional(),
+    /**
+     * The worker a broadcast goes to when the phone does not name one. Unset:
+     * the one connected worker. Compose passes the worker's own values.
+     */
+    WORKER_ID: workerId.optional(),
+    OUTPUT_ID: workerId.optional(),
     RELAY_API_URL: z.string().url().optional(),
     RELAY_API_USERNAME: z.string().min(1).optional(),
     RELAY_API_PASSWORD: z.string().min(1).optional(),
@@ -57,6 +69,12 @@ const schema = z
         ],
         message: 'Both publisher ingest settings are required together',
       });
+    if ((config.WORKER_ID === undefined) !== (config.OUTPUT_ID === undefined))
+      context.addIssue({
+        code: 'custom',
+        path: [config.WORKER_ID === undefined ? 'WORKER_ID' : 'OUTPUT_ID'],
+        message: 'Set WORKER_ID and OUTPUT_ID together',
+      });
     const fields = ['RELAY_API_URL', 'RELAY_API_USERNAME', 'RELAY_API_PASSWORD'] as const;
     if (fields.some((field) => config[field] !== undefined))
       for (const field of fields)
@@ -73,5 +91,10 @@ export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // Compose passes `${PUBLIC_URL:-}`: empty means unset.
-  return schema.parse({ ...env, PUBLIC_URL: env.PUBLIC_URL || undefined });
+  return schema.parse({
+    ...env,
+    PUBLIC_URL: env.PUBLIC_URL || undefined,
+    WORKER_ID: env.WORKER_ID || undefined,
+    OUTPUT_ID: env.OUTPUT_ID || undefined,
+  });
 }

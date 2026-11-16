@@ -35,7 +35,7 @@ Homebrew's `ffmpeg-full`.
 | ----------------------------- | ---------------------------------------------------------------- |
 | `CONTROL_PLANE_URL`           | API base URL                                                     |
 | `HOME_TOKEN`                  | Worker token, must match the control plane                       |
-| `WORKER_ID`, `OUTPUT_ID`      | Must match the broadcast selected in the app                     |
+| `WORKER_ID`, `OUTPUT_ID`      | This worker's IDs; the API sends it broadcasts for them          |
 | `OUTPUT_MODE`                 | `rtmp` (default), `record`, or `rtmp+record`                     |
 | `OUTPUT_URL`                  | RTMP(S) destination including stream key (RTMP modes)            |
 | `OUTPUT_RECORDING_DIR`        | Where to save overlaid MP4s (record modes)                       |

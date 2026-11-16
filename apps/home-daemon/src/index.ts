@@ -20,6 +20,7 @@ const reporter = new WorkerReporter(
   undefined,
   undefined,
   profile,
+  config.OUTPUT_ID,
 );
 const supervisor = new WorkerSupervisor({
   load: () => client.load(),

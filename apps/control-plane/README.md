@@ -19,31 +19,37 @@ with your own settings, copy `.env.example` to `.env` and run
 
 ## Endpoints
 
-| Method   | Path                                 | Auth                  |
-| -------- | ------------------------------------ | --------------------- |
-| GET      | `/healthz`                           | none                  |
-| POST     | `/v1/matches`                        | installation token    |
-| GET      | `/v1/matches/active`                 | installation token    |
-| POST     | `/v1/matches/:id/join`               | installation token    |
-| GET      | `/v1/matches/:id`                    | match credential      |
-| POST     | `/v1/matches/:id/commands`           | match credential      |
-| GET      | `/v1/matches/:id/commands/:id`       | match credential      |
-| GET/POST | `/v1/matches/:id/watch-pairings/...` | match credential      |
-| GET/POST | `/v1/matches/:id/media/...`          | match credential      |
-| GET/POST | `/v1/worker/...`                     | worker (`HOME_TOKEN`) |
+| Method   | Path                              | Auth                  |
+| -------- | --------------------------------- | --------------------- |
+| GET      | `/healthz`                        | none                  |
+| POST     | `/v1/matches`                     | owner device          |
+| GET      | `/v1/matches/active`              | owner device          |
+| POST     | `/v1/matches/:id/join`            | owner device          |
+| GET      | `/v1/matches/:id`                 | match credential      |
+| POST     | `/v1/matches/:id/commands`        | match credential      |
+| GET      | `/v1/matches/:id/commands/:id`    | match credential      |
+| GET/POST | `/v1/matches/:id/media/...`       | match credential      |
+| GET/POST | `/v1/worker/...`                  | worker (`HOME_TOKEN`) |
+| POST     | `/v1/setup/redeem`                | one-time setup code   |
+| \*       | `/v1/devices`, `/v1/destinations` | owner device          |
+
+Owner devices get their token by redeeming a setup link
+(`node dist/cli.js setup-link`); see [docs/api.md](../../docs/api.md).
 
 ## Configuration
 
-| Variable                                                    | Purpose                                       |
-| ----------------------------------------------------------- | --------------------------------------------- |
-| `PHONE_TOKEN`                                               | Installation token used by the apps to set up |
-| `HOME_TOKEN`                                                | Worker bearer token                           |
-| `PORT`, `HOST`                                              | Listen address (default `0.0.0.0:8787`)       |
-| `DATABASE_PATH`                                             | SQLite file (default `data/scorebug.sqlite`)  |
-| `INGEST_HOST`, `INGEST_PORT`                                | Relay SRT address handed to the worker        |
-| `INGEST_PUBLISH_HOST`, `INGEST_PUBLISH_PORT`                | Optional separate SRT address for the phone   |
-| `RELAY_API_URL`, `RELAY_API_USERNAME`, `RELAY_API_PASSWORD` | MediaMTX management API                       |
-| `CORS_ORIGINS`, `LOG_LEVEL`                                 | CORS origins (default `*`) and log level      |
+| Variable                                                    | Purpose                                      |
+| ----------------------------------------------------------- | -------------------------------------------- |
+| `SERVER_SECRET`                                             | Keys match credentials and SRT secrets       |
+| `WORKER_ID`, `OUTPUT_ID`                                    | Default worker for broadcasts (optional)     |
+| `PUBLIC_URL`                                                | Base URL in setup and invite links           |
+| `HOME_TOKEN`                                                | Worker bearer token                          |
+| `PORT`, `HOST`                                              | Listen address (default `0.0.0.0:8787`)      |
+| `DATABASE_PATH`                                             | SQLite file (default `data/scorebug.sqlite`) |
+| `INGEST_HOST`, `INGEST_PORT`                                | Relay SRT address handed to the worker       |
+| `INGEST_PUBLISH_HOST`, `INGEST_PUBLISH_PORT`                | Optional separate SRT address for the phone  |
+| `RELAY_API_URL`, `RELAY_API_USERNAME`, `RELAY_API_PASSWORD` | MediaMTX management API                      |
+| `CORS_ORIGINS`, `LOG_LEVEL`                                 | CORS origins (default `*`) and log level     |
 
 ## Test
 

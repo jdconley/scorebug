@@ -198,7 +198,7 @@ public actor BroadcastCommandCoordinator {
             guard !overflow, broadcast.generation == generation else { throw BroadcastCoordinatorError.invalidResponse }
             switch command.operation {
             case .start(let selection):
-                guard broadcast.desired == .running, broadcast.selection == selection else { throw BroadcastCoordinatorError.invalidResponse }
+                guard broadcast.desired == .running, selection.isMet(by: broadcast.selection) else { throw BroadcastCoordinatorError.invalidResponse }
             case .stop:
                 guard broadcast.desired == .stopped, broadcast.selection == nil else { throw BroadcastCoordinatorError.invalidResponse }
             }

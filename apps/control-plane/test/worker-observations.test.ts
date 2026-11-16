@@ -113,13 +113,13 @@ it('registers one current session per worker and retires replaced runs permanent
 it('uses scoped reads, worker-only writes, strict public telemetry and no durable mutations', async () => {
   const f = await fixture();
   const before = { match: f.matches.get('match'), media: f.matches.media.get('match') };
-  for (const token of [f.config.PHONE_TOKEN, f.scorer.token, f.capture.token, 'bad']) {
+  for (const token of [f.config.SERVER_SECRET, f.scorer.token, f.capture.token, 'bad']) {
     expect((await f.report(f.body, token)).status).toBe(401);
     expect(
       (await f.request('/v1/worker/sessions', token, { workerId: 'mac', runId: 'other' })).status,
     ).toBe(401);
   }
-  for (const token of [f.config.PHONE_TOKEN, f.config.HOME_TOKEN, 'bad'])
+  for (const token of [f.config.SERVER_SECRET, f.config.HOME_TOKEN, 'bad'])
     expect((await f.request('/v1/matches/match/media/status', token)).status).toBe(401);
   expect((await f.request('/v1/matches/other/media/status', f.scorer.token)).status).toBe(401);
   expect((await f.request('/v1/matches/match/media/status', f.capture.token)).status).toBe(200);

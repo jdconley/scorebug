@@ -20,39 +20,25 @@ export function bearer(expectedToken: string, role: string) {
   });
 }
 
-/**
- * Used for the MediaMTX `runOnReady` webhook and the home WS query-string token.
- * Returns true if the provided token matches; constant-time compare.
- */
-export function tokensMatch(provided: string, expected: string): boolean {
-  if (provided.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-}
-
 export function bearerToken(c: Context): string {
   return c.req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] ?? '';
 }
 
-/** `legacy` is the shared PHONE_TOKEN; retire it once every phone uses a setup link. */
-export type Owner = { kind: 'device'; deviceId: string } | { kind: 'legacy' };
+/** An enrolled owner phone. Setup links are the only way to become one. */
+export type Owner = { kind: 'device'; deviceId: string };
 export type OwnerEnv = { Variables: { owner: Owner } };
 
-/** Owner identity for a bearer token: an enrolled, unrevoked device or the legacy PHONE_TOKEN. */
-export function resolveOwner(
-  token: string,
-  legacyToken: string,
-  account: AccountStore,
-): Owner | undefined {
+/** Owner identity for a bearer token: an enrolled, unrevoked device. */
+export function resolveOwner(token: string, account: AccountStore): Owner | undefined {
   if (!token) return undefined;
-  if (tokensMatch(token, legacyToken)) return { kind: 'legacy' };
   const device = account.authenticateDevice(token);
   return device ? { kind: 'device', deviceId: device.id } : undefined;
 }
 
 /** Owner-only routes. The 401 keeps the historical `installation` role label. */
-export function ownerAuth(legacyToken: string, account: AccountStore) {
+export function ownerAuth(account: AccountStore) {
   return createMiddleware<OwnerEnv>(async (c, next) => {
-    const owner = resolveOwner(bearerToken(c), legacyToken, account);
+    const owner = resolveOwner(bearerToken(c), account);
     if (!owner) return c.json({ error: 'unauthorized', role: 'installation' }, 401);
     c.set('owner', owner);
     await next();

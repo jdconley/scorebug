@@ -33,8 +33,12 @@ services:
     image: scorebug/control-plane:${SCOREBUG_RELEASE:-local}
     restart: unless-stopped
     environment:
-      PHONE_TOKEN: ${PHONE_TOKEN:?Set a private phone token}
+      # Keys match credentials and SRT secrets. Not a bearer token.
+      SERVER_SECRET: ${SERVER_SECRET:?Set a private server secret (re-run infra/install.sh)}
       HOME_TOKEN: ${HOME_TOKEN:?Set a private worker token}
+      # The worker a phone's broadcast goes to; the same values the worker gets.
+      WORKER_ID: ${WORKER_ID:-local-worker}
+      OUTPUT_ID: ${OUTPUT_ID:-local-output}
       PORT: 8787
       HOST: 0.0.0.0
       DATABASE_PATH: /data/scorebug.sqlite

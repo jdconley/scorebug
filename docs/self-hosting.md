@@ -212,12 +212,6 @@ At the game you never need the server: the filming phone starts the match and
 shares an invite (QR code, link or a short code like `K7P-4QX`) so other phones
 can keep score. See [the API reference](api.md).
 
-**Older app versions** without setup links still work with the shared
-installation token: open **Film → streaming settings** and enter the Server,
-Installation token, Worker and Output. `infra/install.sh phone` prints the
-server, worker and output, and how to read the token from `infra/vps/.env`.
-Treat that token like a password.
-
 ## Test without a phone
 
 Before a real match, you can push a test pattern through the whole chain. Run
@@ -229,15 +223,17 @@ node infra/smoke-broadcast.mjs start > publish-url.txt
 ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440 \
   -t 120 -c:v libx264 -preset veryfast -tune zerolatency -g 60 -b:v 3M -pix_fmt yuv420p \
   -c:a aac -b:a 128k -f mpegts "$(cat publish-url.txt)"
-node infra/smoke-broadcast.mjs stop
+node infra/smoke-broadcast.mjs stop    # also revokes the test phone
 rm publish-url.txt
 ```
 
-Without Node on the server, run the script in a container instead:
-`docker run --rm -v "$PWD/infra:/infra" node:22-alpine node /infra/smoke-broadcast.mjs start`.
+Without Node on the server, run the script in a container instead, and give it a
+setup link from `infra/install.sh phone` (the container cannot mint one):
+`docker run --rm -v "$PWD/infra:/infra" node:22-alpine node /infra/smoke-broadcast.mjs start 'scorebug://connect?…'`.
 
-`smoke-broadcast.mjs start` creates a test match and starts a broadcast for your
-worker and output exactly as the phone does, and prints the SRT publish URL
+`smoke-broadcast.mjs start` sets itself up as a phone with a one-time setup link,
+creates a test match and starts a broadcast exactly as the phone does (the server
+picks your worker), and prints the SRT publish URL
 (which contains a one-time secret). Within a few seconds the worker log shows
 `producing_output` and the test pattern with a `HOME 0-0 AWAY` scorebug appears
 on your YouTube stream preview. Point your output at a private or unlisted
@@ -340,11 +336,11 @@ Rotate if a token leaked or a phone was lost, between matches (not while live):
 infra/install.sh --rotate-secrets
 ```
 
-This replaces all four secrets and restarts the stack. Afterwards:
+This replaces the server secrets (`SERVER_SECRET`, `HOME_TOKEN`,
+`RELAY_API_PASSWORD`) and restarts the stack. Afterwards:
 
-- phones set up with a setup link keep working (their credentials are stored in
-  the database; revoke a lost one with `revoke-device`, see Phone setup),
-- phones on an older app version need the new installation token,
+- phones keep working (their credentials are stored in the database; revoke a
+  lost one with `revoke-device`, see Phone setup),
 - a split home worker needs the new `infra/vps/worker.env` copied over and
   `infra/install.sh worker --env-file ./worker.env` run again (all-in-one picks
   it up automatically).
@@ -364,9 +360,8 @@ certificate. Check that the domain's DNS points at this server
 firewall, and look at `docker compose -f infra/vps/docker-compose.yml logs caddy`.
 Fix it, then run `infra/install.sh status`.
 
-**The phone says the server rejected it.** Its credential was revoked, or (older
-app versions) the installation token is wrong. Set it up again with a new link
-from `infra/install.sh phone`.
+**The phone says the server rejected it.** Its credential was revoked. Set it up
+again with a new link from `infra/install.sh phone`.
 
 **A setup link says "already used" or "expired".** Each link sets up one phone
 within 24 hours. Print a new one with `infra/install.sh phone`.

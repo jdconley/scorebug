@@ -27,7 +27,7 @@ const environment = {
   SCOREBUG_RELEASE: project,
   CORS_ORIGINS: 'https://localhost.invalid',
   ...Object.fromEntries(
-    ['PHONE_TOKEN', 'HOME_TOKEN', 'RELAY_API_PASSWORD'].map((key) => [
+    ['SERVER_SECRET', 'HOME_TOKEN', 'RELAY_API_PASSWORD'].map((key) => [
       key,
       randomBytes(32).toString('hex'),
     ]),
@@ -165,9 +165,9 @@ try {
   ).token;
   assert.equal((await request('/v1/devices', owner)).devices.length, 1);
   evidence.checks.cliSetupLinkEnrollsOwnerPhone = true;
-  // The enrolled phone creates the match; the legacy PHONE_TOKEN still drives media below.
+  // The enrolled phone is the owner: it creates the match and drives media below.
   const matchId = randomUUID(),
-    token = environment.PHONE_TOKEN;
+    token = owner;
   const team = { name: 'QA', shortName: 'QA', color: '#123456' };
   await request('/v1/matches', owner, {
     id: matchId,

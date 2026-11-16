@@ -10,7 +10,7 @@ flowchart LR
     Relay -->|SRT read| Worker[Broadcast worker: FFmpeg + score]
     Worker -->|RTMPS| YouTube[YouTube or local sink]
     Phone -->|HTTPS| API[Control plane + SQLite]
-    Watch[Apple Watch scoring] -->|HTTPS| API
+    Watch[Apple Watch scoring] <-->|WatchConnectivity| Phone
     Scorer[Second iPhone scoring] -->|HTTPS| API
     Worker -->|HTTPS poll + status| API
     API -->|relay paths + credentials| Relay
@@ -25,7 +25,9 @@ flowchart LR
   on the network: it keeps running if the stream, relay, API or worker fails, and
   finished recordings can be exported as normal MP4 files.
 - The same app scores a match. A second iPhone can join and take over scoring.
-- **ScorebugWatch** scores from the wrist, paired to either iPhone.
+- **ScorebugWatch** scores from the wrist. It mirrors the match open on its paired
+  iPhone (filming or scoring) over WatchConnectivity and sends taps back to that
+  phone; it holds no server credential.
 - Scoring commands go to the control plane over HTTPS. Each command carries an ID and
   the expected revision, and a durable outbox retries after network loss without
   double-counting points.
@@ -37,11 +39,12 @@ flowchart LR
 A Hono server on Node 22 with SQLite storage.
 
 - `/v1/matches`: create, join and read the active match, send scoring commands,
-  and look up the outcome of a command. Installation token for setup; per-device
-  match credentials after that.
-- `/v1/matches/:id/watch-pairings`: issue match-scoped Watch credentials.
-- `/v1/matches/:id/media`: recording association, broadcast intent (start/stop,
-  selected worker and output) and the worker status the app shows (`idle`,
+  and look up the outcome of a command. Owner device token (from a setup link) for
+  setup; per-device match credentials after that.
+- `/v1/setup`, `/v1/devices`, `/v1/destinations`, `/v1/invites`: setup links,
+  owner phones, YouTube destinations and match invites (see [api.md](api.md)).
+- `/v1/matches/:id/media`: recording association, broadcast intent (start/stop;
+  the server picks the worker and output) and the worker status the app shows (`idle`,
   `starting`, `live`, `reconnecting`, `error`, plus output resolution and bitrate).
 - `/v1/worker`: the worker's assignment, relay read credentials, and status
   reports (worker token).
@@ -88,14 +91,7 @@ In scope: one active match per installation, one camera, one selected worker, a 
 seconds of latency. Out of scope: multiple cameras, multi-tenant hosting,
 sub-second latency, automatic failover between hosts.
 
-## In progress
-
-- **Recording and stream quality:** 1080p recording by default with 4K as an
-  opt-in; a simple adaptive ladder for the live stream that steps down on congestion
-  and back up when the connection recovers.
-- **App redesign:** a dark, camera-first iPhone app, a confirm prompt at set point,
-  and phone-to-phone match invites.
-- **Scorebug styles:** configurable overlay styles in the worker.
+## Status
 
 Not yet exercised: a real YouTube stream, a remote server deployment, and a full
 match from start to finish.

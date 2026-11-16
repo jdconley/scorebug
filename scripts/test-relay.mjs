@@ -9,7 +9,7 @@ import { createSocket } from 'node:dgram';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mediaTools, command } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
-import { startScoringTestServer, scoringTestToken } from './scoring-test-server.mjs';
+import { enrollOwner, startScoringTestServer, scoringTestSecret } from './scoring-test-server.mjs';
 import { IngestRelay, deriveIngestGrant } from '../apps/control-plane/src/ingest.ts';
 
 const checkCancellation = cancellation();
@@ -316,7 +316,7 @@ try {
   const database = join(directory, 'matches.sqlite');
   // Startup must remove a crash-orphaned path while preserving other installations.
   const orphan = deriveIngestGrant(
-    scoringTestToken,
+    scoringTestSecret,
     randomUUID(),
     selection,
     1,
@@ -326,6 +326,7 @@ try {
   await relay.ensure(orphan);
   await relay.ensure(grant);
   api = await startScoringTestServer(database, environment);
+  const owner = await enrollOwner(api.baseURL, database);
   await until(
     async () => !(await relay.list(orphan.path.slice(0, 26))).includes(orphan.path),
     'startup orphan revocation',
@@ -369,13 +370,13 @@ try {
   console.log('Startup orphan cleanup and installation isolation verified.');
   const matchId = randomUUID();
   const team = { name: 'Relay test', shortName: 'QA', color: '#123456' };
-  const created = await request('/v1/matches', scoringTestToken, {
+  const created = await request('/v1/matches', owner, {
     id: matchId,
     deviceId: 'scorer',
     teams: { home: team, away: team },
     rules: { bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
   });
-  const capture = await request(`/v1/matches/${matchId}/join`, scoringTestToken, {
+  const capture = await request(`/v1/matches/${matchId}/join`, owner, {
     deviceId: 'phone',
     role: 'capture',
   });
@@ -385,7 +386,7 @@ try {
     status: 'recording',
     startedAt: new Date().toISOString(),
   });
-  await request(`/v1/matches/${matchId}/media/commands`, scoringTestToken, {
+  await request(`/v1/matches/${matchId}/media/commands`, owner, {
     commandId: 'start',
     gameId: matchId,
     expectedGeneration: 0,
@@ -500,7 +501,7 @@ try {
       },
     ],
   ]) {
-    const outcome = await request(`/v1/matches/${matchId}/media/commands`, scoringTestToken, {
+    const outcome = await request(`/v1/matches/${matchId}/media/commands`, owner, {
       commandId: `generation-${expectedGeneration}`,
       gameId: matchId,
       expectedGeneration,

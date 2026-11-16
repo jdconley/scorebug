@@ -44,6 +44,8 @@ final class MediaClientTests: XCTestCase {
         let selection = BroadcastSelection(workerId: "mac", outputId: "local-sink", captureDeviceId: "phone", recordingId: "archive-1")
         let cases: [(BroadcastOperation, String)] = [
             (.start(selection: selection), #"{"type":"start","selection":{"workerId":"mac","outputId":"local-sink","captureDeviceId":"phone","recordingId":"archive-1"}}"#),
+            (.start(selection: BroadcastSelection(captureDeviceId: "phone", recordingId: "archive-1")),
+             #"{"type":"start","selection":{"captureDeviceId":"phone","recordingId":"archive-1"}}"#),
             (.stop, #"{"type":"stop"}"#),
         ]
         for (operation, expected) in cases {

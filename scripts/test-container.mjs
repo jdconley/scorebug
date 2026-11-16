@@ -34,7 +34,7 @@ try {
     '-p',
     '127.0.0.1::8787',
     '-e',
-    'PHONE_TOKEN=qa-phone-token-not-production',
+    'SERVER_SECRET=qa-server-secret-not-production',
     '-e',
     'HOME_TOKEN=qa-home-token-not-production',
     image,

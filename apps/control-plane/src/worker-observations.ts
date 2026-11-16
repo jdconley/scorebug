@@ -12,6 +12,10 @@ import {
 } from '@scorebug/protocol';
 import { canonical } from './canonical-json.js';
 import type { MediaStore } from './media-store.js';
+import { MediaStateError } from './media-state.js';
+
+/** A worker that polled within this window counts as connected. Workers poll every 500 ms. */
+export const WORKER_CONNECTED_MS = 15_000;
 
 export class WorkerObservationError extends Error {
   constructor(
@@ -39,7 +43,12 @@ type Report = {
 };
 type Counters = Pick<WorkerObservation, 'frame' | 'outTimeUs' | 'scoreRevision'>;
 type Session = { runId: string; sessionId: string; report?: Report };
-type Worker = { current: Session; retiredRuns: Set<string>; retiredSessions: Set<string> };
+type Worker = {
+  current: Session;
+  retiredRuns: Set<string>;
+  retiredSessions: Set<string>;
+  outputId?: string;
+};
 
 function phaseOf(state: WorkerMediaStatus['state'], wasLive: boolean): WorkerPhase {
   switch (state) {
@@ -67,15 +76,19 @@ function phaseOf(state: WorkerMediaStatus['state'], wasLive: boolean): WorkerPha
  * until the worker reports again (within one report interval). */
 export class WorkerObservations {
   private readonly workers = new Map<string, Worker>();
+  /** Monotonic time each worker ID last polled or registered. */
+  private readonly lastSeen = new Map<string, number>();
   constructor(
     private readonly media: MediaStore,
     private readonly now: () => number = Date.now,
     private readonly monotonic: () => number = () => performance.now(),
   ) {}
 
-  register({ workerId, runId }: WorkerSessionRequest): WorkerSessionResponse {
+  register({ workerId, runId, outputId }: WorkerSessionRequest): WorkerSessionResponse {
     const worker = this.workers.get(workerId);
     if (worker?.retiredRuns.has(runId)) throw new WorkerObservationError('worker_session_retired');
+    this.seen(workerId);
+    if (worker && outputId !== undefined) worker.outputId = outputId;
     const serverTime = new Date(this.now()).toISOString();
     if (worker?.current.runId === runId) return { sessionId: worker.current.sessionId, serverTime };
     const current: Session = { runId, sessionId: randomUUID() };
@@ -85,9 +98,46 @@ export class WorkerObservations {
       worker.retiredSessions.add(worker.current.sessionId);
       worker.current = current;
     } else {
-      this.workers.set(workerId, { current, retiredRuns: new Set(), retiredSessions: new Set() });
+      this.workers.set(workerId, {
+        current,
+        retiredRuns: new Set(),
+        retiredSessions: new Set(),
+        ...(outputId === undefined ? {} : { outputId }),
+      });
     }
     return { sessionId: current.sessionId, serverTime };
+  }
+
+  /** A worker polled for its assignment. */
+  seen(workerId: string): void {
+    this.lastSeen.set(workerId, this.monotonic());
+  }
+
+  /**
+   * Fills a start selection that leaves out workerId or outputId: the configured
+   * worker (WORKER_ID/OUTPUT_ID) if set, else the one connected worker. The output
+   * is the one that worker registered, else the configured one.
+   */
+  selectWorker(
+    requested: { workerId?: string | undefined; outputId?: string | undefined },
+    configured?: { workerId: string; outputId: string },
+  ): { workerId: string; outputId: string } {
+    let workerId = requested.workerId ?? configured?.workerId;
+    if (workerId === undefined) {
+      const now = this.monotonic();
+      const connected = [...this.lastSeen]
+        .filter(([, at]) => now - at <= WORKER_CONNECTED_MS)
+        .map(([id]) => id);
+      if (connected.length === 0) throw new MediaStateError('no_worker');
+      if (connected.length > 1) throw new MediaStateError('worker_ambiguous');
+      workerId = connected[0]!;
+    }
+    const outputId =
+      requested.outputId ??
+      this.workers.get(workerId)?.outputId ??
+      (configured?.workerId === workerId ? configured.outputId : undefined);
+    if (outputId === undefined) throw new MediaStateError('output_unknown');
+    return { workerId, outputId };
   }
 
   report(body: WorkerObservationRequest): WorkerObservationResponse {

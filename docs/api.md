@@ -11,15 +11,15 @@ scoring helpers. Media and worker endpoints are described in the code
 
 ## Credentials
 
-| Credential           | How a phone gets it                       | Can                                                                                                          |
-| -------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Owner device**     | Redeem a one-time setup link              | Create matches, join them as `score`/`capture`, start/stop broadcasts, manage destinations, devices, invites |
-| Legacy `PHONE_TOKEN` | Typed into older app versions             | Same as an owner device. Kept until the redesigned app ships; then retire it                                 |
-| Match `capture`      | `POST /v1/matches/:id/join` (owner)       | Report recordings, publish SRT, mint/list/revoke invites for that match                                      |
-| Match `score`        | Creating the match, joining, or an invite | Send scoring commands and take over scoring for that match only                                              |
+| Credential       | How a phone gets it                       | Can                                                                                                          |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Owner device** | Redeem a one-time setup link              | Create matches, join them as `score`/`capture`, start/stop broadcasts, manage destinations, devices, invites |
+| Match `capture`  | `POST /v1/matches/:id/join` (owner)       | Report recordings, publish SRT, mint/list/revoke invites for that match                                      |
+| Match `score`    | Creating the match, joining, or an invite | Send scoring commands and take over scoring for that match only                                              |
 
-Owner device tokens are long-lived and revocable. The server stores only
-SHA-256 hashes of tokens and keyed hashes (HMAC) of setup and invite codes.
+Owner device tokens are long-lived and revocable, and a setup link is the only
+way to get one. The server stores only SHA-256 hashes of tokens and keyed hashes
+(HMAC) of setup and invite codes.
 
 ## Links
 
@@ -68,7 +68,7 @@ Errors: `400 invalid_request`, `401 setup_code_invalid`, `409 setup_code_used`,
 **Devices** (owner)
 
 - `GET /v1/devices` → `{ devices: Device[] }`
-- `GET /v1/devices/me` → `{ role: "owner", legacy, device }` (check a stored token)
+- `GET /v1/devices/me` → `{ role: "owner", device }` (check a stored token)
 - `DELETE /v1/devices/:id` → `{ device }` with `revokedAt` set. Takes effect on
   the next request.
 
@@ -189,6 +189,21 @@ defaults to the first 8 characters of the team name.
 
 ## Worker
 
+### Which worker a broadcast uses
+
+`POST /v1/matches/:id/media/commands` (owner) starts a broadcast with
+`{ type: "start", selection: { captureDeviceId, recordingId, workerId?, outputId? } }`.
+The app leaves `workerId` and `outputId` out, and the server fills them in:
+
+1. `WORKER_ID`/`OUTPUT_ID` from the API's environment, when set (Compose passes
+   the same values the worker gets);
+2. otherwise the one worker that polled in the last 15 seconds, with the output it
+   registered.
+
+The outcome is `accepted: false` with `no_worker`, `worker_ambiguous` (several
+workers connected) or `output_unknown` when it cannot tell. A retry of the same
+command replays its first outcome.
+
 `GET /v1/worker/snapshot` (worker token) adds `assignment.output`:
 `{ destinationId, publishUrl }`. `publishUrl` includes the stream key;
 `null` tells the worker to use its `OUTPUT_URL`.
@@ -198,9 +213,9 @@ defaults to the first 8 characters of the team name.
 The worker posts its state about once a second (`WORKER_REPORT_INTERVAL_MS`,
 default 1000):
 
-- `POST /v1/worker/sessions { workerId, runId }` → `{ sessionId, serverTime }`.
+- `POST /v1/worker/sessions { workerId, runId, outputId? }` → `{ sessionId, serverTime }`.
   A new `runId` for the same worker retires the old run; its reports get 409
-  `worker_session_retired`.
+  `worker_session_retired`. `outputId` is the worker's `OUTPUT_ID`.
 - `POST /v1/worker/observations { workerId, sessionId, sequence, observation }`,
   where `observation` is `{ gameId, generation, state, reason, attempt, frame,
 outTimeUs, scoreRevision, output? }` and `output` is `{ width, height, fps,
