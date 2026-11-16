@@ -17,10 +17,9 @@ struct LiveScreen: View {
         self.app = app
         self.session = session
         self.watch = watch
-        let config = app.config ?? ServerConfig(endpoint: session.endpoint, ownerToken: nil, deviceId: session.credential.deviceId, deviceName: "")
         let recordIn4K = app.preferences.lastDraft?.recordIn4K ?? false
         let preferences = app.preferences
-        _live = StateObject(wrappedValue: LiveModel(session: session, config: config, scoreboard: .make(session: session),
+        _live = StateObject(wrappedValue: LiveModel(session: session, access: app.access(teamId: session.teamId), scoreboard: .make(session: session),
                                                     film: film, streaming: streaming, preferences: preferences,
                                                     recordIn4K: recordIn4K))
     }
@@ -44,7 +43,7 @@ struct LiveScreen: View {
         } message: {
             Text("Stops recording and the stream. The score is saved as it stands.")
         }
-        .sheet(isPresented: $inviting) { InviteSheet(session: session, ownerToken: app.config?.ownerToken) }
+        .sheet(isPresented: $inviting) { InviteSheet(session: session, access: app.access(teamId: session.teamId)) }
         .task {
             OrientationLock.set(.landscape, rotateTo: .landscapeRight)
             board.feedback = { Haptics.play($0) }
@@ -101,7 +100,7 @@ struct LiveScreen: View {
                 statusPills
                 Spacer(minLength: 12)
                 HStack(spacing: 8) {
-                    if session.kind == .filming, app.config?.isOwner == true {
+                    if session.kind == .filming, app.access(teamId: session.teamId) != nil {
                         Button { inviting = true } label: {
                             ViewThatFits {
                                 Label("Invite scorer", systemImage: "person.badge.plus")

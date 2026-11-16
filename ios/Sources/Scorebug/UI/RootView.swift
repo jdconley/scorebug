@@ -23,8 +23,8 @@ struct RootView: View {
 
     @ViewBuilder private var content: some View {
         switch app.route {
-        case .connect:
-            ConnectView(app: app)
+        case .signIn:
+            SignInView(app: app)
         case .home:
             HomeView(app: app, film: film)
         case .filming(let session):
@@ -86,11 +86,10 @@ private struct EngineMonitors: ViewModifier {
 }
 }
 
-/// A link never changes servers or joins a match without a tap.
+/// A link never joins a team or a match without a tap.
 private struct LinkConfirmSheet: View {
     let link: AppModel.PendingLink
     @ObservedObject var app: AppModel
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 20) {
@@ -111,27 +110,24 @@ private struct LinkConfirmSheet: View {
         .background(Color(hex: "#111418").ignoresSafeArea())
     }
 
-    private var host: String {
-        switch link {
-        case .connect(let server, _): server.url.host ?? server.url.absoluteString
-        case .join(.link(let server, _)): server.url.host ?? server.url.absoluteString
-        case .join(.code): app.config?.host ?? "your server"
-        }
-    }
-    private var icon: String { if case .connect = link { "server.rack" } else { "person.2.fill" } }
-    private var title: String { if case .connect = link { "Connect to \(host)?" } else { "Help score a match?" } }
+    private var icon: String { if case .teamInvite = link { "person.3.fill" } else { "person.2.fill" } }
+    private var title: String { if case .teamInvite = link { "Join a team on Scorebug?" } else { "Help score a match?" } }
     private var detail: String {
         switch link {
-        case .connect:
-            if let current = app.config, current.isOwner, current.host != host {
-                return "This phone uses \(current.host) now. Connecting switches it to \(host)."
-            }
-            return "This phone will create matches, film and stream through this server."
-        case .join:
-            return "You'll score the match on \(host) from this phone. No camera needed."
+        case .teamInvite:
+            return app.account == nil
+                ? "Sign in with Google to join the team. You'll see its matches and can film and score them."
+                : "You'll see the team's matches and can film and score them from this phone."
+        case .matchJoin:
+            return "You'll score the match from this phone. No camera or account needed."
         }
     }
-    private var confirm: String { if case .connect = link { "Connect" } else { "Join and score" } }
+    private var confirm: String {
+        switch link {
+        case .teamInvite: app.account == nil ? "Sign in and join" : "Join team"
+        case .matchJoin: "Join and score"
+        }
+    }
 }
 
 enum OrientationLock {

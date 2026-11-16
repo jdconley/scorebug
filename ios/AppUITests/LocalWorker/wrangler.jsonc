@@ -1,0 +1,22 @@
+// Simulator QA only: the screenshot tour's local Worker (see ios/README.md). Not deployed.
+{
+  "name": "scorebug-dev",
+  "main": "dev-worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "PUBLIC_URL": "http://127.0.0.1:8787",
+    "APP_AUTH_REDIRECT": "scorebug://auth",
+    "GOOGLE_CLIENT_ID": "dev",
+    "GOOGLE_CLIENT_SECRET": "dev",
+    "SERVER_SECRET": "local-dev-secret-local-dev-secret-0123456789",
+    "ADMIN_EMAILS": "jd@example.com"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "scorebug-dev", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "../../../apps/control-plane/migrations" }],
+  "durable_objects": { "bindings": [{ "name": "TEAM", "class_name": "TeamObject" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TeamObject"] }],
+  "ratelimits": [
+    { "name": "AUTH_LIMIT", "namespace_id": "1001", "simple": { "limit": 1000, "period": 60 } },
+    { "name": "REDEEM_LIMIT", "namespace_id": "1002", "simple": { "limit": 1000, "period": 60 } }
+  ]
+}

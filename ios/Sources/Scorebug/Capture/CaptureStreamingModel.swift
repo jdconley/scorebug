@@ -15,6 +15,8 @@ import ScorebugStreaming
 
     @Published var endpoint = "http://localhost:18787"
     @Published var installationToken = ""
+    /// Team match routes (`/v1/teams/:teamId/matches`) for the active match and broadcast commands.
+    @Published var teamId: String?
     @Published private(set) var localState: LocalState = .idle
     @Published private(set) var message: String?
     @Published private(set) var connectedGameID: String?
@@ -124,7 +126,7 @@ import ScorebugStreaming
             setup = try storage.load()
             if var saved = setup {
                 _ = try ScoringEndpoint(saved.endpoint)
-                endpoint = saved.endpoint; installationToken = saved.installationToken
+                endpoint = saved.endpoint; installationToken = saved.installationToken; teamId = saved.teamId
                 for index in saved.reports.indices where saved.reports[index].report.status == .recording {
                     saved.reports[index].report.sequence += 1
                     saved.reports[index].report.status = .interrupted
@@ -179,12 +181,12 @@ import ScorebugStreaming
         guard !busy, !stopping, !publisherStopping, !controlBusy else { return }
         await restore()
         do {
-            if setup == nil || endpoint != setup?.endpoint || installationToken != setup?.installationToken {
+            if setup == nil || endpoint != setup?.endpoint || installationToken != setup?.installationToken || teamId != setup?.teamId {
                 guard canChangeSetup else { throw CaptureControlError.unresolved }
                 let valid = try ScoringEndpoint(endpoint)
                 guard !installationToken.isEmpty else { throw CaptureControlError.noSetup }
                 setup = SavedCaptureSetup(endpoint: valid.url.absoluteString, installationToken: installationToken,
-                    deviceId: setup?.deviceId ?? UUID().uuidString, credential: nil, reports: [])
+                    deviceId: setup?.deviceId ?? UUID().uuidString, credential: nil, reports: [], teamId: teamId)
                 try persist()
                 coordinator = nil; connectedGameID = nil; commandState = nil
             }
@@ -499,7 +501,7 @@ import ScorebugStreaming
     }
     private func clientForSetup() throws -> MatchHTTPClient {
         guard let setup else { throw CaptureControlError.noSetup }
-        return clientFactory(try ScoringEndpoint(setup.endpoint))
+        return clientFactory(try ScoringEndpoint(setup.endpoint)).team(setup.teamId)
     }
     private func check(_ context: CurrentCapture, _ attempt: UUID) throws {
         try Task.checkCancellation()

@@ -2,15 +2,18 @@ import Foundation
 import ScorebugCore
 import Security
 
-/// The one server this phone uses. An owner token is present after setup-link
-/// enrollment; a phone that only joined a match through an invite has none.
-struct ServerConfig: Codable, Equatable {
+/// The signed-in person and their Scorebug session token (revocable, kept in the Keychain).
+struct Account: Codable, Equatable {
+    var token: String
+    var person: Person
+}
+
+/// What a team member's phone needs for a team's match routes.
+struct TeamAccess: Equatable {
     var endpoint: String
-    var ownerToken: String?
+    var token: String
+    var teamId: String
     var deviceId: String
-    var deviceName: String
-    var isOwner: Bool { ownerToken?.isEmpty == false }
-    var host: String { URL(string: endpoint)?.host ?? endpoint }
 }
 
 /// A match this phone is filming or scoring; restored after a relaunch.
@@ -22,6 +25,8 @@ struct MatchSession: Codable, Equatable {
     var recordOnly: Bool
     var layout: CourtLayout
     var startedAt: Date
+    /// The team whose match this is; nil when joined with a match code (no account).
+    var teamId: String? = nil
 
     var endpointScope: String { "\(endpoint)|\(credential.deviceId)" }
 }
@@ -42,9 +47,12 @@ extension SecureStore {
 }
 
 enum StoreKey {
-    static let server = "server"
+    static let account = "account"
     static let session = "session"
-    static let enrollmentDeviceId = "enrollment-device"
+    /// This install's device ID for match credentials, kept across sign-outs.
+    static let deviceId = "device-id"
+    /// Written by the self-hosted builds; cleared on launch.
+    static let legacy = ["server", "enrollment-device"]
 }
 
 struct SecureStoreError: Error, Equatable { let status: Int32 }
@@ -119,7 +127,7 @@ struct MatchRecap: Codable, Equatable {
     var title: String { "\(team1.shortName) \(team1.sets)–\(team2.sets) \(team2.shortName)" }
 }
 
-/// Non-secret preferences: the last New match sheet and the last match card.
+/// Non-secret preferences: the last New match sheet, the last match card and (Debug) the server.
 final class AppPreferences {
     private let defaults: UserDefaults
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
@@ -138,6 +146,11 @@ final class AppPreferences {
     var lastMatch: MatchRecap? {
         get { read("scorebug.lastMatch") }
         set { write(newValue, "scorebug.lastMatch") }
+    }
+    /// Debug builds only: another server for local development, like http://localhost:8787.
+    var serverOverride: String? {
+        get { defaults.string(forKey: "scorebug.serverOverride") }
+        set { defaults.set(newValue, forKey: "scorebug.serverOverride") }
     }
     /// Recording ID → the match it filmed, for the Recordings list.
     var recordingMatches: [String: MatchRecap] {

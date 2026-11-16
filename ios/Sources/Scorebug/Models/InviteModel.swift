@@ -13,16 +13,23 @@ import ScorebugCore
         self.clientFactory = clientFactory
     }
 
-    /// The owner token can mint invites for any match; a joined scorer phone can't.
-    func create(session: MatchSession, ownerToken: String?) async {
+    /// Any team member signed in on this phone can mint a code for the team's match;
+    /// a phone that joined with a code can't.
+    func create(session: MatchSession, access: TeamAccess?) async {
         guard !busy else { return }
-        guard let ownerToken else { error = "Only the phone that started the match can invite scorers."; return }
+        guard let access, session.teamId == access.teamId else {
+            error = "Only a team member's phone can invite scorers."
+            return
+        }
         busy = true; error = nil
         defer { busy = false }
         do {
-            let issued = try await clientFactory(try ScoringEndpoint(session.endpoint))
-                .createInvite(gameId: session.credential.gameId, token: ownerToken)
-            guard ScorebugLink(string: issued.link) != nil else { throw MatchClientError.invalidResponse }
+            let server = try ScoringEndpoint(session.endpoint)
+            let issued = try await clientFactory(server).team(access.teamId)
+                .createInvite(gameId: session.credential.gameId, token: access.token)
+            guard case .matchJoin? = ScorebugLink(string: issued.link, hosts: ScorebugLink.hosts(for: server)) else {
+                throw MatchClientError.invalidResponse
+            }
             invite = issued
         } catch {
             self.error = FriendlyError.message(error)

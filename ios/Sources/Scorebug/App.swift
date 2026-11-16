@@ -28,7 +28,7 @@ struct ScorebugApp: App {
         // Simulator QA only: start from a fresh install state.
         if ProcessInfo.processInfo.environment["SCOREBUG_TEST_RESET"] == "1" {
             let keychain = KeychainStore()
-            for key in [StoreKey.server, StoreKey.session, StoreKey.enrollmentDeviceId] { try? keychain.set(nil, for: key) }
+            for key in [StoreKey.account, StoreKey.session] { try? keychain.set(nil, for: key) }
             UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "")
         }
         #endif
@@ -48,8 +48,15 @@ struct ScorebugApp: App {
         film.onCaptureFinished = { [weak streaming] context, interrupted in streaming?.captureFinished(context, interrupted: interrupted) }
         _film = StateObject(wrappedValue: film)
         _streaming = StateObject(wrappedValue: streaming)
-        _app = StateObject(wrappedValue: AppModel(store: KeychainStore(), preferences: AppPreferences(),
-                                                  deviceName: { UIDevice.current.name }))
+        let preferences = AppPreferences()
+        var server = try! ScoringEndpoint(ScorebugService.url.absoluteString)
+        #if DEBUG
+        // The Debug menu's server, or SCOREBUG_TEST_API_URL for simulator QA.
+        let environment = ProcessInfo.processInfo.environment["SCOREBUG_TEST_API_URL"].flatMap { $0.isEmpty ? nil : $0 }
+        if let address = environment ?? preferences.serverOverride, let custom = try? ScoringEndpoint(address) { server = custom }
+        #endif
+        _app = StateObject(wrappedValue: AppModel(store: KeychainStore(), preferences: preferences, server: server,
+                                                  browser: WebAuthenticationBrowser(), deviceName: { UIDevice.current.name }))
         #if DEBUG
         if let configuration = try? RecoveryLoopbackConfiguration(environment: ProcessInfo.processInfo.environment),
            let bridge = try? RecoveryLoopbackBridge(configuration: configuration) {
@@ -67,7 +74,7 @@ struct ScorebugApp: App {
                 .onAppear {
                     watch.activate()
                     #if DEBUG
-                    // Simulator QA: SCOREBUG_TEST_LINK opens a setup or invite link on launch.
+                    // Simulator QA: SCOREBUG_TEST_LINK opens a team invite or match join link on launch.
                     if let link = ProcessInfo.processInfo.environment["SCOREBUG_TEST_LINK"] { app.open(link) }
                     #endif
                 }

@@ -39,9 +39,9 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Scorebug films the match with the camera and scans setup and invite codes.</string>
+	<string>Scorebug films the match with the camera.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Scorebug talks to your Scorebug server on this network.</string>
+	<string>Debug builds can use a Scorebug server on this network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Scorebug records the gym's sound with your video.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

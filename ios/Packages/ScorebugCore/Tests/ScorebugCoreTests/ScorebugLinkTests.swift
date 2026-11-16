@@ -2,39 +2,49 @@ import XCTest
 @testable import ScorebugCore
 
 final class ScorebugLinkTests: XCTestCase {
-    private let setupCode = "abcDEF123_-xyzABC456789q"
-
-    func testConnectLinkDecodesPercentEncodedServerAndCode() throws {
-        let link = try XCTUnwrap(ScorebugLink(string: "scorebug://connect?server=https%3A%2F%2Fscore.example.com%2Fbase&code=\(setupCode)"))
-        XCTAssertEqual(link, .connect(server: try ScoringEndpoint("https://score.example.com/base"), code: setupCode))
-        XCTAssertEqual(link.server.url.absoluteString, "https://score.example.com/base")
+    func testTeamInviteLinkNormalizesCode() {
+        XCTAssertEqual(ScorebugLink(string: " https://scorebug.live/invite/abcd2345 \n"), .teamInvite(code: "ABCD2345"))
+        XCTAssertEqual(ScorebugLink(string: "https://scorebug.live/invite/ABCD-2345"), .teamInvite(code: "ABCD2345"))
+        XCTAssertEqual(ScorebugLink(string: "https://www.scorebug.live/invite/ABCD2345/"), .teamInvite(code: "ABCD2345"))
     }
 
-    func testJoinLinkNormalizesInviteCode() throws {
-        let link = try XCTUnwrap(ScorebugLink(string: "  scorebug://join?server=https%3A%2F%2Fscore.example.com&code=k7p4qx \n"))
-        XCTAssertEqual(link, .join(server: try ScoringEndpoint("https://score.example.com"), code: "K7P4QX"))
+    func testMatchJoinLinkNormalizesCode() {
+        XCTAssertEqual(ScorebugLink(string: "https://scorebug.live/join/k7p4qx"), .matchJoin(code: "K7P4QX"))
+        XCTAssertEqual(ScorebugLink(string: "https://SCOREBUG.LIVE/join/K7P-4QX?utm=x"), .matchJoin(code: "K7P4QX"))
     }
 
-    func testRejectsOtherSchemesActionsAndUnsafeServers() {
+    func testRejectsOtherHostsPathsCodesAndOldLinks() {
         let bad = [
-            "https://score.example.com/connect?server=https%3A%2F%2Fa.example&code=\(setupCode)",
-            "scorebug://pair?server=https%3A%2F%2Fa.example&code=\(setupCode)",
-            "scorebug://connect?server=http%3A%2F%2Fpublic.example.com&code=\(setupCode)", // plain HTTP off-LAN
-            "scorebug://connect?server=https%3A%2F%2Fuser%3Apw%40a.example&code=\(setupCode)",
-            "scorebug://connect?code=\(setupCode)",
-            "scorebug://connect?server=https%3A%2F%2Fa.example",
-            "scorebug://connect?server=https%3A%2F%2Fa.example&code=short",
-            "scorebug://connect?server=https%3A%2F%2Fa.example&code=\(setupCode)&code=other\(setupCode)",
-            "scorebug://join?server=https%3A%2F%2Fa.example&code=K7P4Q0", // 0 not in alphabet
-            "scorebug://join?server=https%3A%2F%2Fa.example&code=K7P4QXY",
+            "https://evil.example/invite/ABCD2345",
+            "https://scorebug.live.evil.example/join/K7P4QX",
+            "http://scorebug.live/join/K7P4QX", // plain HTTP off-LAN
+            "https://user:pw@scorebug.live/join/K7P4QX",
+            "https://scorebug.live/join/K7P4Q0", // 0 not in alphabet
+            "https://scorebug.live/join/K7P4QXY",
+            "https://scorebug.live/invite/ABCD234", // 7 characters
+            "https://scorebug.live/invite/ABCD2345/extra",
+            "https://scorebug.live/admin",
+            "https://scorebug.live/",
+            "scorebug://join?server=https%3A%2F%2Fscorebug.live&code=K7P4QX",
+            "scorebug://connect?server=https%3A%2F%2Fa.example&code=abcDEF123_-xyzABC456789q",
+            "scorebug://auth?status=ok",
             "not a link",
         ]
         for text in bad { XCTAssertNil(ScorebugLink(string: text), text) }
     }
 
-    func testLocalDevelopmentServerOverHTTPIsAccepted() throws {
-        let link = try XCTUnwrap(ScorebugLink(string: "scorebug://connect?server=http%3A%2F%2F127.0.0.1%3A18787&code=\(setupCode)"))
-        XCTAssertEqual(link.server.url.absoluteString, "http://127.0.0.1:18787")
+    func testDebugServerHostIsTrustedOverLocalHTTP() throws {
+        let hosts = ScorebugLink.hosts(for: try ScoringEndpoint("http://localhost:8787"))
+        XCTAssertEqual(hosts, ["scorebug.live", "localhost"])
+        XCTAssertEqual(ScorebugLink(string: "http://localhost:8787/join/K7P4QX", hosts: hosts), .matchJoin(code: "K7P4QX"))
+        XCTAssertNil(ScorebugLink(string: "http://localhost:8787/join/K7P4QX"))
+    }
+
+    func testMatchCodeFromLinkOrBareCode() {
+        XCTAssertEqual(ScorebugLink.matchCode(from: "k7p-4qx"), "K7P4QX")
+        XCTAssertEqual(ScorebugLink.matchCode(from: "https://scorebug.live/join/K7P4QX"), "K7P4QX")
+        XCTAssertNil(ScorebugLink.matchCode(from: "https://scorebug.live/invite/ABCD2345"))
+        XCTAssertNil(ScorebugLink.matchCode(from: "hello"))
     }
 
     func testInviteCodeNormalizationAndFormatting() {
@@ -43,18 +53,7 @@ final class ScorebugLinkTests: XCTestCase {
         XCTAssertNil(InviteCode.normalize("K7P-4QI"))
         XCTAssertNil(InviteCode.normalize("K7P"))
         XCTAssertEqual(InviteCode.format("k7p4qx"), "K7P-4QX")
-    }
-
-    func testJoinInputAcceptsLinkOrBareCode() throws {
-        XCTAssertEqual(JoinInput("k7p-4qx"), .code("K7P4QX"))
-        XCTAssertEqual(JoinInput("scorebug://join?server=https%3A%2F%2Fa.example&code=K7P4QX"),
-                       .link(server: try ScoringEndpoint("https://a.example"), code: "K7P4QX"))
-        XCTAssertNil(JoinInput("scorebug://connect?server=https%3A%2F%2Fa.example&code=\(setupCode)"))
-        XCTAssertNil(JoinInput("hello"))
-    }
-
-    func testManualSetupCodeIgnoresSpaces() {
-        XCTAssertEqual(ScorebugLink.normalizeSetupCode("abcd efgh ijkl"), "abcdefghijkl")
-        XCTAssertNil(ScorebugLink.normalizeSetupCode("abc/defgh"))
+        XCTAssertEqual(TeamInviteCode.normalize("abcd-2345"), "ABCD2345")
+        XCTAssertNil(TeamInviteCode.normalize("ABCD-234O"))
     }
 }

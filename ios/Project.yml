@@ -46,10 +46,10 @@ targets:
           - CFBundleURLName: live.scorebug.links
             CFBundleURLSchemes:
               - scorebug
-        NSCameraUsageDescription: Scorebug films the match with the camera and scans setup and invite codes.
+        NSCameraUsageDescription: Scorebug films the match with the camera.
         NSMicrophoneUsageDescription: Scorebug records the gym's sound with your video.
         NSPhotoLibraryAddUsageDescription: Scorebug saves your match videos to Photos when you ask it to.
-        NSLocalNetworkUsageDescription: Scorebug talks to your Scorebug server on this network.
+        NSLocalNetworkUsageDescription: Debug builds can use a Scorebug server on this network.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UISupportedInterfaceOrientations:
@@ -63,6 +63,12 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+    entitlements:
+      path: Resources/Scorebug.entitlements
+      properties:
+        # Universal links: scorebug.live/invite/* and /join/* (apple-app-site-association).
+        com.apple.developer.associated-domains:
+          - applinks:scorebug.live
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app

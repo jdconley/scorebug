@@ -1,8 +1,9 @@
 import Foundation
 import ScorebugCore
 
-/// A tiny in-memory stand-in for the control plane: setup, destinations, matches,
-/// scoring commands and invites, with the same volleyball rules as the server.
+/// A tiny in-memory stand-in for the hosted Worker: Google sign-in (tickets and PKCE),
+/// sessions, `/v1/me`, teams and invites, team match routes, scoring commands and match
+/// codes, with the same volleyball rules as the server.
 actor FakeScorebugServer {
     struct Match {
         var snapshot: MatchSnapshot
@@ -10,11 +11,19 @@ actor FakeScorebugServer {
         var receipts: [String: CommandOutcome] = [:]
     }
 
-    var setupCodes: Set<String> = ["setup-code-123456789012"]
-    var ownerTokens: [String: String] = [:] // token → deviceId
-    var redeemedDevices: [String: String] = [:] // deviceId → token
-    var destinations: [Destination] = [Destination(id: "yt", name: "YouTube", rtmpUrl: "rtmps://a.rtmp.youtube.com/live2",
-                                                   streamKeyLast4: "abcd", isDefault: true, createdAt: "t", updatedAt: "t")]
+    struct FakeTeam {
+        var team: Team
+        var roles: [String: TeamRole] // personId → role
+    }
+    /// Email → can create teams.
+    var beta: [String: Bool] = ["jd@example.com": true]
+    var people: [String: Person] = [:] // personId → person
+    var sessions: [String: String] = [:] // token → personId
+    var revokedSessions: [String] = []
+    var tickets: [String: (personId: String, challenge: String)] = [:]
+    var teams: [String: FakeTeam] = [:]
+    var teamInvites: [String: (id: String, teamId: String, email: String?)] = [:] // code → invite
+    var matchTeams: [String: String] = [:] // gameId → teamId
     var matches: [String: Match] = [:]
     var credentials: [String: MatchCredential] = [:] // token → credential
     var inviteCodes: [String: String] = [:] // code → gameId
@@ -25,8 +34,50 @@ actor FakeScorebugServer {
 
     func set(dropNextReply: Bool) { self.dropNextReply = dropNextReply }
     func set(failNextWith code: URLError.Code?) { failNextWith = code }
-    func addMatch(_ snapshot: MatchSnapshot) { matches[snapshot.id] = Match(snapshot: snapshot) }
-    func setDestinations(_ list: [Destination]) { destinations = list }
+    func addMatch(_ snapshot: MatchSnapshot, team teamId: String? = nil) {
+        matches[snapshot.id] = Match(snapshot: snapshot)
+        matchTeams[snapshot.id] = teamId
+    }
+    func allow(_ email: String, canCreateTeams: Bool = false) { beta[email] = canCreateTeams }
+    /// A signed-in person with a session token, on `teamId` if given.
+    @discardableResult func signedIn(_ email: String, token: String, team teamId: String? = nil, role: TeamRole = .owner) -> Person {
+        let person = person(for: email)
+        sessions[token] = person.id
+        if let teamId { addTeam(teamId, name: "Cascade 14 Black", member: person.id, role: role) }
+        return person
+    }
+    func addTeam(_ id: String, name: String, member personId: String, role: TeamRole) {
+        var team = teams[id] ?? FakeTeam(team: Team(id: id, name: name, shortName: ShortName.derive(from: name), color: "#2563EB"), roles: [:])
+        team.roles[personId] = role
+        teams[id] = team
+    }
+    func addTeamInvite(code: String, teamId: String, email: String? = nil) { teamInvites[code] = ("inv-\(code)", teamId, email) }
+    func revoke(token: String) { sessions[token] = nil }
+
+    private func person(for email: String) -> Person {
+        if let existing = people.values.first(where: { $0.email == email }) { return existing }
+        let person = Person(id: "p-\(email.split(separator: "@")[0])", email: email, name: email.split(separator: "@")[0].capitalized, picture: nil)
+        people[person.id] = person
+        return person
+    }
+
+    /// Google's consent screen and the Worker's callback in one step: what
+    /// `ASWebAuthenticationSession` hands back for `url` when `email` signs in.
+    func authorize(_ url: URL, as email: String?) -> URL {
+        guard let email else { return URL(string: "scorebug://auth?status=cancelled")! }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let challenge = items.first { $0.name == "challenge" }?.value ?? ""
+        let invite = items.first { $0.name == "invite" }?.value.flatMap(TeamInviteCode.normalize)
+        let link = invite.flatMap { teamInvites[$0] }.flatMap { $0.email == nil || $0.email == email ? $0 : nil }
+        let existing = people.values.first { $0.email == email }
+        let member = existing.map { person in teams.values.contains { $0.roles[person.id] != nil } } ?? false
+        guard beta[email] != nil || member || link != nil else { return URL(string: "scorebug://auth?status=not_in_beta")! }
+        let person = person(for: email)
+        if let link { addTeam(link.teamId, name: teams[link.teamId]?.team.name ?? "Team", member: person.id, role: teams[link.teamId]?.roles[person.id] ?? .member) }
+        let ticket = String(repeating: "t", count: 40) + String(format: "%03d", tickets.count)
+        tickets[ticket] = (person.id, challenge)
+        return URL(string: "scorebug://auth?status=ok&ticket=\(ticket)")!
+    }
     func snapshot(_ id: String) -> MatchSnapshot? { matches[id]?.snapshot }
     func issueCredential(gameId: String, deviceId: String, role: MatchRole) -> MatchCredential {
         let credential = MatchCredential(gameId: gameId, deviceId: deviceId, role: role, token: "cred-\(gameId)-\(deviceId)-\(role.rawValue)")
@@ -53,7 +104,7 @@ actor FakeScorebugServer {
         let token = request.value(forHTTPHeaderField: "Authorization")?.replacingOccurrences(of: "Bearer ", with: "")
         let (status, object) = route(method: method, path: path, body: body ?? [:], token: token)
         if dropNextReply { dropNextReply = false; throw URLError(.networkConnectionLost) }
-        let data = try JSONSerialization.data(withJSONObject: object)
+        let data = status == 204 ? Data() : try JSONSerialization.data(withJSONObject: object)
         return (data, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
     }
 
@@ -61,55 +112,46 @@ actor FakeScorebugServer {
         try! JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
     }
 
-    private func isOwner(_ token: String?) -> Bool { token.map { ownerTokens[$0] != nil } ?? false }
-
     private func route(method: String, path: String, body: [String: Any], token: String?) -> (Int, Any) {
         let parts = path.split(separator: "/").map(String.init) // ["v1", ...]
         switch (method, Array(parts.dropFirst())) {
-        case ("POST", ["setup", "redeem"]):
-            let code = body["code"] as? String ?? "", deviceId = body["deviceId"] as? String ?? ""
-            if let existing = redeemedDevices[deviceId] {
-                return (200, ["device": device(deviceId, body), "token": existing, "serverTime": Self.now()])
+        case ("POST", ["auth", "session"]):
+            let ticket = body["ticket"] as? String ?? "", verifier = body["verifier"] as? String ?? ""
+            guard let pending = tickets.removeValue(forKey: ticket), PKCE.challenge(for: verifier) == pending.challenge,
+                  let person = people[pending.personId] else { return (401, ["error": "ticket_invalid"]) }
+            let token = "session-\(sessions.count + 1)"
+            sessions[token] = person.id
+            return (200, ["token": token, "person": encode(person), "serverTime": Self.now()])
+        case ("DELETE", ["auth", "session"]):
+            guard let token, sessions.removeValue(forKey: token) != nil else { return (401, ["error": "unauthorized"]) }
+            revokedSessions.append(token)
+            return (204, [:])
+        case ("GET", ["me"]):
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            let mine = teams.values.sorted { $0.team.id < $1.team.id }.compactMap { team in
+                team.roles[person.id].map { TeamMembership(team: team.team, role: $0) }
             }
-            guard setupCodes.remove(code) != nil else { return (401, ["error": "setup_code_invalid"]) }
-            let token = "owner-\(deviceId)"
-            ownerTokens[token] = deviceId; redeemedDevices[deviceId] = token
-            return (200, ["device": device(deviceId, body), "token": token, "serverTime": Self.now()])
-        case ("GET", ["devices", "me"]):
-            guard let token, let id = ownerTokens[token] else { return (401, ["error": "unauthorized"]) }
-            return (200, ["role": "owner", "legacy": false, "device": device(id, ["deviceName": "Phone"])])
-        case ("GET", ["destinations"]):
-            guard isOwner(token) else { return (401, ["error": "unauthorized"]) }
-            return (200, ["destinations": encode(destinations), "serverTime": Self.now()])
-        case ("POST", ["matches"]):
-            guard isOwner(token) else { return (401, ["error": "unauthorized"]) }
-            creationBodies.append(body)
-            if matches.values.contains(where: { $0.snapshot.status == .active }) { return (409, ["error": "match_in_flight"]) }
-            let creation = try! JSONDecoder().decode(MatchCreation.self, from: JSONSerialization.data(withJSONObject: body))
-            let snapshot = MatchSnapshot(id: creation.id, createdAt: Self.now(), revision: 0, teams: creation.teams, rules: creation.rules,
-                                         score: MatchScore(home: 0, away: 0, set: 1, homeSets: 0, awaySets: 0), completedSets: [],
-                                         status: .active, endReason: nil, canUndo: false,
-                                         scorer: MatchScorer(deviceId: creation.deviceId, epoch: 1),
-                                         broadcast: MatchBroadcast(desired: .stopped, generation: 0),
-                                         scorebugStyle: creation.scorebugStyle ?? .bar,
-                                         output: MatchOutput(destinationId: creation.destinationId, recordOnly: creation.recordOnly ?? false))
-            matches[creation.id] = Match(snapshot: snapshot)
-            let credential = issueCredential(gameId: creation.id, deviceId: creation.deviceId, role: .score)
-            return (201, ["snapshot": encode(snapshot), "credential": encode(credential), "serverTime": Self.now()])
-        case ("GET", ["matches", "active"]):
-            guard isOwner(token) else { return (401, ["error": "unauthorized"]) }
-            let active = matches.values.first { $0.snapshot.status == .active }?.snapshot
-            return (200, ["snapshot": active.map(encode) ?? NSNull(), "serverTime": Self.now()])
-        case ("POST", let p) where p.count == 3 && p[0] == "matches" && p[2] == "join":
-            guard isOwner(token), let match = matches[p[1]] else { return (401, ["error": "unauthorized"]) }
-            let role = MatchRole(rawValue: body["role"] as? String ?? "") ?? .score
-            let credential = issueCredential(gameId: p[1], deviceId: body["deviceId"] as? String ?? "", role: role)
-            return (200, ["snapshot": encode(match.snapshot), "credential": encode(credential), "serverTime": Self.now()])
-        case ("POST", let p) where p.count == 3 && p[0] == "matches" && p[2] == "invites":
-            guard isOwner(token) || credentials[token ?? ""]?.role == .capture else { return (401, ["error": "unauthorized"]) }
-            inviteCodes["K7P4QX"] = p[1]
-            return (201, ["invite": ["id": "i1", "gameId": p[1], "createdAt": "t", "expiresAt": "t", "revokedAt": NSNull(), "redemptions": 0],
-                          "code": "K7P-4QX", "link": "scorebug://join?server=https%3A%2F%2Fscore.example.com&code=K7P4QX", "expiresAt": "t"])
+            return (200, ["person": encode(person), "canCreateTeams": beta[person.email] ?? false, "teams": encode(mine), "serverTime": Self.now()])
+        case ("POST", ["teams"]):
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            guard beta[person.email] == true else { return (403, ["error": "cannot_create_teams"]) }
+            let id = "team-\(teams.count + 1)"
+            addTeam(id, name: body["name"] as? String ?? "", member: person.id, role: .owner)
+            return (201, ["team": encode(teams[id]!.team), "role": "owner", "serverTime": Self.now()])
+        case ("POST", ["team-invites", "accept"]):
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            guard let code = TeamInviteCode.normalize(body["code"] as? String ?? ""), let invite = teamInvites[code] else {
+                return (404, ["error": "invite_invalid"])
+            }
+            if let email = invite.email, email != person.email { return (403, ["error": "invite_email_mismatch"]) }
+            addTeam(invite.teamId, name: "", member: person.id, role: teams[invite.teamId]?.roles[person.id] ?? .member)
+            return (200, ["team": encode(teams[invite.teamId]!.team), "role": "member", "serverTime": Self.now()])
+        case (_, let p) where p.count >= 2 && p[0] == "teams" && (p.count < 3 || p[2] != "matches"):
+            return teamRoute(method: method, parts: p, body: body, token: token)
+        case (_, let p) where p.count >= 3 && p[0] == "teams" && p[2] == "matches":
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            guard teams[p[1]]?.roles[person.id] != nil else { return (404, ["error": "team_not_found"]) }
+            return memberMatchRoute(method: method, teamId: p[1], rest: Array(p.dropFirst(3)), body: body)
         case ("POST", ["invites", "redeem"]):
             guard let code = InviteCode.normalize(body["code"] as? String ?? ""), let gameId = inviteCodes[code],
                   let match = matches[gameId] else { return (401, ["error": "invite_invalid"]) }
@@ -132,9 +174,94 @@ actor FakeScorebugServer {
         }
     }
 
-    private func device(_ id: String, _ body: [String: Any]) -> [String: Any] {
-        ["id": id, "name": body["deviceName"] as? String ?? "Phone", "role": "owner", "createdAt": "t",
-         "lastSeenAt": NSNull(), "revokedAt": NSNull()]
+    private func signedInPerson(_ token: String?) -> Person? { token.flatMap { sessions[$0] }.flatMap { people[$0] } }
+
+    private func teamRoute(method: String, parts p: [String], body: [String: Any], token: String?) -> (Int, Any) {
+        guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+        guard var team = teams[p[1]], let role = team.roles[person.id] else { return (404, ["error": "team_not_found"]) }
+        let owner = role == .owner
+        let invitesJSON = { self.invitesJSON(team.team.id) }
+        switch (method, Array(p.dropFirst(2))) {
+        case ("GET", []):
+            let members = team.roles.sorted { ($0.value == .owner ? 0 : 1, $0.key) < ($1.value == .owner ? 0 : 1, $1.key) }.map { id, role in
+                ["personId": id, "name": people[id]?.name ?? NSNull(), "email": people[id]?.email ?? "", "role": role.rawValue] as [String: Any]
+            }
+            var result: [String: Any] = ["team": encode(team.team), "role": role.rawValue, "members": members, "serverTime": Self.now()]
+            if owner { result["invites"] = invitesJSON() }
+            return (200, result)
+        case ("PATCH", []):
+            guard owner else { return (403, ["error": "owner_required"]) }
+            if let name = body["name"] as? String { team.team.name = name }
+            teams[team.team.id] = team
+            return (200, ["team": encode(team.team), "serverTime": Self.now()])
+        case ("POST", ["invites"]):
+            guard owner else { return (403, ["error": "owner_required"]) }
+            let code = "ABCD\(2345 + teamInvites.count)".replacingOccurrences(of: "0", with: "Z").replacingOccurrences(of: "1", with: "Y")
+            addTeamInvite(code: code, teamId: team.team.id, email: body["email"] as? String)
+            let invite = invitesJSON().first { $0["id"] as? String == "inv-\(code)" }!
+            return (201, ["invite": invite, "code": "\(code.prefix(4))-\(code.suffix(4))", "link": "https://scorebug.live/invite/\(code)",
+                          "serverTime": Self.now()])
+        case ("DELETE", let rest) where rest.count == 2 && rest[0] == "invites":
+            guard owner else { return (403, ["error": "owner_required"]) }
+            guard let code = teamInvites.first(where: { $0.value.id == rest[1] })?.key else { return (404, ["error": "invite_not_found"]) }
+            teamInvites[code] = nil
+            return (200, ["invite": ["id": rest[1], "teamId": team.team.id, "email": NSNull(), "createdAt": "t", "expiresAt": "t", "revokedAt": "t"],
+                          "serverTime": Self.now()])
+        case ("DELETE", let rest) where rest.count == 2 && rest[0] == "members":
+            guard rest[1] == person.id || owner else { return (403, ["error": "owner_required"]) }
+            guard let targetRole = team.roles[rest[1]] else { return (404, ["error": "member_not_found"]) }
+            if targetRole == .owner, team.roles.values.filter({ $0 == .owner }).count == 1 { return (409, ["error": "last_owner"]) }
+            team.roles[rest[1]] = nil
+            teams[team.team.id] = team
+            return (204, [:])
+        default:
+            return (404, ["error": "not_found"])
+        }
+    }
+
+    private func invitesJSON(_ teamId: String) -> [[String: Any]] {
+        teamInvites.filter { $0.value.teamId == teamId }.sorted { $0.key < $1.key }.map { _, invite in
+            ["id": invite.id, "teamId": invite.teamId, "email": invite.email ?? NSNull(), "createdAt": "2026-11-16T10:00:00.000Z",
+             "expiresAt": "2099-01-01T00:00:00.000Z", "revokedAt": NSNull()]
+        }
+    }
+
+    /// `/v1/teams/:teamId/matches/…`, after the membership check.
+    private func memberMatchRoute(method: String, teamId: String, rest: [String], body: [String: Any]) -> (Int, Any) {
+        let teamMatches = matches.filter { matchTeams[$0.key] == teamId }
+        switch (method, rest) {
+        case ("POST", []):
+            creationBodies.append(body)
+            if teamMatches.values.contains(where: { $0.snapshot.status == .active }) { return (409, ["error": "match_in_flight"]) }
+            let creation = try! JSONDecoder().decode(MatchCreation.self, from: JSONSerialization.data(withJSONObject: body))
+            let snapshot = MatchSnapshot(id: creation.id, createdAt: Self.now(), revision: 0, teams: creation.teams, rules: creation.rules,
+                                         score: MatchScore(home: 0, away: 0, set: 1, homeSets: 0, awaySets: 0), completedSets: [],
+                                         status: .active, endReason: nil, canUndo: false,
+                                         scorer: MatchScorer(deviceId: creation.deviceId, epoch: 1),
+                                         broadcast: MatchBroadcast(desired: .stopped, generation: 0),
+                                         scorebugStyle: creation.scorebugStyle ?? .bar,
+                                         output: MatchOutput(destinationId: creation.destinationId, recordOnly: creation.recordOnly ?? false))
+            matches[creation.id] = Match(snapshot: snapshot)
+            matchTeams[creation.id] = teamId
+            let credential = issueCredential(gameId: creation.id, deviceId: creation.deviceId, role: .score)
+            return (201, ["snapshot": encode(snapshot), "credential": encode(credential), "serverTime": Self.now()])
+        case ("GET", ["active"]):
+            let active = teamMatches.values.first { $0.snapshot.status == .active }?.snapshot
+            return (200, ["snapshot": active.map(encode) ?? NSNull(), "serverTime": Self.now()])
+        case ("POST", let p) where p.count == 2 && p[1] == "join":
+            guard let match = teamMatches[p[0]] else { return (404, ["error": "match_not_found"]) }
+            if match.snapshot.status == .ended { return (409, ["error": "match_ended"]) }
+            let role = MatchRole(rawValue: body["role"] as? String ?? "") ?? .score
+            let credential = issueCredential(gameId: p[0], deviceId: body["deviceId"] as? String ?? "", role: role)
+            return (200, ["snapshot": encode(match.snapshot), "credential": encode(credential), "serverTime": Self.now()])
+        case ("POST", let p) where p.count == 2 && p[1] == "invites":
+            guard teamMatches[p[0]] != nil else { return (404, ["error": "match_not_found"]) }
+            inviteCodes["K7P4QX"] = p[0]
+            return (201, ["invite": ["id": "i1", "gameId": p[0], "createdAt": "t", "expiresAt": "t", "revokedAt": NSNull(), "redemptions": 0],
+                          "code": "K7P-4QX", "link": "https://scorebug.live/join/K7P4QX", "expiresAt": "t"])
+        default:
+            return (404, ["error": "not_found"])
+        }
     }
 
     private func execute(_ command: MatchCommand) -> CommandOutcome {
