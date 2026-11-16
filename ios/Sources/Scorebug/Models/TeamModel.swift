@@ -10,6 +10,8 @@ import ScorebugCore
     @Published var error: String?
     /// The invite just made, for the share sheet.
     @Published var issued: TeamInviteIssued?
+    /// This person's own YouTube connections, for the owner's channel picker.
+    @Published private(set) var connections: [YouTubeConnection] = []
 
     let teamId: String
     private let clientFactory: AppModel.ClientFactory
@@ -20,6 +22,7 @@ import ScorebugCore
     }
 
     var isOwner: Bool { detail?.role == .owner }
+    var channel: TeamYouTube? { detail?.youtube }
     var members: [TeamMember] { detail?.members ?? [] }
     /// Live invites only, newest first.
     var invites: [TeamInvite] { (detail?.invites ?? []).filter { $0.isLive() } }
@@ -27,12 +30,47 @@ import ScorebugCore
     func load(_ app: AppModel) async {
         guard let account = app.account else { return }
         do {
-            detail = try await clientFactory(app.server).teamDetail(teamId, token: account.token)
+            let client = clientFactory(app.server)
+            detail = try await client.teamDetail(teamId, token: account.token)
             error = nil
+            if isOwner { connections = (try? await client.youtubeConnections(token: account.token)) ?? connections }
         } catch {
             self.error = FriendlyError.message(error)
         }
     }
+
+    // MARK: YouTube channel (owners)
+
+    /// Connects a channel (or reconnects one: the same channel keeps its connection) and makes it
+    /// the team's channel.
+    func connectChannel(app: AppModel) async {
+        guard !busy else { return }
+        busy = true
+        let connection = await app.connectYouTube()
+        busy = false
+        if let message = app.error { error = message; app.error = nil }
+        guard let connection else { return }
+        await choose(connection, app: app)
+    }
+
+    /// Streams this team's matches to `connection`, or to no channel.
+    func choose(_ connection: YouTubeConnection?, app: AppModel) async {
+        if await run(app, { client, token in
+            let youtube = try await client.setTeamChannel(self.teamId, connectionId: connection?.id, token: token)
+            self.detail?.youtube = youtube
+        }) { await load(app) }
+    }
+
+    /// Checks the team's channel again (after YouTube's 24-hour wait, say).
+    func checkChannel(app: AppModel) async {
+        guard let channel else { return }
+        if await run(app, { client, token in
+            _ = try await client.checkYouTubeConnection(channel.connectionId, token: token)
+        }) { await load(app) }
+    }
+
+    /// Whether this person can reconnect or re-check the team's channel: it's their connection.
+    func ownsChannel(_ app: AppModel) -> Bool { channel?.connectedBy == app.account?.person.id }
 
     @discardableResult func rename(_ name: String, app: AppModel) async -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,17 +101,15 @@ import ScorebugCore
     }
 
     func revoke(_ invite: TeamInvite, app: AppModel) async {
-        _ = await run(app) { client, token in
+        if await run(app, { client, token in
             try await client.revokeTeamInvite(self.teamId, inviteId: invite.id, token: token)
-        }
-        await load(app)
+        }) { await load(app) }
     }
 
     func remove(_ member: TeamMember, app: AppModel) async {
-        _ = await run(app) { client, token in
+        if await run(app, { client, token in
             try await client.removeMember(self.teamId, personId: member.personId, token: token)
-        }
-        await load(app)
+        }) { await load(app) }
     }
 
     /// Leaves the team. Returns true once this person is off it.
@@ -117,6 +153,12 @@ import ScorebugCore
             return "This team has too many open invites. Revoke some first."
         case MatchClientError.forbidden:
             return "Only a team owner can do that."
+        case MatchClientError.http(409, "youtube_needs_reconnect"):
+            return "YouTube needs reconnecting. Tap Reconnect."
+        case MatchClientError.http(404, "connection_not_found"):
+            return "That YouTube channel isn't connected anymore. Connect it again."
+        case MatchClientError.http(_, let code?) where code == "youtube_unavailable" || code == "youtube_quota":
+            return "YouTube isn't answering right now. Try again in a few minutes."
         default:
             return FriendlyError.message(error)
         }

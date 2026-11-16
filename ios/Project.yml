@@ -111,6 +111,8 @@ targets:
     platform: iOS
     sources:
       - path: AppUITests
+        excludes:
+          - LocalWorker/**
       - path: Sources/Scorebug/Debug/RecoveryLoopbackConfiguration.swift
     settings:
       base:

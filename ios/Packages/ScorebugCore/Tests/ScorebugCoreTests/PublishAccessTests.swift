@@ -125,28 +125,30 @@ final class PublishAccessTests: XCTestCase {
         }
     }
 
-    func testAttemptGrantRequiresOneCompleteStreamIDWithMatchingIdentityAndProofSyntax() async throws {
+    func testAttemptGrantRequiresOneIntactStreamID() async throws {
         let attempt = UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789")!
         let stream = attemptStreamID(attempt)
-        let other = UUID().uuidString.lowercased()
         let invalidQueries = [
-            "", "streamid", "streamid=", "streamid=publish:scorebug-path",
-            "streamid=\(stream)&streamid=\(stream)", "streamid=\(stream)&streamid=",
-            "streamid=\(stream)extra", "streamid=\(stream)%0A", "streamid=\(stream)%00",
-            "streamid=prefix\(stream)", "streamid=\(stream.replacingOccurrences(of: attempt.uuidString.lowercased(), with: other))",
-            "streamid=\(stream.replacingOccurrences(of: attempt.uuidString.lowercased(), with: attempt.uuidString))",
-            "streamid=\(stream.replacingOccurrences(of: "sbp1=", with: "sbp2="))",
-            "streamid=\(stream.dropLast())", "streamid=\(stream.dropLast())g",
-            "streamid=\(stream.replacingOccurrences(of: String(repeating: "a", count: 64), with: String(repeating: "A", count: 64)))",
-            "streamid=\(stream.replacingOccurrences(of: "0123456789abcdef-", with: "0123456789abcde-"))",
-            "streamid=\(stream.replacingOccurrences(of: "0123456789abcdef0123456789abcdef:", with: "0123456789abcdef0123456789abcde:"))",
-            "streamid=\(stream.replacingOccurrences(of: "scorebug-", with: "scorebug-A"))"
+            "", "streamid", "streamid=", "streamid=\(stream)&streamid=\(stream)", "streamid=\(stream)&streamid=",
+            "streamid=\(stream)%0A", "streamid=\(stream)%00", "streamid=a%20b", "streamid=" + String(repeating: "a", count: 513),
         ]
         for query in invalidQueries {
             var body = attemptBody(attempt)
             body["publishUrl"] = "srt://localhost:8890?\(query)"
             await assertInvalidAttempt(body, attempt: attempt)
         }
+    }
+
+    /// Hosted: Cloudflare Stream's SRT URL carries Stream's own stream ID, not the relay's proof.
+    func testAttemptGrantAcceptsCloudflareStreamSRT() async throws {
+        let attempt = UUID()
+        var body = attemptBody(attempt)
+        body["publishUrl"] = "srt://live.cloudflare.com:778?passphrase=0123456789abcdef0123&streamid=f256e6ea9341d51eea64c9454659e576"
+        let access = try await client(body: body).publishAccess(recordingId: "recording-1", generation: 3,
+            publishingAttemptId: attempt, credential: credential)
+        XCTAssertEqual(access.publishingAttemptId, attempt)
+        XCTAssertEqual(access.publishUrl.host, "live.cloudflare.com")
+        XCTAssertEqual(access.publishUrl.port, 778)
     }
 
     func testAttemptGrantUsesDecodedQueryValueAndKeepsDestinationValidation() async throws {

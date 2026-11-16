@@ -58,14 +58,37 @@ struct CaptureKeychain: CaptureSetupStorage {
 
 enum CaptureControlError: Error { case workerUnavailable, storage, noSetup, noActiveMatch, invalidCredential, recordingStopped, rejected, unresolved, selectionChanged,
     /// The server could not pick a streaming worker for the broadcast.
-    noWorker, workerAmbiguous, outputUnknown
+    noWorker, workerAmbiguous, outputUnknown,
+    /// Hosted Go Live refusals. Nothing changed on the server, so Go Live can be tried again.
+    youtubeNotSet, youtubeNeedsReconnect, youtubeLiveDisabled, youtubeUnavailable, streamUnavailable, busy, timeLimit
 
     init(rejection code: String?) {
         switch code {
         case "no_worker": self = .noWorker
         case "worker_ambiguous": self = .workerAmbiguous
         case "output_unknown": self = .outputUnknown
+        case "youtube_not_set": self = .youtubeNotSet
+        case "youtube_needs_reconnect": self = .youtubeNeedsReconnect
+        case "youtube_live_disabled": self = .youtubeLiveDisabled
+        case "youtube_unavailable": self = .youtubeUnavailable
+        case "stream_unavailable", "container_unavailable": self = .streamUnavailable
+        case "busy": self = .busy
+        case "time_limit": self = .timeLimit
         default: self = .rejected
+        }
+    }
+
+    /// What the live screen says when Go Live is refused. The recording never stops for it.
+    var goLiveMessage: String? {
+        switch self {
+        case .youtubeNotSet: "Your team has no YouTube channel yet, so this match can't go live. Recording continues."
+        case .youtubeNeedsReconnect: "YouTube needs reconnecting. Ask your team owner to reconnect it. Recording continues."
+        case .youtubeLiveDisabled: "This YouTube channel can't live stream yet. YouTube makes new channels wait 24 hours. Recording continues."
+        case .youtubeUnavailable: "YouTube isn't answering right now. Try going live again in a minute. Recording continues."
+        case .streamUnavailable: "Scorebug couldn't start the stream. Try going live again. Recording continues."
+        case .busy: "Scorebug is busy, try again shortly. Recording continues."
+        case .timeLimit: "This match reached the 4-hour streaming limit. Recording continues."
+        default: nil
         }
     }
 }

@@ -87,6 +87,64 @@ import XCTest
         }
     }
 
+    func testHostedGoLiveRefusalsAndWatchLink() async throws {
+        server = CaptureTestServer()
+        await server.rejectStarts(with: "busy")
+        var model = makeModel()
+        await goLive(model)
+        XCTAssertEqual(model.status, .recordingOnly)
+        XCTAssertEqual(model.message, "Scorebug is busy, try again shortly. Recording continues.")
+        XCTAssertNil(model.youtube)
+
+        server = CaptureTestServer()
+        let link = MatchYouTube(broadcastId: "abc123", watchUrl: "https://www.youtube.com/watch?v=abc123",
+                                channelTitle: "Wildcats", channelThumbnail: nil, privacy: "unlisted")
+        await server.setYouTube(link)
+        model = makeModel()
+        await goLive(model)
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+        XCTAssertEqual(model.youtube, link, "the Go Live reply carries the watch link")
+    }
+
+    /// A phone that used the self-hosted build may still hold reports for a server that's gone.
+    func testANewServerStartsCleanInsteadOfWaitingOnTheOldOne() async throws {
+        var old = captureSetup()
+        old.endpoint = "https://old.example"
+        old.reports = [PendingCaptureReport(credential: MatchCredential(gameId: "old-game", deviceId: "capture-1", role: .capture, token: "old"),
+                                            report: RecordingReport(recordingId: "old-recording", sequence: 2, status: .stopped,
+                                                                    startedAt: "2026-09-13T00:00:00Z"),
+                                            delivered: false)]
+        old.stopRecordingIDs = ["old-recording"]
+        let storage = CaptureMemoryStorage(old)
+        let model = makeModel(storage: storage)
+        await model.restore()
+        model.captureChanged(captureContext())
+        model.endpoint = "http://localhost:18787"
+        model.installationToken = "session"
+        model.teamId = "t1"
+        await model.connect()
+        XCTAssertNil(model.message)
+        XCTAssertEqual(storage.value?.endpoint, "http://localhost:18787")
+        XCTAssertEqual(storage.value?.teamId, "t1")
+        XCTAssertFalse(storage.value?.reports.contains { $0.credential.gameId == "old-game" } ?? true)
+        await model.startStreaming()
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+    }
+
+    func testReportsForAMatchTheServerForgotAreDropped() async throws {
+        var setup = captureSetup()
+        setup.reports = [PendingCaptureReport(credential: MatchCredential(gameId: "gone", deviceId: "capture-1", role: .capture, token: "x"),
+                                              report: RecordingReport(recordingId: "old-recording", sequence: 2, status: .stopped,
+                                                                      startedAt: "2026-09-13T00:00:00Z"),
+                                              delivered: false)]
+        await server.forget(game: "gone")
+        let storage = CaptureMemoryStorage(setup)
+        let model = makeModel(storage: storage)
+        await goLive(model)
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+        XCTAssertFalse(storage.value?.reports.contains { $0.credential.gameId == "gone" } ?? true)
+    }
+
     func testFourKRecordingStillStreamsAtMost1080p() async throws {
         let model = makeModel()
         let uhd = CurrentCapture(id: "recording-4k", startedAt: "2026-11-15T00:00:00Z", tap: PublishingTap(),
@@ -279,13 +337,20 @@ actor CaptureTestServer {
     /// What the app sent in each start command.
     var startSelections: [BroadcastSelection] = []
     var startRejection: String?
+    /// Matches this server has never heard of: their reports answer 404.
+    var unknownGames: Set<String> = []
+    var youtube: MatchYouTube?
     func setOffline(_ value: Bool) { offline = value }
+    func forget(game: String) { unknownGames.insert(game) }
+    func setYouTube(_ link: MatchYouTube) { youtube = link }
     func rejectStarts(with code: String) { startRejection = code }
     func stopBroadcastRemotely() { broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil) }
     func respond(_ request: URLRequest) async throws -> (Data, URLResponse) {
         requestCount += 1
         if offline { throw URLError(.notConnectedToInternet) }
         let path = request.url!.path
+        // The old self-hosted server is gone.
+        if request.url!.host == "old.example" { throw URLError(.cannotFindHost) }
         let time = ISO8601DateFormatter().string(from: Date())
         let data: Data
         if path.hasSuffix("/active") {
@@ -293,6 +358,8 @@ actor CaptureTestServer {
         } else if path.hasSuffix("/join") {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
             data = try JSONEncoder().encode(MatchSessionResponse(snapshot: matchSnapshot(), credential: .init(gameId: "game-1", deviceId: body["deviceId"]!, role: .capture, token: "capture-token"), serverTime: time))
+        } else if path.hasSuffix("/recordings"), unknownGames.contains(where: { path.contains("/\($0)/") }) {
+            return (Data("{\"error\":\"match_not_found\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
         } else if path.hasSuffix("/recordings") {
             let report = try JSONDecoder().decode(RecordingReport.self, from: request.httpBody!)
             reports.append(report)
@@ -313,7 +380,7 @@ actor CaptureTestServer {
                 broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: selection); operations.append("start")
             case .stop: broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil); operations.append("stop")
             }
-            let result = BroadcastOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: snapshot())
+            let result = BroadcastOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: snapshot(), youtube: youtube)
             receipts[command.commandId] = result
             data = try JSONEncoder().encode(result)
         } else if path.contains("/commands/") {

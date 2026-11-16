@@ -31,6 +31,7 @@ struct TeamView: View {
                 if let error = model.error {
                     Text(error).font(.callout).foregroundStyle(Theme.warn).accessibilityIdentifier("team.error")
                 }
+                if model.detail != nil { ChannelSection(app: app, model: model) }
                 if model.isOwner { invitesSection }
                 membersSection
                 Button(role: .destructive) { confirmLeave = true } label: { Text("Leave team") }
@@ -130,6 +131,132 @@ struct TeamView: View {
             }
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
+    }
+}
+
+/// Where the team's matches go live. Owners connect, pick, reconnect or re-check a channel;
+/// members see where it goes, or who to ask.
+private struct ChannelSection: View {
+    @ObservedObject var app: AppModel
+    @ObservedObject var model: TeamModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel("YouTube channel")
+            if let channel = model.channel { current(channel) } else { none }
+        }
+    }
+
+    private func current(_ channel: TeamYouTube) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                ChannelThumbnail(url: channel.channelThumbnail)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(channel.channelTitle).font(.body.weight(.semibold)).lineLimit(1)
+                        .accessibilityIdentifier("team.channel.title")
+                    HStack(spacing: 6) {
+                        StatusDot(color: channel.status == .ready ? Theme.ok : Theme.warn)
+                        Text(statusLine(channel)).font(.footnote).foregroundStyle(channel.status == .ready ? Theme.secondary : Theme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("team.channel.status")
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            if model.isOwner {
+                if channel.status == .needsReconnect, model.ownsChannel(app) {
+                    Button { Task { await model.connectChannel(app: app) } } label: {
+                        Label("Reconnect YouTube", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(BigButtonStyle(height: 52))
+                    .disabled(model.busy)
+                    .accessibilityIdentifier("team.channel.reconnect")
+                } else if channel.status == .liveDisabled, model.ownsChannel(app) {
+                    Button { Task { await model.checkChannel(app: app) } } label: { Text("Check again") }
+                        .buttonStyle(BigButtonStyle(kind: .surface, height: 48))
+                        .disabled(model.busy)
+                        .accessibilityIdentifier("team.channel.check")
+                }
+                picker(label: "Change channel", current: channel.connectionId)
+            }
+        }
+        .padding(16)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder private var none: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.isOwner
+                 ? "Pick the YouTube channel your matches go live on. You connect it once; members go live without any YouTube setup."
+                 : "Your team owner hasn't picked a YouTube channel yet. You can still film, score and record.")
+                .font(.subheadline).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("team.channel.none")
+            if model.isOwner {
+                Button { Task { await model.connectChannel(app: app) } } label: {
+                    Label("Connect a YouTube channel", systemImage: "play.rectangle.fill")
+                }
+                .buttonStyle(BigButtonStyle(height: 52))
+                .disabled(model.busy)
+                .accessibilityIdentifier("team.channel.connect")
+                if !model.connections.isEmpty { picker(label: "Use a channel you connected", current: nil) }
+            }
+        }
+        .padding(16)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func picker(label: String, current: String?) -> some View {
+        Menu {
+            ForEach(model.connections) { connection in
+                Button { Task { await model.choose(connection, app: app) } } label: {
+                    if connection.id == current { Label(connection.channelTitle, systemImage: "checkmark") }
+                    else { Text(connection.channelTitle + (connection.status == .ready ? "" : " (needs attention)")) }
+                }
+            }
+            Button { Task { await model.connectChannel(app: app) } } label: { Label("Connect another channel", systemImage: "plus") }
+            if current != nil {
+                Divider()
+                Button(role: .destructive) { Task { await model.choose(nil, app: app) } } label: { Text("Don't go live (record only)") }
+            }
+        } label: {
+            HStack {
+                Text(label).font(.subheadline.weight(.semibold))
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down").font(.footnote).foregroundStyle(Theme.secondary)
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 14).frame(minHeight: 44)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .disabled(model.busy)
+        .accessibilityIdentifier("team.channel.picker")
+    }
+
+    private func statusLine(_ channel: TeamYouTube) -> String {
+        switch channel.status {
+        case .ready: return "Matches go live here, unlisted"
+        case .liveDisabled: return "Can't live stream yet. YouTube makes new channels wait 24 hours."
+        case .needsReconnect:
+            if !model.isOwner { return "Ask your team owner to reconnect YouTube" }
+            return model.ownsChannel(app) ? "YouTube needs reconnecting"
+                : "YouTube needs reconnecting. Ask the person who connected it, or pick another channel."
+        }
+    }
+}
+
+struct ChannelThumbnail: View {
+    let url: String?
+    var size: CGFloat = 40
+    var body: some View {
+        AsyncImage(url: url.flatMap(URL.init(string:))) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            Image(systemName: "play.rectangle.fill").font(.system(size: size * 0.45)).foregroundStyle(Theme.live)
+                .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.raised)
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .accessibilityHidden(true)
     }
 }
 

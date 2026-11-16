@@ -14,6 +14,7 @@ import XCTest
         XCTAssertEqual(callbackScheme, "scorebug")
         opened.append(url)
         guard let email else { throw SignInBrowserError.cancelled }
+        if url.host == "accounts.google.test" { return await server.authorizeYouTube(url) }
         return await server.authorize(url, as: email)
     }
 }

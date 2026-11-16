@@ -168,6 +168,45 @@ enum SignInBrowserError: Error { case cancelled, unavailable }
         }
     }
 
+    // MARK: YouTube
+
+    /// Connects a YouTube channel: Google asks for the account, the channel and the `youtube`
+    /// permission, then the app claims the result with its own session. Nil when it didn't finish;
+    /// `error` says why, except when the person closed the sheet.
+    func connectYouTube() async -> YouTubeConnection? {
+        guard let account else { return nil }
+        error = nil
+        do {
+            let start = try await client.youtubeConnectURL(token: account.token)
+            let callback: URL
+            do {
+                callback = try await browser.open(start, callbackScheme: ScorebugService.callbackScheme)
+            } catch SignInBrowserError.cancelled {
+                return nil
+            }
+            switch YouTubeCallback(url: callback) {
+            case .ok(let ticket)?:
+                return try await client.claimYouTubeConnection(ticket: ticket, token: account.token)
+            case .cancelled?:
+                return nil
+            case .scopeDenied?:
+                error = "Scorebug needs permission to manage your YouTube live streams. Try again and tick the YouTube box."
+            case .error?, nil:
+                error = "Connecting YouTube didn't finish. Try again."
+            }
+        } catch MatchClientError.http(409, "youtube_no_channel") {
+            error = "That Google account has no YouTube channel. Create one on YouTube, or pick another account."
+        } catch MatchClientError.http(_, let code?) where code == "youtube_unavailable" || code == "youtube_quota" {
+            error = "YouTube isn't answering right now. Try again in a few minutes."
+        } catch MatchClientError.unauthorized {
+            forgetAccount()
+            error = "You've been signed out. Sign in again."
+        } catch {
+            self.error = FriendlyError.message(error)
+        }
+        return nil
+    }
+
     // MARK: Debug server
 
     /// Debug builds: point the app at another server. Signs out, since tokens belong to one server.

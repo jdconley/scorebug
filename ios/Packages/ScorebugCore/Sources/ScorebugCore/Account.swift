@@ -114,9 +114,11 @@ public struct TeamDetail: Codable, Equatable, Sendable {
     public var role: TeamRole
     public var members: [TeamMember]
     public var invites: [TeamInvite]?
+    /// The team's YouTube channel; nil when none is set (Go Live is off, recording still works).
+    public var youtube: TeamYouTube?
 
-    public init(team: Team, role: TeamRole, members: [TeamMember], invites: [TeamInvite]?) {
-        self.team = team; self.role = role; self.members = members; self.invites = invites
+    public init(team: Team, role: TeamRole, members: [TeamMember], invites: [TeamInvite]?, youtube: TeamYouTube? = nil) {
+        self.team = team; self.role = role; self.members = members; self.invites = invites; self.youtube = youtube
     }
 }
 
@@ -189,16 +191,21 @@ public enum SignInCallback: Equatable, Sendable {
             let matches = items.filter { $0.name == name }
             return matches.count == 1 ? matches[0].value : nil
         }
+        // Connecting a YouTube channel lands on the same URL with purpose=youtube.
+        guard items.first(where: { $0.name == "purpose" }) == nil else { return nil }
         switch value("status") {
         case "ok":
-            // The server issues 32 random bytes as base64url.
-            guard let ticket = value("ticket"), ticket.count == 43,
-                  ticket.unicodeScalars.allSatisfy({ Self.base64url.contains($0) }) else { self = .error; return }
+            guard let ticket = value("ticket"), Self.isTicket(ticket) else { self = .error; return }
             self = .ok(ticket: ticket)
         case "not_in_beta": self = .notInBeta
         case "cancelled": self = .cancelled
         default: self = .error
         }
+    }
+
+    /// The server issues 32 random bytes as base64url.
+    static func isTicket(_ text: String) -> Bool {
+        text.count == 43 && text.unicodeScalars.allSatisfy { base64url.contains($0) }
     }
 
     private static let base64url = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")

@@ -29,7 +29,10 @@ import ScorebugStreaming
     }
     private(set) var commandState: BroadcastCoordinatorState? {
         willSet { if newValue != commandState { objectWillChange.send() } }
+        didSet { if let link = commandState?.outcome?.youtube, link != youtube { youtube = link } }
     }
+    /// Hosted: the match's YouTube broadcast, from the Go Live reply. The link never changes within a match.
+    @Published private(set) var youtube: MatchYouTube?
     @Published private(set) var activeRecordingID: String?
 
     private var setup: SavedCaptureSetup?
@@ -181,6 +184,16 @@ import ScorebugStreaming
         guard !busy, !stopping, !publisherStopping, !controlBusy else { return }
         await restore()
         do {
+            if let old = setup, publishing == nil, Self.server(old.endpoint) != Self.server(endpoint) {
+                // A different server (the self-hosted one before hosted Scorebug, say) can never
+                // take the old one's reports, pending command or stop ledger: start clean.
+                try pendingStore.save(nil)
+                setup = SavedCaptureSetup(endpoint: old.endpoint, installationToken: old.installationToken,
+                                          deviceId: old.deviceId, credential: nil, reports: [])
+                ownedRecordingIDs = Set([current?.id].compactMap { $0 })
+                shouldStopOwnedBroadcast = false
+                coordinator = nil; connectedGameID = nil; commandState = nil; youtube = nil
+            }
             if setup == nil || endpoint != setup?.endpoint || installationToken != setup?.installationToken || teamId != setup?.teamId {
                 guard canChangeSetup else { throw CaptureControlError.unresolved }
                 let valid = try ScoringEndpoint(endpoint)
@@ -487,6 +500,7 @@ import ScorebugStreaming
         guard joined.credential.gameId == match.id, joined.credential.deviceId == saved.deviceId, joined.credential.role == .capture else { throw CaptureControlError.invalidCredential }
         // Reload the mutable outbox after I/O: a local stop may have queued a report.
         saved.reports = setup?.reports ?? []
+        if saved.credential?.gameId != joined.credential.gameId { youtube = nil }
         saved.credential = joined.credential
         setup = saved
         try persist()
@@ -560,7 +574,16 @@ import ScorebugStreaming
         while let pending = setup?.reports.first(where: { !$0.delivered }) {
             // A live report is never replayed after local capture ends/relaunches.
             guard pending.report.status != .recording || current?.id == pending.report.recordingId else { throw CaptureControlError.recordingStopped }
-            let response = try await clientForSetup().reportRecording(pending.report, credential: pending.credential)
+            let response: RecordingReportResponse
+            do {
+                response = try await clientForSetup().reportRecording(pending.report, credential: pending.credential)
+            } catch MatchClientError.unauthorized, MatchClientError.http(404, _) {
+                // The server no longer knows this match or credential: the report can never be
+                // delivered, and it's only telemetry. Drop it rather than block every later stream.
+                setup?.reports.removeAll { $0.report == pending.report && $0.credential == pending.credential }
+                try persist()
+                continue
+            }
             guard response.recording.gameId == pending.credential.gameId, response.recording.deviceId == pending.credential.deviceId,
                   response.recording.recordingId == pending.report.recordingId, response.recording.sequence == pending.report.sequence,
                   response.recording.status == pending.report.status, response.recording.startedAt == pending.report.startedAt else { throw MatchClientError.invalidResponse }
@@ -572,6 +595,11 @@ import ScorebugStreaming
             try Task.checkCancellation()
         }
     }
+    /// Scheme, host and port: the same server however the address is written.
+    private static func server(_ address: String) -> String? {
+        (try? ScoringEndpoint(address))?.canonicalAddress
+    }
+
     private func persist() throws {
         guard let setup else { return }
         do { try storage.save(setup); needsStorageRetry = false }
@@ -629,6 +657,8 @@ import ScorebugStreaming
             message = "More than one streaming worker is connected, so the server can't pick one. Recording continues."
         } else if error as? CaptureControlError == .outputUnknown {
             message = "The streaming worker needs an update before it can stream. Recording continues."
+        } else if let refusal = error as? CaptureControlError, let text = refusal.goLiveMessage {
+            message = text
         } else {
             message = "Couldn't start the stream. Recording continues."
         }

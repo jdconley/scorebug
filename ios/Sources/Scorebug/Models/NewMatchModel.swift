@@ -11,8 +11,12 @@ import ScorebugCore
     @Published var error: String?
     /// The team already has a different match open (left over from a crash, or another phone).
     @Published private(set) var otherMatchOpen = false
+    /// The team's YouTube channel; nil when none is set.
+    @Published private(set) var channel: TeamYouTube?
+    @Published private(set) var loadedChannel = false
 
     let team: Team
+    let isOwner: Bool
     private let access: TeamAccess
     private let preferences: AppPreferences
     private let clientFactory: AppModel.ClientFactory
@@ -20,10 +24,11 @@ import ScorebugCore
     /// Reused on retry so a lost reply can't create two matches.
     private var pendingCreationID: String?
 
-    init(team: Team, access: TeamAccess, preferences: AppPreferences,
+    init(team: Team, isOwner: Bool = false, access: TeamAccess, preferences: AppPreferences,
          clientFactory: @escaping AppModel.ClientFactory = { MatchHTTPClient(endpoint: $0) },
          newID: @escaping () -> String = { UUID().uuidString.lowercased() }) {
         self.team = team
+        self.isOwner = isOwner
         self.access = access
         self.preferences = preferences
         self.clientFactory = clientFactory
@@ -39,6 +44,37 @@ import ScorebugCore
     }
 
     private var client: MatchHTTPClient? { (try? ScoringEndpoint(access.endpoint)).map(clientFactory)?.team(access.teamId) }
+
+    /// Reads where the team goes live. Recording never waits for this.
+    func loadChannel() async {
+        guard let client else { return }
+        if let detail = try? await client.teamDetail(access.teamId, token: access.token) {
+            channel = detail.youtube
+            loadedChannel = true
+        }
+    }
+
+    /// Why Go Live is off for this team, or nil when it can go live. Unknown (not loaded) allows it:
+    /// the server has the last word.
+    var goLiveBlocked: String? {
+        guard loadedChannel else { return nil }
+        guard let channel else {
+            return isOwner ? "Connect a YouTube channel on the team screen to go live."
+                : "Your team owner hasn't picked a YouTube channel yet."
+        }
+        switch channel.status {
+        case .ready: return nil
+        case .liveDisabled: return "\(channel.channelTitle) can't live stream yet. YouTube makes new channels wait 24 hours."
+        case .needsReconnect: return isOwner ? "YouTube needs reconnecting. Reconnect it on the team screen."
+            : "Ask your team owner to reconnect YouTube."
+        }
+    }
+
+    /// "Wildcats Volleyball", or what stands in its place.
+    var streamLabel: String {
+        if let channel { return channel.channelTitle }
+        return loadedChannel ? "No channel" : "Team's YouTube channel"
+    }
 
     var issues: [NewMatchIssue] { draft.issues }
     var canStart: Bool { draft.isValid && !busy }

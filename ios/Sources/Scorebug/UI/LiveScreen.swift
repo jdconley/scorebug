@@ -9,6 +9,7 @@ struct LiveScreen: View {
     let session: MatchSession
     @ObservedObject var watch: PhoneWatchLink
     @StateObject private var live: LiveModel
+    @StateObject private var watchLink = WatchLinkModel()
     @State private var confirmEnd = false
     @State private var inviting = false
     @State private var savingVideo = false
@@ -60,6 +61,8 @@ struct LiveScreen: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+        .task { if !session.recordOnly { await watchLink.watch(session) } }
+        .onReceive(live.streaming.$youtube) { watchLink.found($0) }
         .onDisappear { watch.attach(nil) }
     }
 
@@ -122,7 +125,8 @@ struct LiveScreen: View {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
                     Text(message).font(.footnote.weight(.medium)).lineLimit(2)
                     if live.canRetryStream {
-                        Button("Retry stream") { live.retryStream() }.font(.footnote.weight(.semibold))
+                        Button("Go live again") { live.retryStream() }.font(.footnote.weight(.semibold))
+                            .accessibilityIdentifier("live.retryStream")
                     }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
@@ -144,6 +148,16 @@ struct LiveScreen: View {
                         .accessibilityIdentifier("live.record")
                 }
                 Spacer()
+                if let url = watchLink.url {
+                    // The match's one YouTube link: share it with the families watching.
+                    ShareLink(item: url, subject: Text("Watch our match live"),
+                              message: Text(watchLink.shareText(teams: board.matchTitle) ?? "")) {
+                        Label("Watch link", systemImage: "play.rectangle.fill")
+                    }
+                    .buttonStyle(OverlayButtonStyle())
+                    .accessibilityLabel("Share the YouTube watch link")
+                    .accessibilityIdentifier("live.watchLink")
+                }
                 if board.scoringElsewhere {
                     Button { board.takeOver() } label: { Label("Scoring on another phone · Take over", systemImage: "hand.raised") }
                         .buttonStyle(OverlayButtonStyle())

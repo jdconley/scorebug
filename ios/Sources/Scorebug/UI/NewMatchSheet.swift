@@ -47,6 +47,10 @@ struct NewMatchSheet: View {
                 }
             }
         }
+        .task {
+            await model.loadChannel()
+            if model.goLiveBlocked != nil { recordOnlyChoice = true }
+        }
         .interactiveDismissDisabled(model.busy)
     }
 
@@ -86,13 +90,15 @@ struct NewMatchSheet: View {
     private var settingsGroup: some View {
         VStack(spacing: 0) {
             Menu {
-                Button { recordOnlyChoice = false } label: { Text("Team's YouTube channel") }
+                Button { recordOnlyChoice = false } label: { Text(model.streamLabel) }
+                    .disabled(model.goLiveBlocked != nil)
                 Button { recordOnlyChoice = true } label: { Text("Record only") }
             } label: {
                 HStack {
                     Text("Stream to").foregroundStyle(Theme.text)
                     Spacer()
-                    Text(recordOnlyChoice ? "Record only" : "Team's YouTube channel").foregroundStyle(Theme.muted)
+                    if !recordOnlyChoice, let channel = model.channel { ChannelThumbnail(url: channel.channelThumbnail, size: 22) }
+                    Text(recordOnlyChoice ? "Record only" : model.streamLabel).foregroundStyle(Theme.muted).lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down").font(.footnote).foregroundStyle(Theme.secondary)
                 }
                 .padding(.horizontal, 14).frame(minHeight: 52)
@@ -115,6 +121,12 @@ struct NewMatchSheet: View {
 
     private var actions: some View {
         VStack(spacing: 14) {
+            if let blocked = model.goLiveBlocked {
+                Label(blocked, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote.weight(.medium)).foregroundStyle(Theme.warn)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("newMatch.goLiveBlocked")
+            }
             if recordOnlyChoice {
                 Button { start(recordOnly: true) } label: { busyLabel("Start recording") }
                     .buttonStyle(BigButtonStyle())

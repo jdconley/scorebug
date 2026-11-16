@@ -24,6 +24,13 @@ actor FakeScorebugServer {
     var teams: [String: FakeTeam] = [:]
     var teamInvites: [String: (id: String, teamId: String, email: String?)] = [:] // code → invite
     var matchTeams: [String: String] = [:] // gameId → teamId
+    var connections: [String: (personId: String, connection: YouTubeConnection)] = [:]
+    var teamChannels: [String: String] = [:] // teamId → connectionId
+    var matchYouTube: [String: MatchYouTube] = [:] // gameId → broadcast
+    var youtubeTickets: [String: String] = [:] // ticket → personId
+    /// What the next YouTube connect grants: a channel title, or nil for "no channel".
+    var nextChannel: String? = "Wildcats Volleyball"
+    var nextChannelStatus: YouTubeStatus = .ready
     var matches: [String: Match] = [:]
     var credentials: [String: MatchCredential] = [:] // token → credential
     var inviteCodes: [String: String] = [:] // code → gameId
@@ -53,6 +60,30 @@ actor FakeScorebugServer {
     }
     func addTeamInvite(code: String, teamId: String, email: String? = nil) { teamInvites[code] = ("inv-\(code)", teamId, email) }
     func revoke(token: String) { sessions[token] = nil }
+    func setNextChannel(_ title: String?, status: YouTubeStatus = .ready) { nextChannel = title; nextChannelStatus = status }
+    func setChannelStatus(_ id: String, _ status: YouTubeStatus) { connections[id]?.connection.status = status }
+    func setWatchLink(_ gameId: String, _ link: MatchYouTube) { matchYouTube[gameId] = link }
+    /// A channel connected by `email`, set as `teamId`'s channel.
+    func addChannel(_ id: String, title: String, by email: String, team teamId: String? = nil, status: YouTubeStatus = .ready) {
+        let person = person(for: email)
+        connections[id] = (person.id, YouTubeConnection(id: id, channelId: "UC-\(id)", channelTitle: title, channelThumbnail: nil,
+                                                       status: status, createdAt: "t", updatedAt: "t"))
+        if let teamId { teamChannels[teamId] = id }
+    }
+
+    /// Google's YouTube consent and the Worker's callback leg, for the person whose token started it.
+    func authorizeYouTube(_ url: URL) -> URL {
+        let personId = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "state" }?.value ?? ""
+        let ticket = String(repeating: "y", count: 40) + String(format: "%03d", youtubeTickets.count)
+        youtubeTickets[ticket] = personId
+        return URL(string: "scorebug://auth?purpose=youtube&status=ok&ticket=\(ticket)")!
+    }
+
+    private func teamYouTube(_ teamId: String) -> Any {
+        guard let id = teamChannels[teamId], let entry = connections[id] else { return NSNull() }
+        return ["connectionId": id, "channelTitle": entry.connection.channelTitle, "channelThumbnail": NSNull(),
+                "status": entry.connection.status.rawValue, "connectedBy": entry.personId]
+    }
 
     private func person(for email: String) -> Person {
         if let existing = people.values.first(where: { $0.email == email }) { return existing }
@@ -146,6 +177,41 @@ actor FakeScorebugServer {
             if let email = invite.email, email != person.email { return (403, ["error": "invite_email_mismatch"]) }
             addTeam(invite.teamId, name: "", member: person.id, role: teams[invite.teamId]?.roles[person.id] ?? .member)
             return (200, ["team": encode(teams[invite.teamId]!.team), "role": "member", "serverTime": Self.now()])
+        case ("POST", ["youtube", "connect"]):
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            return (200, ["url": "https://accounts.google.test/o/oauth2/v2/auth?state=\(person.id)", "serverTime": Self.now()])
+        case ("POST", ["youtube", "connections"]):
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            guard let owner = youtubeTickets.removeValue(forKey: body["ticket"] as? String ?? ""), owner == person.id else {
+                return (404, ["error": "ticket_invalid"])
+            }
+            guard let title = nextChannel else { return (409, ["error": "youtube_no_channel"]) }
+            // Reconnecting the same channel keeps its connection.
+            let id = connections.first { $0.value.personId == person.id && $0.value.connection.channelTitle == title }?.key ?? "conn-\(connections.count + 1)"
+            connections[id] = (person.id, YouTubeConnection(id: id, channelId: "UC-\(id)", channelTitle: title, channelThumbnail: nil,
+                                                           status: nextChannelStatus, createdAt: "t", updatedAt: "t"))
+            return (201, ["connection": encode(connections[id]!.connection), "serverTime": Self.now()])
+        case ("GET", ["youtube", "connections"]):
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            let mine = connections.values.filter { $0.personId == person.id }.map(\.connection).sorted { $0.id < $1.id }
+            return (200, ["connections": encode(mine), "serverTime": Self.now()])
+        case ("POST", let p) where p.count == 4 && p[0] == "youtube" && p[3] == "check":
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            guard var entry = connections[p[2]], entry.personId == person.id else { return (404, ["error": "connection_not_found"]) }
+            if entry.connection.status == .liveDisabled { entry.connection.status = .ready }
+            connections[p[2]] = entry
+            return (200, ["connection": encode(entry.connection), "serverTime": Self.now()])
+        case ("PUT", let p) where p.count == 3 && p[0] == "teams" && p[2] == "youtube":
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            guard let role = teams[p[1]]?.roles[person.id] else { return (404, ["error": "team_not_found"]) }
+            guard role == .owner else { return (403, ["error": "owner_required"]) }
+            if let id = body["connectionId"] as? String {
+                guard connections[id]?.personId == person.id else { return (404, ["error": "connection_not_found"]) }
+                teamChannels[p[1]] = id
+            } else {
+                teamChannels[p[1]] = nil
+            }
+            return (200, ["youtube": teamYouTube(p[1]), "serverTime": Self.now()])
         case (_, let p) where p.count >= 2 && p[0] == "teams" && (p.count < 3 || p[2] != "matches"):
             return teamRoute(method: method, parts: p, body: body, token: token)
         case (_, let p) where p.count >= 3 && p[0] == "teams" && p[2] == "matches":
@@ -160,7 +226,7 @@ actor FakeScorebugServer {
             return (200, ["credential": encode(credential), "snapshot": encode(match.snapshot), "serverTime": Self.now()])
         case ("GET", let p) where p.count == 2 && p[0] == "matches":
             guard let credential = credentials[token ?? ""], credential.gameId == p[1], let match = matches[p[1]] else { return (401, ["error": "unauthorized"]) }
-            return (200, ["snapshot": encode(match.snapshot), "serverTime": Self.now()])
+            return (200, ["snapshot": encode(match.snapshot), "youtube": matchYouTube[p[1]].map(encode) ?? NSNull(), "serverTime": Self.now()])
         case ("GET", let p) where p.count == 4 && p[0] == "matches" && p[2] == "commands":
             guard let receipt = matches[p[1]]?.receipts[p[3]] else { return (404, ["error": "command_not_found"]) }
             return (200, encode(receipt))
@@ -186,7 +252,8 @@ actor FakeScorebugServer {
             let members = team.roles.sorted { ($0.value == .owner ? 0 : 1, $0.key) < ($1.value == .owner ? 0 : 1, $1.key) }.map { id, role in
                 ["personId": id, "name": people[id]?.name ?? NSNull(), "email": people[id]?.email ?? "", "role": role.rawValue] as [String: Any]
             }
-            var result: [String: Any] = ["team": encode(team.team), "role": role.rawValue, "members": members, "serverTime": Self.now()]
+            var result: [String: Any] = ["team": encode(team.team), "role": role.rawValue, "members": members,
+                                         "youtube": teamYouTube(team.team.id), "serverTime": Self.now()]
             if owner { result["invites"] = invitesJSON() }
             return (200, result)
         case ("PATCH", []):
@@ -247,7 +314,8 @@ actor FakeScorebugServer {
             return (201, ["snapshot": encode(snapshot), "credential": encode(credential), "serverTime": Self.now()])
         case ("GET", ["active"]):
             let active = teamMatches.values.first { $0.snapshot.status == .active }?.snapshot
-            return (200, ["snapshot": active.map(encode) ?? NSNull(), "serverTime": Self.now()])
+            return (200, ["snapshot": active.map(encode) ?? NSNull(), "youtube": active.flatMap { matchYouTube[$0.id] }.map(encode) ?? NSNull(),
+                          "serverTime": Self.now()])
         case ("POST", let p) where p.count == 2 && p[1] == "join":
             guard let match = teamMatches[p[0]] else { return (404, ["error": "match_not_found"]) }
             if match.snapshot.status == .ended { return (409, ["error": "match_ended"]) }

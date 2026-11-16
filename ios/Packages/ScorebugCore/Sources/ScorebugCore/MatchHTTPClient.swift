@@ -159,13 +159,13 @@ public struct MatchHTTPClient: MatchScoringClient {
               components.user == nil, components.password == nil, components.fragment == nil,
               let url = components.url else { throw MatchClientError.invalidResponse }
         if let canonicalAttempt {
+            // The stream ID is the intake's own (Cloudflare Stream's, or the self-hosted relay's
+            // signed one). The server authenticates it; the app needs exactly one, intact, and
+            // the grant bound to this exact publishing attempt.
             let streamIDs = components.queryItems?.filter { $0.name == "streamid" } ?? []
-            // The server authenticates the proof. Native only checks complete syntax
-            // and binds this capability to the exact local publishing attempt.
-            let pattern = "\\Apublish:scorebug-[0-9a-f]{16}-[0-9a-f]{32}:sbp1=\(canonicalAttempt)\\.[0-9a-f]{64}\\z"
             guard response.publishingAttemptId == canonicalAttempt, streamIDs.count == 1,
-                  let streamID = streamIDs.first?.value,
-                  streamID.range(of: pattern, options: .regularExpression) != nil else {
+                  let streamID = streamIDs.first?.value, !streamID.isEmpty, streamID.count <= 512,
+                  streamID.unicodeScalars.allSatisfy({ $0.value > 0x20 && $0.value < 0x7F }) else {
                 throw MatchClientError.invalidResponse
             }
         }
