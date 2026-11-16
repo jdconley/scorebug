@@ -191,7 +191,12 @@ import ScorebugStreaming
     }
 
     func connect() async {
-        guard !busy, !stopping, !publisherStopping, !controlBusy else { return }
+        // The background poll keeps polling the last match. Wait for a request in flight instead of
+        // skipping the connect, or Go Live would reuse the last match's credential and be refused.
+        for _ in 0..<300 where busy || stopping || publisherStopping || controlBusy {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard !busy, !stopping, !publisherStopping, !controlBusy else { fail(CaptureControlError.unresolved); return }
         // The caller set the server, token and team before connecting; the first restore must not
         // put back the ones saved by an older build (a phone that used a self-hosted server).
         let wanted = (endpoint: endpoint, token: installationToken, teamId: teamId)
@@ -225,6 +230,26 @@ import ScorebugStreaming
             try await joinActiveMatch()
             message = nil
         } catch { fail(error) }
+    }
+
+    /// The match is over: drop its credential, reports and pending command so the background poll
+    /// stops polling it and the next match connects from scratch. The server ends the match's
+    /// broadcast with the match; reports are only telemetry.
+    func releaseMatch() async {
+        await stoppingTask?.value
+        cancelReconnect()
+        requestedStart = nil
+        action?.cancel()
+        await action?.value
+        try? pendingStore.save(nil)
+        if var saved = setup {
+            saved.credential = nil; saved.reports = []; saved.stopRecordingIDs = nil
+            setup = saved
+            try? persist()
+        }
+        coordinator = nil; connectedGameID = nil; commandState = nil; youtube = nil
+        ownedRecordingIDs = []; shouldStopOwnedBroadcast = false
+        localState = .idle; message = nil
     }
 
     func startStreaming() async {
@@ -509,7 +534,15 @@ import ScorebugStreaming
         try Task.checkCancellation()
         guard let match = active.snapshot, match.status == .active else { throw CaptureControlError.noActiveMatch }
         if saved.credential?.gameId != match.id {
-            guard try pendingStore.load() == nil, saved.reports.isEmpty else { throw CaptureControlError.unresolved }
+            // A new match is open, so the last one has ended and the server has torn its broadcast
+            // down. Its reports (telemetry) and any pending command can never matter again; keeping
+            // them would block this match from going live. The recording's report is queued again
+            // under the new credential below.
+            if let pending = try pendingStore.load(), pending.command.gameId != match.id { try pendingStore.save(nil) }
+            saved.reports.removeAll { $0.credential.gameId != match.id }
+            ownedRecordingIDs = Set([current?.id].compactMap { $0 })
+            shouldStopOwnedBroadcast = false
+            coordinator = nil; connectedGameID = nil; commandState = nil
         }
         let joined = try await client.join(gameId: match.id, deviceId: saved.deviceId, role: .capture, installationToken: saved.installationToken)
         try Task.checkCancellation()

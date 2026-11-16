@@ -178,6 +178,49 @@ import XCTest
         XCTAssertEqual(model.status, .live, String(describing: model.message))
     }
 
+    /// The background control poll keeps polling the last match. Connecting the next one while a
+    /// poll is mid-request must wait for it and join the new match, not go live on the old one.
+    func testConnectWaitsForARunningPollAndJoinsTheNewMatch() async throws {
+        let model = makeModel()
+        await model.restore()
+        XCTAssertEqual(model.connectedGameID, "game-1")
+        await server.setActiveGame("game-2")
+        await server.setDelay(.milliseconds(80))
+        let poll = Task { await model.pollControl() }
+        try await Task.sleep(for: .milliseconds(10))
+        model.installationToken = "test-token"
+        model.captureChanged(captureContext())
+        await model.connect()
+        await poll.value
+        await server.setDelay(.zero)
+        XCTAssertEqual(model.connectedGameID, "game-2")
+        await model.startStreaming()
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+    }
+
+    /// After a match ends, the next one on the same phone must go live on its own credential,
+    /// and the old match must not be polled anymore.
+    func testReleasedMatchIsNotPolledAndTheNextMatchGoesLive() async throws {
+        let model = makeModel()
+        await goLive(model)
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+        await model.stopStreaming()
+        model.captureChanged(nil)
+        await model.releaseMatch()
+        XCTAssertNil(model.connectedGameID)
+        let before = await server.requestCount
+        await model.pollControl()
+        let after = await server.requestCount
+        XCTAssertEqual(after, before, "a released match is not polled")
+        await server.setActiveGame("game-2")
+        model.installationToken = "test-token"
+        model.captureChanged(CurrentCapture(id: "recording-2", startedAt: "2026-09-14T01:00:00Z", tap: PublishingTap()))
+        await model.connect()
+        XCTAssertEqual(model.connectedGameID, "game-2")
+        await model.startStreaming()
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+    }
+
     func testReportsForAMatchTheServerForgotAreDropped() async throws {
         var setup = captureSetup()
         setup.reports = [PendingCaptureReport(credential: MatchCredential(gameId: "gone", deviceId: "capture-1", role: .capture, token: "x"),
@@ -387,6 +430,11 @@ actor CaptureTestServer {
     /// Matches this server has never heard of: their reports answer 404.
     var unknownGames: Set<String> = []
     var youtube: MatchYouTube?
+    /// The match open on the server. Commands for any other (ended) match are refused.
+    var activeGame = "game-1"
+    var delay: Duration = .zero
+    func setActiveGame(_ game: String) { activeGame = game }
+    func setDelay(_ value: Duration) { delay = value }
     func setOffline(_ value: Bool) { offline = value }
     func forget(game: String) { unknownGames.insert(game) }
     func setYouTube(_ link: MatchYouTube) { youtube = link }
@@ -394,28 +442,36 @@ actor CaptureTestServer {
     func stopBroadcastRemotely() { broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil) }
     func respond(_ request: URLRequest) async throws -> (Data, URLResponse) {
         requestCount += 1
+        if delay > .zero { try await Task.sleep(for: delay) }
         if offline { throw URLError(.notConnectedToInternet) }
         let path = request.url!.path
+        let parts = path.split(separator: "/").map(String.init)
+        let game = parts.firstIndex(of: "matches").flatMap { parts.indices.contains($0 + 1) ? parts[$0 + 1] : nil }
+            .flatMap { $0 == "active" ? nil : $0 } ?? activeGame
         // The old self-hosted server is gone.
         if request.url!.host == "old.example" { throw URLError(.cannotFindHost) }
         let time = ISO8601DateFormatter().string(from: Date())
         let data: Data
         if path.hasSuffix("/active") {
-            data = try JSONEncoder().encode(ActiveMatchResponse(snapshot: matchSnapshot(), serverTime: time))
+            data = try JSONEncoder().encode(ActiveMatchResponse(snapshot: matchSnapshot(id: activeGame), serverTime: time))
         } else if path.hasSuffix("/join") {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
-            data = try JSONEncoder().encode(MatchSessionResponse(snapshot: matchSnapshot(), credential: .init(gameId: "game-1", deviceId: body["deviceId"]!, role: .capture, token: "capture-token"), serverTime: time))
+            data = try JSONEncoder().encode(MatchSessionResponse(snapshot: matchSnapshot(id: activeGame), credential: .init(gameId: activeGame, deviceId: body["deviceId"]!, role: .capture, token: "capture-token"), serverTime: time))
         } else if path.hasSuffix("/recordings"), unknownGames.contains(where: { path.contains("/\($0)/") }) {
             return (Data("{\"error\":\"match_not_found\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
         } else if path.hasSuffix("/recordings") {
             let report = try JSONDecoder().decode(RecordingReport.self, from: request.httpBody!)
             reports.append(report)
-            data = try JSONEncoder().encode(RecordingReportResponse(recording: .init(gameId: "game-1", recordingId: report.recordingId, deviceId: "capture-1", startedAt: report.startedAt, updatedAt: time, status: report.status, sequence: report.sequence), serverTime: time))
+            data = try JSONEncoder().encode(RecordingReportResponse(recording: .init(gameId: game, recordingId: report.recordingId, deviceId: "capture-1", startedAt: report.startedAt, updatedAt: time, status: report.status, sequence: report.sequence), serverTime: time))
         } else if path.hasSuffix("/commands") {
             let command = try JSONDecoder().decode(BroadcastCommand.self, from: request.httpBody!)
             if case .start(let selection) = command.operation { startSelections.append(selection) }
+            if case .start = command.operation, game != activeGame {
+                let result = BroadcastOutcome(commandId: command.commandId, accepted: false, error: "match_ended", snapshot: snapshot(game))
+                return (try JSONEncoder().encode(result), HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!)
+            }
             if case .start = command.operation, let startRejection {
-                let result = BroadcastOutcome(commandId: command.commandId, accepted: false, error: startRejection, snapshot: snapshot())
+                let result = BroadcastOutcome(commandId: command.commandId, accepted: false, error: startRejection, snapshot: snapshot(game))
                 receipts[command.commandId] = result
                 return (try JSONEncoder().encode(result), HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!)
             }
@@ -427,7 +483,7 @@ actor CaptureTestServer {
                 broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: selection); operations.append("start")
             case .stop: broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil); operations.append("stop")
             }
-            let result = BroadcastOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: snapshot(), youtube: youtube)
+            let result = BroadcastOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: snapshot(game), youtube: youtube)
             receipts[command.commandId] = result
             data = try JSONEncoder().encode(result)
         } else if path.contains("/commands/") {
@@ -436,20 +492,20 @@ actor CaptureTestServer {
         } else if path.hasSuffix("/publish") {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             let attempt = body["publishingAttemptId"] as? String
-            var response: [String: Any] = ["gameId": "game-1", "recordingId": body["recordingId"]!, "generation": broadcast.generation, "serverTime": time]
+            var response: [String: Any] = ["gameId": game, "recordingId": body["recordingId"]!, "generation": broadcast.generation, "serverTime": time]
             if let attempt { response["publishingAttemptId"] = attempt }
             let streamID = attempt.map { "publish:scorebug-0123456789abcdef-0123456789abcdef0123456789abcdef:sbp1=\($0)." + String(repeating: "a", count: 64) } ?? "test"
             response["publishUrl"] = "srt://localhost:19000?streamid=\(streamID)"
             data = try JSONSerialization.data(withJSONObject: response)
         } else {
-            data = try JSONEncoder().encode(MediaSnapshotResponse(snapshot: snapshot(), serverTime: time))
+            data = try JSONEncoder().encode(MediaSnapshotResponse(snapshot: snapshot(game), serverTime: time))
         }
         return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }
-    func snapshot() -> MediaSnapshot { .init(gameId: "game-1", recordings: [], broadcast: broadcast) }
+    func snapshot(_ game: String = "game-1") -> MediaSnapshot { .init(gameId: game, recordings: [], broadcast: broadcast) }
 }
 
-private func matchSnapshot() throws -> MatchSnapshot {
-    let json = ##"{"id":"game-1","createdAt":"2026-09-14T00:00:00Z","revision":0,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":0,"away":0,"set":1,"homeSets":0,"awaySets":0},"completedSets":[],"status":"active","endReason":null,"canUndo":false,"scorer":{"deviceId":"scorer-1","epoch":1},"broadcast":{"desired":"stopped","generation":0}}"##
-    return try JSONDecoder().decode(MatchSnapshot.self, from: Data(json.utf8))
+private func matchSnapshot(id: String = "game-1") throws -> MatchSnapshot {
+    let json = ##"{"id":"GAME_ID","createdAt":"2026-09-14T00:00:00Z","revision":0,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":0,"away":0,"set":1,"homeSets":0,"awaySets":0},"completedSets":[],"status":"active","endReason":null,"canUndo":false,"scorer":{"deviceId":"scorer-1","epoch":1},"broadcast":{"desired":"stopped","generation":0}}"##
+    return try JSONDecoder().decode(MatchSnapshot.self, from: Data(json.replacingOccurrences(of: "GAME_ID", with: id).utf8))
 }
