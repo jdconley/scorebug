@@ -127,6 +127,12 @@ it.each(['generation', 'ended', 'worker', 'match', 'stopped'])(
     expect(await f.client.load()).toBeNull();
   },
 );
+it('accepts an RTMPS source (hosted Scorebug pulls Stream over RTMPS)', async () => {
+  const source = connection();
+  source.connection.readUrl = 'rtmps://live.cloudflare.com:443/live/playkey';
+  const f = await fixture((_path, index) => ({ body: index === 2 ? source : snapshot() }));
+  expect((await f.client.load())?.readUrl).toBe('rtmps://live.cloudflare.com:443/live/playkey');
+});
 it('rejects malformed response values and unsafe source transports', async () => {
   const source = connection();
   source.connection.readUrl = 'file:///private/file';

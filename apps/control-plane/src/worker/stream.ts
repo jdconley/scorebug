@@ -18,7 +18,10 @@ export type LiveInput = {
   uid: string;
   /** The phone publishes here over SRT. */
   publishUrl: string;
-  /** The match container pulls this SRT playback URL. */
+  /**
+   * The match container pulls this RTMPS playback URL. Stream's SRT playback corrupts the
+   * iPhone's feed (every frame fails to decode a few macroblock rows in); RTMPS is clean.
+   */
   readUrl: string;
 };
 export type ListedInput = { uid: string; name: string | null; createdAt: number };
@@ -40,14 +43,22 @@ export interface StreamApi {
 }
 
 type SrtEndpoint = { url?: string; streamId?: string; passphrase?: string };
+type RtmpsEndpoint = { url?: string; streamKey?: string };
 type InputResource = {
   uid?: string;
   created?: string;
   meta?: { name?: string };
   srt?: SrtEndpoint;
-  srtPlayback?: SrtEndpoint;
+  rtmpsPlayback?: RtmpsEndpoint;
   status?: { current?: { state?: string } } | null;
 };
+
+function rtmpsUrl(endpoint: RtmpsEndpoint | undefined): string {
+  if (!endpoint?.url || !endpoint.streamKey) throw new StreamError('stream_error');
+  const url = new URL(endpoint.url.endsWith('/') ? endpoint.url : `${endpoint.url}/`);
+  if (url.protocol !== 'rtmps:') throw new StreamError('stream_error');
+  return new URL(encodeURIComponent(endpoint.streamKey), url).toString();
+}
 
 function srtUrl(endpoint: SrtEndpoint | undefined): string {
   if (!endpoint?.url || !endpoint.streamId || !endpoint.passphrase)
@@ -99,7 +110,11 @@ export function realStream(
         recording: { mode: 'off' },
       });
       if (!input?.uid) throw new StreamError('stream_error');
-      return { uid: input.uid, publishUrl: srtUrl(input.srt), readUrl: srtUrl(input.srtPlayback) };
+      return {
+        uid: input.uid,
+        publishUrl: srtUrl(input.srt),
+        readUrl: rtmpsUrl(input.rtmpsPlayback),
+      };
     },
     async deleteInput(uid) {
       await call('DELETE', `/${encodeURIComponent(uid)}`);
