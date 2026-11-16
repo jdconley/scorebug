@@ -17,6 +17,10 @@ public struct MatchHTTPClient: MatchScoringClient {
 
     private let endpoint: ScoringEndpoint
     private let transport: Transport
+    /// Set by `team(_:)`: create, active, join, invites and broadcast commands go through
+    /// `/v1/teams/:teamId/matches`, authorized by the person's session token. Match-token
+    /// routes (snapshot, commands, media) always use `/v1/matches/:id`.
+    public private(set) var teamId: String?
 
     // Reuse one owned session across phone/watch clients. Waiting lets the first
     // LAN request survive the privacy prompt; the resource timeout also bounds
@@ -44,6 +48,27 @@ public struct MatchHTTPClient: MatchScoringClient {
         self.transport = transport
     }
 
+    /// The same client, with member routes scoped to one team. Nil keeps the unscoped routes.
+    public func team(_ teamId: String?) -> MatchHTTPClient {
+        var copy = self
+        copy.teamId = teamId
+        return copy
+    }
+
+    public var serverURL: URL { endpoint.url }
+
+    /// `["teams", teamId, "matches"]` for a team member, else `["matches"]`.
+    private func memberRoot() throws -> [String] {
+        guard let teamId else { return ["matches"] }
+        guard Self.isIdentifier(teamId) else { throw MatchClientError.invalidIdentifier }
+        return ["teams", teamId, "matches"]
+    }
+
+    static func isIdentifier(_ component: String) -> Bool {
+        !component.isEmpty && component.utf8.count <= 128 && component.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0)
+            || (48...57).contains($0) || $0 == 45 || $0 == 95 })
+    }
+
     public func create(id: String, deviceId: String, teams: MatchTeams, rules: MatchRules,
                        installationToken: String) async throws -> MatchSessionResponse {
         try await create(MatchCreation(id: id, deviceId: deviceId, teams: teams, rules: rules), ownerToken: installationToken)
@@ -51,32 +76,14 @@ public struct MatchHTTPClient: MatchScoringClient {
 
     /// Owner only. Repeating the same creation (same ID) after a lost response is safe.
     public func create(_ creation: MatchCreation, ownerToken: String) async throws -> MatchSessionResponse {
-        try await send(path: [], method: "POST", token: ownerToken, body: JSONEncoder().encode(creation))
+        try await send(root: try memberRoot(), path: [], method: "POST", token: ownerToken, body: JSONEncoder().encode(creation))
     }
 
-    // MARK: Phone setup, devices, destinations and invites (docs/api.md)
-
-    /// Unauthenticated. Repeating the same request with the same device ID within ten minutes returns the same token.
-    public func redeemSetup(code: String, deviceId: String, deviceName: String) async throws -> SetupRedeemed {
-        struct Request: Encodable { let code: String; let deviceId: String; let deviceName: String }
-        return try await send(root: ["setup"], path: ["redeem"], method: "POST", token: nil,
-                              body: JSONEncoder().encode(Request(code: code, deviceId: deviceId, deviceName: deviceName)))
-    }
-
-    /// Checks a stored owner token.
-    public func currentDevice(ownerToken: String) async throws -> CurrentDevice {
-        try await send(root: ["devices"], path: ["me"], token: ownerToken)
-    }
-
-    public func destinations(ownerToken: String) async throws -> [Destination] {
-        struct Response: Decodable { let destinations: [Destination] }
-        let response: Response = try await send(root: ["destinations"], path: [], token: ownerToken)
-        return response.destinations
-    }
+    // MARK: Match join codes (docs/api.md)
 
     /// Owner token or the match's capture credential token.
     public func createInvite(gameId: String, token: String) async throws -> MatchInviteIssued {
-        try await send(path: [gameId, "invites"], method: "POST", token: token, body: Data("{}".utf8))
+        try await send(root: try memberRoot(), path: [gameId, "invites"], method: "POST", token: token, body: Data("{}".utf8))
     }
 
     /// Unauthenticated. Returns a per-match score credential; send `take_over` before scoring.
@@ -87,13 +94,13 @@ public struct MatchHTTPClient: MatchScoringClient {
     }
 
     public func active(installationToken: String) async throws -> ActiveMatchResponse {
-        try await send(path: ["active"], token: installationToken)
+        try await send(root: try memberRoot(), path: ["active"], token: installationToken)
     }
 
     public func join(gameId: String, deviceId: String, role: MatchRole,
                      installationToken: String) async throws -> MatchSessionResponse {
         struct Join: Encodable { let deviceId: String; let role: MatchRole }
-        return try await send(path: [gameId, "join"], method: "POST", token: installationToken,
+        return try await send(root: try memberRoot(), path: [gameId, "join"], method: "POST", token: installationToken,
                               body: JSONEncoder().encode(Join(deviceId: deviceId, role: role)))
     }
 
@@ -168,30 +175,26 @@ public struct MatchHTTPClient: MatchScoringClient {
 
     /// Installation authorization controls publishing; a 409 is a normal domain outcome.
     public func executeBroadcast(_ command: BroadcastCommand, installationToken: String) async throws -> BroadcastOutcome {
-        try await send(path: [command.gameId, "media", "commands"], method: "POST", token: installationToken,
+        try await send(root: try memberRoot(), path: [command.gameId, "media", "commands"], method: "POST", token: installationToken,
                        body: JSONEncoder().encode(command), additionalStatuses: [409])
     }
 
     public func broadcastReceipt(gameId: String, commandId: String, installationToken: String) async throws -> BroadcastOutcome? {
         do {
-            return try await send(path: [gameId, "media", "commands", commandId], token: installationToken)
+            return try await send(root: try memberRoot(), path: [gameId, "media", "commands", commandId], token: installationToken)
         } catch MatchClientError.http(status: 404, code: "command_not_found") {
             return nil
         }
     }
 
-    private func send<Response: Decodable>(root: [String] = ["matches"], path: [String], method: String = "GET", token: String?,
+    func send<Response: Decodable>(root: [String] = ["matches"], path: [String], method: String = "GET", token: String?,
                                           body: Data? = nil, additionalStatuses: Set<Int> = [], requiresFreshResponse: Bool = false, query: [URLQueryItem] = []) async throws -> Response {
         var url = endpoint.url.appendingPathComponent("v1")
         for component in root { url.appendPathComponent(component) }
         // Identifiers follow the server's ASCII grammar, preventing a scoped path
         // from being redirected by a slash, percent escape, or dot segment.
         for component in path {
-            guard !component.isEmpty, component.utf8.count <= 128,
-                  component.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0)
-                      || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else {
-                throw MatchClientError.invalidIdentifier
-            }
+            guard Self.isIdentifier(component) else { throw MatchClientError.invalidIdentifier }
             url.appendPathComponent(component)
         }
         if !query.isEmpty {
@@ -222,6 +225,10 @@ public struct MatchHTTPClient: MatchScoringClient {
                 throw MatchClientError.http(status: response.statusCode, code: code)
             }
         }
+        if Response.self == NoContent.self { return NoContent() as! Response }
         return try JSONDecoder().decode(Response.self, from: data)
     }
 }
+
+/// A 2xx reply whose body doesn't matter (204 No Content, or a body we ignore).
+struct NoContent: Decodable {}

@@ -13,15 +13,16 @@ import ScorebugCore
     @Published private(set) var began = false
     @Published private(set) var finishing = false
 
-    private let config: ServerConfig
+    /// Nil on a phone that joined with a code: it records but doesn't stream.
+    private let access: TeamAccess?
     private let preferences: AppPreferences
     private let recordIn4K: Bool
     private var bag: Set<AnyCancellable> = []
 
-    init(session: MatchSession, config: ServerConfig, scoreboard: ScoreboardModel, film: FilmModel,
+    init(session: MatchSession, access: TeamAccess?, scoreboard: ScoreboardModel, film: FilmModel,
          streaming: CaptureStreamingModel, preferences: AppPreferences, recordIn4K: Bool) {
         self.session = session
-        self.config = config
+        self.access = access
         self.scoreboard = scoreboard
         self.film = film
         self.streaming = streaming
@@ -49,9 +50,10 @@ import ScorebugCore
         await film.start()
         noteRecording()
         // The stream rides on the recording, never the other way round.
-        guard film.state == .recording, !session.recordOnly, let token = config.ownerToken else { return }
-        streaming.endpoint = config.endpoint
-        streaming.installationToken = token
+        guard film.state == .recording, !session.recordOnly, let access else { return }
+        streaming.endpoint = access.endpoint
+        streaming.installationToken = access.token
+        streaming.teamId = access.teamId
         await streaming.connect()
         streaming.requestStartStreaming()
     }

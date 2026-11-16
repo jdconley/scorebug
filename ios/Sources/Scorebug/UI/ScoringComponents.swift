@@ -151,7 +151,7 @@ struct MatchOverCard: View {
 /// Invite scorer: QR, short code and a share sheet for the join link.
 struct InviteSheet: View {
     let session: MatchSession
-    let ownerToken: String?
+    let access: TeamAccess?
     @StateObject private var model = InviteModel()
     @Environment(\.dismiss) private var dismiss
 
@@ -159,7 +159,7 @@ struct InviteSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
-                    Text("Another phone can score this match. Scan this code with its camera, or type the code in Scorebug → Join a match.")
+                    Text("Another phone can score this match. Point its camera at this code, or type the code in Scorebug → Join with a code.")
                         .font(.subheadline).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
                     if let invite = model.invite {
                         QRCodeImage(text: invite.link)
@@ -178,7 +178,7 @@ struct InviteSheet: View {
                         Text("Works until the match ends.").font(.footnote).foregroundStyle(Theme.secondary)
                     } else if let error = model.error {
                         Text(error).foregroundStyle(Theme.warn).multilineTextAlignment(.center)
-                        Button("Try again") { Task { await model.create(session: session, ownerToken: ownerToken) } }
+                        Button("Try again") { Task { await model.create(session: session, access: access) } }
                             .buttonStyle(BigButtonStyle(kind: .surface, height: 48))
                     } else {
                         ProgressView().padding(40)
@@ -192,7 +192,7 @@ struct InviteSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .task { await model.create(session: session, ownerToken: ownerToken) }
+        .task { await model.create(session: session, access: access) }
     }
 }
 

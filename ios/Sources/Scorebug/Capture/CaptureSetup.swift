@@ -17,6 +17,8 @@ struct SavedCaptureSetup: Codable {
     // Optional for decoding setups written before the stop-ownership ledger.
     // At most 64 IDs, reserved before issuing broadcast intent and never evicted.
     var stopRecordingIDs: [String]? = nil
+    /// The team whose match routes this setup uses; nil for the unscoped routes.
+    var teamId: String? = nil
 
     var endpointScope: String {
         var components = URLComponents(string: endpoint)!
@@ -25,7 +27,7 @@ struct SavedCaptureSetup: Codable {
         if (components.scheme == "http" && components.port == 80) || (components.scheme == "https" && components.port == 443) { components.port = nil }
         while components.path.hasSuffix("/") { components.path.removeLast() }
         let account = SHA256.hash(data: Data(installationToken.utf8)).map { String(format: "%02x", $0) }.joined()
-        return components.string! + "#" + account
+        return components.string! + "#" + account + (teamId.map { "@" + $0 } ?? "")
     }
 }
 

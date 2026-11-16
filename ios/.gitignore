@@ -14,3 +14,7 @@ Package.resolved
 
 # Build products
 build/
+
+# Local Worker state for the screenshot tour
+AppUITests/LocalWorker/.state/
+AppUITests/LocalWorker/.wrangler/

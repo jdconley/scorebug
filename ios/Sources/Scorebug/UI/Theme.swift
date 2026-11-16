@@ -115,3 +115,10 @@ extension View {
         background(Theme.ground.ignoresSafeArea())
     }
 }
+
+extension View {
+    func fieldStyle() -> some View {
+        padding(.horizontal, 14).frame(minHeight: 52)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}

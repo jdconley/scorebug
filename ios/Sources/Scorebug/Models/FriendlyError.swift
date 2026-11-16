@@ -8,20 +8,20 @@ enum FriendlyError {
             switch error.code {
             case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
                 return "This phone is offline. Check Wi-Fi or cellular and try again."
-            case .timedOut: return "The server took too long to answer. Try again."
+            case .timedOut: return "Scorebug took too long to answer. Try again."
             case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
-                return "Can't reach the server. Check the address and your connection."
+                return "Can't reach Scorebug. Check your connection."
             case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate:
-                return "The server's secure connection didn't check out."
-            default: return "Can't reach the server. Try again."
+                return "Scorebug's secure connection didn't check out."
+            default: return "Can't reach Scorebug. Try again."
             }
         }
         if let error = error as? MatchClientError {
             switch error {
-            case .unauthorized: return "The server didn't accept this phone. Connect it again with a new setup link."
-            case .forbidden: return "This phone isn't allowed to do that."
+            case .unauthorized: return "Scorebug didn't accept this phone. Sign in again."
+            case .forbidden: return "You aren't allowed to do that."
             case .http(let status, let code): return message(code: code, status: status)
-            case .invalidResponse, .invalidIdentifier: return "The server sent something unexpected. Try again."
+            case .invalidResponse, .invalidIdentifier: return "Scorebug sent something unexpected. Try again."
             }
         }
         if let error = error as? MatchCoordinatorError {
@@ -33,7 +33,7 @@ enum FriendlyError {
             }
         }
         if error is ScoringEndpoint.ValidationError {
-            return "Enter the server address, like https://scorebug.example.com."
+            return "Enter a server address, like http://localhost:8787."
         }
         if error is SecureStoreError { return "Couldn't save on this phone. Unlock it and try again." }
         return "Something went wrong. Try again."
@@ -41,19 +41,16 @@ enum FriendlyError {
 
     static func message(code: String?, status: Int) -> String {
         switch code {
-        case "setup_code_invalid": return "That setup code isn't valid. Check it, or make a new link on the server."
-        case "setup_code_used": return "That setup link was already used. Make a new one on the server."
-        case "setup_code_expired": return "That setup link has expired. Make a new one on the server."
         case "invite_invalid": return "That invite code didn't work. Check it and try again."
         case "invite_expired": return "That invite has expired. Ask for a new code."
         case "invite_revoked": return "That invite was turned off. Ask for a new code."
         case "match_ended": return "That match has ended."
         case "rate_limited": return "Too many tries. Wait a minute and try again."
         case "device_id_taken": return "This phone is already part of that match."
-        case "match_in_flight": return "Another match is still open on the server."
-        case "destination_not_found": return "That stream destination is gone. Pick another one."
+        case "match_in_flight": return "Your team already has a match open."
+        case "team_not_found": return "You're not on that team anymore."
+        case "cannot_create_teams": return "Your account can't create teams yet."
         case "record_only_match": return "This match is record only."
-        case "public_url_not_configured": return "The server needs its public address set before it can make codes."
         case "tied_set": return "A set can't end tied."
         case "set_not_won": return "Nobody has won this set yet."
         case "match_already_won": return "The match is already decided."
@@ -61,9 +58,9 @@ enum FriendlyError {
         case "command_expired": return "That change took too long to send. Check the score and try again."
         case "nothing_to_undo": return "Nothing to undo."
         default:
-            if status == 404 { return "The server doesn't know that match." }
-            if status >= 500 { return "The server had a problem. Try again in a moment." }
-            return "The server said no. Try again."
+            if status == 404 { return "Scorebug doesn't know that match." }
+            if status >= 500 { return "Scorebug had a problem. Try again in a moment." }
+            return "Scorebug said no. Try again."
         }
     }
 }

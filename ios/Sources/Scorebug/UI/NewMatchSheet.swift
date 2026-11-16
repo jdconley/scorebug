@@ -39,7 +39,7 @@ struct NewMatchSheet: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(hex: "#111418").ignoresSafeArea())
-            .navigationTitle("New match")
+            .navigationTitle("New match · \(model.team.shortName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -47,7 +47,6 @@ struct NewMatchSheet: View {
                 }
             }
         }
-        .task { await model.loadDestinations() }
         .interactiveDismissDisabled(model.busy)
     }
 
@@ -87,21 +86,13 @@ struct NewMatchSheet: View {
     private var settingsGroup: some View {
         VStack(spacing: 0) {
             Menu {
-                ForEach(model.destinations) { destination in
-                    Button { recordOnlyChoice = false; model.chooseDestination(destination) } label: {
-                        Text(destination.name + (destination.isDefault ? " (default)" : ""))
-                    }
-                }
-                if model.destinations.isEmpty {
-                    Button { recordOnlyChoice = false } label: { Text("Server default") }
-                }
-                Divider()
+                Button { recordOnlyChoice = false } label: { Text("Team's YouTube channel") }
                 Button { recordOnlyChoice = true } label: { Text("Record only") }
             } label: {
                 HStack {
                     Text("Stream to").foregroundStyle(Theme.text)
                     Spacer()
-                    Text(recordOnlyChoice ? "Record only" : model.streamLabel).foregroundStyle(Theme.muted)
+                    Text(recordOnlyChoice ? "Record only" : "Team's YouTube channel").foregroundStyle(Theme.muted)
                     Image(systemName: "chevron.up.chevron.down").font(.footnote).foregroundStyle(Theme.secondary)
                 }
                 .padding(.horizontal, 14).frame(minHeight: 52)
