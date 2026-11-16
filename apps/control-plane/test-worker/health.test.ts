@@ -24,3 +24,15 @@ it('applies the D1 schema', async () => {
     'teams',
   ]);
 });
+
+it('refuses to serve with a short SERVER_SECRET', async () => {
+  const { createWorkerApp } = await import('../src/worker/app.js');
+  const { FakeGoogle } = await import('./fake-google.js');
+  const weak = { ...env, SERVER_SECRET: 'too-short' };
+  const app = createWorkerApp({ env: weak, google: new FakeGoogle() });
+  const me = await app.fetch(new Request('https://scorebug.live/v1/me'), weak);
+  expect(me.status).toBe(503);
+  expect(await me.json()).toEqual({ error: 'server_misconfigured' });
+  const health = await app.fetch(new Request('https://scorebug.live/healthz'), weak);
+  expect(health.status).toBe(200);
+});

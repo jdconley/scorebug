@@ -19,6 +19,14 @@ export function createWorkerApp(deps: WorkerDeps): Hono<AppEnv> {
       c.header('Cache-Control', 'no-store');
   });
   app.get('/healthz', (c) => c.json({ ok: true }));
+  // Every signature and keyed hash depends on it; refuse to run on a weak or missing one.
+  app.use('*', async (c, next) => {
+    if ((c.env.SERVER_SECRET ?? '').length < 32) {
+      console.error('server_misconfigured', 'SERVER_SECRET must be at least 32 characters');
+      return c.json({ error: 'server_misconfigured' }, 503);
+    }
+    await next();
+  });
   app.route('/v1/auth', authRoutes(deps.google, adminCallback));
   app.route('/admin', adminRoutes());
   app.route('/v1/me', meRoutes());

@@ -1,7 +1,8 @@
 // Scorebug's hosted API on Cloudflare Workers, served at https://scorebug.live.
 // Secrets (set with `wrangler secret put`, never committed):
-//   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SERVER_SECRET (>= 32 characters),
+//   GOOGLE_CLIENT_SECRET, SERVER_SECRET (>= 32 characters),
 //   ADMIN_EMAILS (comma-separated; a secret so no address is committed to this public repo).
+// Local `wrangler dev` reads them, and a localhost PUBLIC_URL, from .dev.vars.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "scorebug",
@@ -12,13 +13,14 @@
   "vars": {
     "PUBLIC_URL": "https://scorebug.live",
     "APP_AUTH_REDIRECT": "scorebug://auth",
+    // A public value: Google shows it on every consent screen.
+    "GOOGLE_CLIENT_ID": "131849544690-5snpsg1pqgf798tpd6igbdpq9sc09hcr.apps.googleusercontent.com",
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "scorebug",
-      // TODO(production setup): replace with the id printed by `wrangler d1 create scorebug`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "f13b7f92-6671-47c9-b6dd-12dfe0df57d3",
       "migrations_dir": "migrations",
     },
   ],
