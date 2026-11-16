@@ -17,6 +17,7 @@ export default defineConfig(async () => {
             GOOGLE_CLIENT_ID: 'test-client-id.apps.googleusercontent.com',
             GOOGLE_CLIENT_SECRET: 'test-client-secret',
             SERVER_SECRET: 'test-server-secret-0123456789abcdef',
+            STREAM_API_TOKEN: 'test-stream-token',
           },
         },
       }),

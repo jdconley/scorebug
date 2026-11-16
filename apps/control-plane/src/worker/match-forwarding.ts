@@ -4,7 +4,7 @@ import { requirePerson } from './auth-routes.js';
 import type { AppEnv, Env, PersonEnv } from './env.js';
 import { invalid, limited } from './http.js';
 import { routeCodeHash } from './state.js';
-import { MATCH_CODE_PURPOSE, MEMBER_HEADER, TEAM_HEADER } from './team-object.js';
+import { MATCH_CODE_PURPOSE, MEMBER_HEADER, TEAM_HEADER, TIMEZONE_HEADER } from './team-object.js';
 import { requireMember, type TeamEnv } from './team-routes.js';
 
 const MATCH_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -22,6 +22,11 @@ async function forward(
   headers.delete(MEMBER_HEADER);
   if (init.member) headers.set(MEMBER_HEADER, init.member);
   headers.set(TEAM_HEADER, teamId);
+  // Cloudflare's guess from the client IP; the team object dates broadcast titles with it.
+  headers.delete(TIMEZONE_HEADER);
+  const timeZone = (request as { cf?: { timezone?: unknown } }).cf?.timezone;
+  if (typeof timeZone === 'string' && /^[A-Za-z0-9_+\-/]{1,64}$/.test(timeZone))
+    headers.set(TIMEZONE_HEADER, timeZone);
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   const forwarded = new Request(url, {
     method: request.method,

@@ -15,6 +15,7 @@ it('applies the D1 schema', async () => {
   expect(results.map((r) => r.name)).toEqual([
     'auth_tickets',
     'beta_access',
+    'live_slots',
     'match_codes',
     'match_index',
     'memberships',
@@ -22,6 +23,8 @@ it('applies the D1 schema', async () => {
     'sessions',
     'team_invites',
     'teams',
+    'youtube_connections',
+    'youtube_grants',
   ]);
 });
 

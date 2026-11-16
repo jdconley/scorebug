@@ -1,7 +1,8 @@
 // Scorebug's hosted API on Cloudflare Workers, served at https://scorebug.live.
 // Secrets (set with `wrangler secret put`, never committed):
 //   GOOGLE_CLIENT_SECRET, SERVER_SECRET (>= 32 characters),
-//   ADMIN_EMAILS (comma-separated; a secret so no address is committed to this public repo).
+//   ADMIN_EMAILS (comma-separated; a secret so no address is committed to this public repo),
+//   STREAM_API_TOKEN (Stream:Edit on the account below).
 // Local `wrangler dev` reads them, and a localhost PUBLIC_URL, from .dev.vars.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -15,6 +16,14 @@
     "APP_AUTH_REDIRECT": "scorebug://auth",
     // A public value: Google shows it on every consent screen.
     "GOOGLE_CLIENT_ID": "131849544690-5snpsg1pqgf798tpd6igbdpq9sc09hcr.apps.googleusercontent.com",
+    // Owns the per-match Stream live inputs.
+    "CF_ACCOUNT_ID": "7663a29f39aae38f68c8bc109f605079",
+    // Beta cost guard: concurrent live matches across every team.
+    "LIVE_MATCH_CAP": "5",
+    // The match container holds score changes this long (Stream's measured intake delay).
+    "SCORE_DELAY_MS": "1100",
+    // 720p30 is the fallback if 1080p30 ever runs out of CPU.
+    "VIDEO_PROFILE": "1080p30",
   },
   "d1_databases": [
     {
@@ -28,6 +37,24 @@
     "bindings": [{ "name": "TEAM", "class_name": "TeamObject" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TeamObject"] }],
+  // Each team object runs at most one match container at a time (one active match per
+  // team): the home-daemon worker image, pulling Stream SRT and pushing RTMPS to YouTube.
+  "containers": [
+    {
+      "class_name": "TeamObject",
+      // The same shape the spike deployed: the team object passes `instance: 'standard-4'`
+      // to ctx.container.start(). LIVE_MATCH_CAP bounds how many run.
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": { "dockerfile": "../home-daemon/Dockerfile", "build_context": "../.." },
+      },
+    },
+  ],
+  // Local `wrangler dev` and the Worker tests run without Docker. Set this to true to run
+  // the match container locally.
+  "dev": { "enable_containers": false },
+  // Daily sweep: orphaned Stream inputs and containers.
+  "triggers": { "crons": ["17 10 * * *"] },
   "ratelimits": [
     // /v1/auth/*: 20 requests a minute per client IP.
     { "name": "AUTH_LIMIT", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },

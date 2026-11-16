@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'apps/control-plane/**'
+      # The match container image (built by wrangler deploy from its Dockerfile).
+      - 'apps/home-daemon/**'
       - 'packages/protocol/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/deploy.yml'
@@ -48,5 +50,8 @@ jobs:
       - name: apply D1 migrations
         run: pnpm exec wrangler d1 migrations apply scorebug --remote
 
+      # Builds and pushes the match container image (Docker on the runner), then deploys.
+      # The first deploy with container settings can 404 while applying them; once more
+      # succeeds (seen in the Stream + Container spike).
       - name: deploy
-        run: pnpm exec wrangler deploy
+        run: pnpm exec wrangler deploy || (sleep 15 && pnpm exec wrangler deploy)

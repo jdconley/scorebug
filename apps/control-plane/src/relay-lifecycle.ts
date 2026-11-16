@@ -35,6 +35,11 @@ export type WorkerIngestAssignment = {
   readUrl: string;
   source: SourceObservation;
 };
+/** What the match routes need from an ingest: the self-hosted relay or hosted Stream. */
+export type IngestLifecycle = {
+  publish(request: PublishRequest): Promise<PublishAssignment>;
+  worker(workerId: string): Promise<WorkerIngestAssignment | null>;
+};
 export type RelayAdapter = Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'> &
   Partial<Pick<IngestRelay, 'retire'>>;
 type Target = { desired: RelayDesired; grant: IngestGrant };

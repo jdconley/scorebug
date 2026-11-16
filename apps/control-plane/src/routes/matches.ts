@@ -10,7 +10,7 @@ import type { Config } from '../config.js';
 import { mediaRoutes } from './media.js';
 import { inviteRoutes } from './account.js';
 import { defaultShortName } from '../scoring.js';
-import type { RelayLifecycle } from '../relay-lifecycle.js';
+import type { IngestLifecycle } from '../relay-lifecycle.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
 const id = z
@@ -132,7 +132,7 @@ export function matchesRoutes(
   config: Config,
   store: MatchStore,
   access: MatchAccess,
-  relayLifecycle?: RelayLifecycle,
+  relayLifecycle?: IngestLifecycle,
   observations?: WorkerObservations,
 ) {
   const app = new Hono<Env>();

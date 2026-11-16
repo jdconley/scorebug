@@ -3,13 +3,21 @@ import { INVITE_CODE_ALPHABET } from '@scorebug/protocol';
 import { canonical } from '../canonical-json.js';
 
 /** Carried through Google's consent screen and back, HMAC-signed so it can't be edited. */
-export type OAuthState = {
-  /** base64url(SHA-256(verifier)): the app (or the admin browser) proves the verifier later. */
-  challenge: string;
-  invite: string | null;
-  purpose: 'app' | 'admin';
-  exp: number;
-};
+export type OAuthState =
+  | {
+      /** base64url(SHA-256(verifier)): the app (or the admin browser) proves it later. */
+      challenge: string;
+      invite: string | null;
+      purpose: 'app' | 'admin';
+      exp: number;
+    }
+  | {
+      /** A YouTube channel connection started by this signed-in person. The grant it
+       * returns is claimed only by that person's own session (see youtube-routes.ts). */
+      purpose: 'youtube';
+      person: string;
+      exp: number;
+    };
 export const STATE_TTL_MS = 10 * 60 * 1000;
 export const CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/;
@@ -37,7 +45,16 @@ export function verifyState(secret: string, raw: string, now: number): OAuthStat
   } catch {
     return null;
   }
-  const s = value as Partial<OAuthState>;
+  const s = value as Partial<
+    OAuthState & { challenge: string; invite: string | null; person: string }
+  >;
+  if (s.purpose === 'youtube')
+    return typeof s.person === 'string' &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(s.person) &&
+      typeof s.exp === 'number' &&
+      s.exp > now
+      ? { purpose: 'youtube', person: s.person, exp: s.exp }
+      : null;
   if (
     typeof s.challenge !== 'string' ||
     !CHALLENGE_PATTERN.test(s.challenge) ||
