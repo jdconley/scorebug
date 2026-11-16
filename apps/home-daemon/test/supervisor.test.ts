@@ -315,6 +315,55 @@ describe('WorkerSupervisor', () => {
     expect(r.start).toHaveBeenCalledTimes(5);
     expect(JSON.stringify(r.states)).not.toContain('secret');
   });
+  it('holds score changes for scoreDelayMs and applies them in order', async () => {
+    const r = rig({ scoreDelayMs: 1100 });
+    await r.supervisor.tick();
+    r.set(input({ scoreRevision: 2, overlay: 'TWO' }));
+    await r.supervisor.tick();
+    await vi.advanceTimersByTimeAsync(500);
+    r.set(input({ scoreRevision: 3, overlay: 'THREE' }));
+    await r.supervisor.tick();
+    await r.supervisor.tick();
+    expect(r.events).toEqual(['write:ONE', 'start:1']);
+    expect(r.supervisor.observation()!.scoreRevision).toBe(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(r.events).toEqual(['write:ONE', 'start:1', 'write:TWO']);
+    expect(r.supervisor.observation()!.scoreRevision).toBe(2);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(r.events).toEqual(['write:ONE', 'start:1', 'write:TWO', 'write:THREE']);
+    expect(r.supervisor.observation()!.scoreRevision).toBe(3);
+  });
+  it('drops delayed scores of a pipeline that stopped; the restart writes the latest', async () => {
+    const r = rig({ scoreDelayMs: 1100 });
+    await r.supervisor.tick();
+    r.set(input({ scoreRevision: 2, overlay: 'TWO' }));
+    await r.supervisor.tick();
+    r.children[0]!.exit();
+    await flush();
+    await vi.advanceTimersByTimeAsync(1100);
+    await r.supervisor.tick();
+    expect(r.events).toEqual(['write:ONE', 'start:1', 'write:TWO', 'start:1']);
+  });
+  it('gives back the retry of an attempt that ran past retryFreeAfterMs', async () => {
+    const r = rig({ retryFreeAfterMs: 3000, maxAttempts: 2 });
+    await r.supervisor.tick();
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(4000);
+      r.children.at(-1)!.exit();
+      await flush();
+      await r.supervisor.tick();
+    }
+    expect(r.start).toHaveBeenCalledTimes(5);
+    // Quick exits still count: two in the window and the worker waits.
+    for (let i = 0; i < 3; i++) {
+      r.children.at(-1)!.exit();
+      await flush();
+      await vi.advanceTimersByTimeAsync(1000);
+      await r.supervisor.tick();
+    }
+    expect(r.start).toHaveBeenCalledTimes(6);
+    expect(r.states.at(-1)).toMatchObject({ state: 'retrying', reason: 'retry_budget' });
+  });
   it('preserves each assignment retry budget when assignments alternate', async () => {
     const r = rig();
     r.start.mockImplementation(() => {

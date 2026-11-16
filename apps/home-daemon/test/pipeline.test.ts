@@ -219,3 +219,28 @@ it('rejects pipelines with no output', () => {
     'missing_pipeline_output',
   );
 });
+
+it('bounds input probing and read waits for the hosted SRT source, before the input', () => {
+  const spec = { ...baseSpec, nvenc: false };
+  const normal = buildFfmpegArgs(spec);
+  expect(buildFfmpegArgs({ ...spec, inputProbe: 'default' })).toEqual(normal);
+  expect(normal).not.toContain('-rw_timeout');
+  const hosted = buildFfmpegArgs({ ...spec, inputProbe: 'fast', inputReadTimeoutMs: 4000 });
+  const input = hosted.indexOf('-i');
+  const probe = hosted.indexOf('-probesize');
+  expect(hosted.slice(probe, probe + 4)).toEqual([
+    '-probesize',
+    '2000000',
+    '-analyzeduration',
+    '2500000',
+  ]);
+  expect(probe).toBeLessThan(input);
+  const timeout = hosted.indexOf('-rw_timeout');
+  expect(hosted[timeout + 1]).toBe('4000000');
+  expect(timeout).toBeLessThan(input);
+  hosted.splice(timeout, 2);
+  hosted.splice(probe, 4);
+  expect(hosted).toEqual(normal);
+  expect(() => buildFfmpegArgs({ ...spec, inputProbe: 'slow' as 'fast' })).toThrow();
+  expect(() => buildFfmpegArgs({ ...spec, inputReadTimeoutMs: 10 })).toThrow();
+});

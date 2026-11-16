@@ -125,3 +125,38 @@ it('defaults to RTMP and validates output requirements for each mode', () => {
     }),
   ).toThrow();
 });
+
+describe('hosted tuning', () => {
+  it('defaults to the self-hosted behavior', () => {
+    const config = loadConfig(base);
+    expect(config).toMatchObject({
+      SCORE_DELAY_MS: 0,
+      INPUT_PROBE: 'default',
+      OUTPUT_TIMEOUT_MS: 10_000,
+      RETRY_MAX_ATTEMPTS: 3,
+    });
+    expect(config.INPUT_READ_TIMEOUT_MS).toBeUndefined();
+    expect(config.RETRY_FREE_AFTER_MS).toBeUndefined();
+  });
+  it('reads the hosted container values', () => {
+    expect(
+      loadConfig({
+        ...base,
+        SCORE_DELAY_MS: '1100',
+        INPUT_PROBE: 'fast',
+        INPUT_READ_TIMEOUT_MS: '4000',
+        OUTPUT_TIMEOUT_MS: '15000',
+        RETRY_MAX_ATTEMPTS: '6',
+        RETRY_FREE_AFTER_MS: '3000',
+      }),
+    ).toMatchObject({
+      SCORE_DELAY_MS: 1100,
+      INPUT_PROBE: 'fast',
+      INPUT_READ_TIMEOUT_MS: 4000,
+      OUTPUT_TIMEOUT_MS: 15000,
+      RETRY_MAX_ATTEMPTS: 6,
+      RETRY_FREE_AFTER_MS: 3000,
+    });
+    expect(() => loadConfig({ ...base, SCORE_DELAY_MS: '-1' })).toThrow();
+  });
+});
