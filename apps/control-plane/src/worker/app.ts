@@ -5,6 +5,7 @@ import { Directory } from './directory.js';
 import type { AppEnv, Env } from './env.js';
 import type { GoogleOAuth } from './google.js';
 import { matchForwardingRoutes } from './match-forwarding.js';
+import { siteRoutes } from './site.js';
 import { teamInviteRoutes, teamRoutes } from './team-routes.js';
 
 export type WorkerDeps = { env: Env; google: GoogleOAuth; now?: () => number };
@@ -19,6 +20,8 @@ export function createWorkerApp(deps: WorkerDeps): Hono<AppEnv> {
       c.header('Cache-Control', 'no-store');
   });
   app.get('/healthz', (c) => c.json({ ok: true }));
+  // Public pages need no secrets, so they stay up even if the server is misconfigured.
+  app.route('/', siteRoutes());
   // Every signature and keyed hash depends on it; refuse to run on a weak or missing one.
   app.use('*', async (c, next) => {
     if ((c.env.SERVER_SECRET ?? '').length < 32) {
