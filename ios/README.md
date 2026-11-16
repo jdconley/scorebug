@@ -1,149 +1,117 @@
 # Scorebug iOS
 
-## Native scorer (milestone 1 in progress)
+One iPhone app (with an embedded Apple Watch app) for a parent who films and
+scores alone. `Project.yml` (XcodeGen) builds:
 
-`Scoring.yml` generates a separate **ScorebugScoring** app and XCUITest target.
-It builds only `Sources/ScorebugScoring` and the local `Packages/ScorebugCore`
-Swift package. It does not resolve or link the camera app, HaishinKit, or SRT.
-The iPhone deployment baseline is iOS 17.0; the shared package also declares
-watchOS 10.0 for the native Watch app.
+- **Scorebug** — iPhone app. Dark, camera-first, no tabs.
+- **ScorebugWatch** — Watch app. Mirrors the paired iPhone's open match.
+- **ScorebugModelTests** — macOS unit tests for the view models, capture,
+  streaming and recording (no simulator needed).
+- **ScorebugAppUITests** — a screenshot tour of every screen (manual, below).
 
-The SwiftUI screen connects to the durable match API, creates or joins the active
-match, scores, undoes actions, ends sets/matches, and takes over scoring explicitly.
-Keychain stores setup and credentials. A durable command outbox checks server
-receipts after network failure or relaunch before retrying the original action.
-Pending actions and conflicts require resolution before another point is sent.
+Swift packages: `ScorebugCore` (HTTP client, scoring outbox, setup/invite links,
+short names, court sides, set point, Watch protocol, quality ladder),
+`ScorebugMedia` (capture, segmented archive, MP4 export), `ScorebugStreaming`
+(SRT publisher). The iPhone baseline is iOS 17, the Watch watchOS 10.
 
-HTTPS is accepted for public servers; HTTP is accepted only for localhost, loopback,
-private IPv4 LAN addresses, and `.local` hostnames. Debug builds enable local-network
-ATS access. Base paths are preserved; credentials in URLs, query strings, fragments,
-and invalid ports are rejected. The default simulator address is
-`http://localhost:18787`. See [the API and recovery contract](../docs/native-scoring-api.md).
+## Flow
 
-Install full Xcode with an iOS SDK and simulator runtime, plus XcodeGen:
+1. **Connect (first launch).** On the server run `./infra/install.sh phone`
+   (or `node apps/control-plane/dist/cli.js setup-link` in the API container).
+   Scan its QR code, open the `scorebug://connect` link, or enter the address and
+   code by hand. The app always asks before connecting. It redeems the one-time
+   code for an owner credential kept in the Keychain. One server for the whole app.
+2. **Home.** Server status (connected · YouTube ready), **New match**, **Join a
+   match**, the last match, Recordings.
+3. **New match.** Team 1 / Team 2 (names, short names ≤ 8 characters prefilled
+   from the name, colors), format, scorebug style, stream destination (from the
+   server) or record only, Record in 4K. **Go live** starts recording and the
+   stream together. The sheet remembers the last teams, colors and destination.
+   The app never says home or away: Team 1 is the API's `home`, Team 2 `away`.
+4. **Live (landscape).** Tap the left or right half of the picture to give the
+   team on that side a point; Undo; **Swap sides**. LIVE, elapsed time,
+   `REC 1080p · 720p out · good`. **Invite scorer** shows a QR, a 6-character code
+   and a share link. Stream problems are a small banner; the recording never
+   stops because of the stream.
+5. **Set point.** When the server reports `pendingSetEnd` the scorer confirms
+   ("Cascade wins set 3?"): End set / End match, Undo last point, or Keep playing.
+   After a set ends: "Teams switching sides?".
+6. **Recordings.** Thumbnail, teams and result, date, duration, resolution, size;
+   Play, Save to Photos, Share (each checks an MP4 export first).
+7. **Second phone as scorer.** Join with the invite QR, link or code. Portrait,
+   two big team-colored halves, undo, swap sides, the same set-point sheet. No
+   camera and no setup link needed.
+
+### Watch
+
+No Watch setup. When its paired iPhone has a match open (filming or scoring), the
+Watch shows two team-colored halves ordered by court side: tap to score,
+long-press or the undo button to undo, swap sides, the set-point confirm and a
+LIVE indicator. Taps go to the iPhone over WatchConnectivity and run through the
+iPhone's own scoring outbox, so the Watch never holds a server credential. The
+iPhone keeps the latest state in the application context, so the Watch shows the
+match as soon as it opens. The iPhone must be in Bluetooth/Wi-Fi range.
+
+## Build and test
 
 ```sh
 brew install xcodegen
-# From the repository root; defaults to the installed iOS 26.2 simulator runtime.
-pnpm test:apple
-# Create on phone A, join/take over/end on phone B, observe on phone A:
-pnpm test:apple --two-phones
-# Choose another installed runtime, including an older supported iOS version.
-SCOREBUG_IOS_RUNTIME=17.5 pnpm test:apple
-# Exercise the required iPhone 14 screen size with an installed runtime:
-SCOREBUG_IOS_RUNTIME=18.5 SCOREBUG_IOS_DEVICE_TYPE=iPhone-14 pnpm test:apple
-```
-
-The runner first runs shared Swift tests and the production scoring-model tests
-on macOS 14+, then builds the iPhone app and exercises its UI.
-
-The runner creates dedicated iPhone 15 simulators with unique **Scorebug Scoring**
-names, runs the native workflow, then shuts down and deletes only those devices.
-It also owns a temporary SQLite database and real API bound to a random loopback port.
-It does not use or reset existing simulators. Each build/test command has a ten
-minute timeout. Results remain under `ios/build/*.xcresult` and generated projects,
-Swift build products, and DerivedData are ignored.
-
-On the development Mac, the default Xcode 26.6 reported “iOS 26.5 is not installed”
-when resolving destinations. The complete installed Xcode 26.2 is selected for
-this command only:
-
-```sh
-DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer pnpm test:apple
-```
-
-To run each step manually from the repository root (set `DEVELOPER_DIR` as needed):
-
-```sh
-xcodegen generate --spec ios/Scoring.yml
-swift test --package-path ios/Packages/ScorebugCore --scratch-path ios/.build/core
-xcodebuild -project ios/ScorebugScoring.xcodeproj -scheme ScorebugScoring \
-  -configuration Debug -derivedDataPath ios/DerivedData/Scoring \
-  -destination 'generic/platform=iOS' build \
-  CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=17.0
-# Run UI tests through pnpm test:apple; it supplies the owned API URL and token.
-```
-
-The UI test resets camera/microphone authorization and exercises native scoring
-without any permission dialog. No camera or microphone usage descriptions are
-present in this app. Simulator UI builds use local ad hoc signing because Keychain
-access fails with error -34018 when signing is disabled. No signing team is needed.
-The unsigned generic build checks iOS 17 compilation, not physical-device behavior.
-To inspect interactively, start `pnpm dev:api`, open
-`ios/ScorebugScoring.xcodeproj`, and choose a dedicated Scorebug simulator.
-Use the development token from `infra/local/.env.example` only for local tests.
-
-## Native filming and scoring app
-
-`Project.yml` now builds **Scorebug**, with Film, Score, Watch, and Recordings tabs. The
-obsolete camera prototype has been replaced by the shared capture/recording path.
-Filming requires no match, server connection, or streaming key. Switching to the
-native scorer keeps local recording running. No browser scorer is used.
-
-Record explicitly starts camera/microphone permission and capture on a phone.
-Recording is 1080p/30 SDR H.264 with audio by default; the persisted "Record in 4K"
-toggle opts into 2160p/30 for the local recording only (it runs the phone hotter). Leaving the app requests
-recording stop; camera interruptions and failures preserve recoverable segments.
-Recordings distinguishes completed, recoverable, and unavailable media. Export
-retains the original and verifies the full MP4 before offering playback/sharing.
-
-Debug Simulator builds generate timed video/audio through the same recording
-owner. This is labeled in Film and does not use a physical camera. Release and
-physical-device builds choose the iPhone camera adapter.
-
-Streaming publishes SRT using a simple quality ladder (`QualityLadder` in
-ScorebugCore): 360p 0.8 Mbps, 540p 1.6 Mbps, 720p 3 Mbps, 1080p 6 Mbps, all 30 fps
-H.264 + AAC, never above the recording resolution. It starts at 720p, steps down
-after 3 s of SRT sender pressure (send buffer at least 800 ms, retransmits at least
-10% of sent packets, or any sender drop), steps up after 20 s of headroom (buffer
-at most 300 ms and retransmits at most 2%) but never within 30 s of a step down.
-Thermal serious/critical steps down once and caps at 720p/540p, with no step up
-while hot. A dropped connection reconnects after 1, 2, 4, 8, then 10 s at one rung
-below the last stable rung. The local recording never changes because of the stream.
-
-```sh
-export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
-pnpm test:native-app
-SCOREBUG_IOS_RUNTIME=18.5 pnpm test:native-app
-SCOREBUG_IOS_RUNTIME=26.2 SCOREBUG_IOS_DEVICE_TYPE=iPhone-15 pnpm test:native-app
+export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer   # match CI
 xcodegen generate --spec ios/Project.yml
-xcodebuild -project ios/Scorebug.xcodeproj -scheme ScorebugFilmModelTests \
-  -destination 'platform=macOS' -derivedDataPath ios/DerivedData/FilmModel \
-  test CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+swift test --package-path ios/Packages/ScorebugCore --scratch-path ios/.build/core
+swift test --package-path ios/Packages/ScorebugMedia --scratch-path ios/.build/media
+swift test --package-path ios/Packages/ScorebugStreaming --scratch-path ios/.build/streaming
+xcodebuild test -project ios/Scorebug.xcodeproj -scheme ScorebugModelTests \
+  -destination 'platform=macOS' -derivedDataPath ios/DerivedData/Model \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+xcodebuild build -project ios/Scorebug.xcodeproj -scheme Scorebug \
+  -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/DerivedData/NativeCI \
+  ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
 ```
 
-The native-app runner owns a fresh Simulator and local scoring server. It tests
-recording without setup, a real scoring command during recording, stop/relaunch,
-forced-termination recovery, export, and advancing video playback. It copies the
-recordings into `artifacts/qa/native-app-*`, fully decodes exports, checks sequential
-source frame identities, and applies the 100 ms audio/video coverage gate. Only
-the runner's device and processes are cleaned up. It never shares the video.
+Simulator builds that touch the Keychain need ad hoc signing
+(`CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-`); unsigned builds fail with -34018.
+Debug Simulator builds record a generated test picture and tone through the same
+recorder as the camera, and show a drawn court in place of the camera preview.
 
-See [native app integration](../docs/native-film-app.md), the
-[architecture](../docs/architecture.md), and the
-[delivery plan](../docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
-Physical-phone camera and Watch networking qualification remain ahead.
-
-## Native Watch scorer
-
-`Project.yml` also generates **ScorebugWatch**, a watchOS 10 application embedded
-in the phone app. It uses ScorebugCore and Apple frameworks, without media packages.
-The phone's Watch tab sends an expiring setup offer using a saved Film or Score
-connection. Accept it on the Watch, then take over scoring explicitly. Watch commands
-use its own credential, Keychain setup, and durable scoring outbox. Configured Watch
-scoring can use direct HTTP or the paired phone's app-scoped relay, with receipt-first
-recovery after uncertain sends. Initial setup redemption can also recover through
-the paired phone using its original saved capability and recovery identity;
-physical network switching and background delivery remain unqualified.
+### Screenshot tour against a local server
 
 ```sh
-export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
-pnpm test:native-watch
-SCOREBUG_WATCH_RUNTIME=26.2 SCOREBUG_WATCH_DEVICE_TYPE=Apple-Watch-Ultra-2-49mm pnpm test:native-watch
-SCOREBUG_WATCH_RUNTIME=10.0 SCOREBUG_WATCH_DEVICE_TYPE=Apple-Watch-SE-40mm-2nd-generation pnpm test:native-watch
+pnpm dev:api        # 127.0.0.1:18787, PUBLIC_URL=http://127.0.0.1:18787
+curl -s -X POST http://127.0.0.1:18787/v1/setup/links \
+  -H "Authorization: Bearer qa-phone-token-not-production" -H "Content-Type: application/json" -d '{}'
+xcodebuild test -project ios/Scorebug.xcodeproj -scheme Scorebug \
+  -destination 'platform=iOS Simulator,name=<phone>' -derivedDataPath ios/DerivedData/Sim \
+  -only-testing:ScorebugAppUITests/ScreenTourTests/testFilmingTourStart \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
+  SCOREBUG_TEST_TOUR=/tmp/scorebug-shots 'SCOREBUG_TEST_LINK=<the scorebug://connect link>'
 ```
 
-The runner owns a fresh simulator and real local API. It injects only initial setup
-into a Debug simulator build; redemption, Keychain, commands, and relaunch recovery
-use production paths. This does not qualify WatchConnectivity or physical radio
-selection. See [native Watch implementation and evidence](../docs/native-watch-app.md).
+Then mint an invite for the open match (`POST /v1/matches/<id>/invites` with the
+same token), run `testScorerTour` on a second simulator with that
+`scorebug://join` link, and `testFilmingTourFinish` on the first. Debug Simulator
+builds honor `SCOREBUG_TEST_RESET=1` (fresh install state) and
+`SCOREBUG_TEST_LINK` (open a link on launch); Release builds ignore both.
+
+To try the Watch on simulators, run the **Scorebug** scheme on an iPhone simulator
+that has a paired Watch, then run the **ScorebugWatch** scheme on that Watch from
+Xcode, and start a match on the phone. What was seen while building this with
+`simctl` only (no Xcode Run): one simctl-created pair's phone had a broken IDS
+service (`WCSession` never finished activating); on a fresh pair activation
+worked, but a Watch app installed with `simctl install` is "not installed" to the
+phone and neither side reports the other reachable, and installing the phone app
+did not push the embedded Watch app through pairing. The Watch then shows "Keep
+your iPhone nearby with Scorebug open." The mirror itself (state, intents,
+court-side order, set point) is covered by unit tests in ScorebugCore and the
+model tests.
+
+### Needs a real device
+
+- Camera capture and preview orientation in landscape, thermal behavior in 4K.
+- Scanning QR codes (the Simulator has no camera; paste the link instead).
+- SRT streaming over a real network, and the stream banner on weak networks.
+- WatchConnectivity between a physical iPhone and Watch: open Scorebug on the
+  iPhone, start a match, raise the Watch and open Scorebug. Check that taps score
+  within a second, the haptic plays, long-press undoes, and the set-point screen
+  appears. Then walk away until the Watch says "iPhone out of reach" and come back.
+- Save to Photos (permission prompt) and the share sheet.

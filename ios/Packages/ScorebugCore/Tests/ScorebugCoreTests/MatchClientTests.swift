@@ -3,7 +3,7 @@ import XCTest
 @testable import ScorebugCore
 
 final class MatchClientTests: XCTestCase {
-    private let snapshotJSON = ##"{"id":"match-1","createdAt":"2026-09-14T01:00:00.123Z","revision":2,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":1,"away":0,"set":2,"homeSets":1,"awaySets":0},"completedSets":[{"set":1,"home":25,"away":23,"winner":"home","overrideReason":null}],"status":"active","endReason":null,"canUndo":true,"scorer":{"deviceId":"phone-1","epoch":1},"broadcast":{"desired":"stopped","generation":0}}"##
+    private let snapshotJSON = ##"{"id":"match-1","createdAt":"2026-09-14T01:00:00.123Z","revision":2,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":1,"away":0,"set":2,"homeSets":1,"awaySets":0},"completedSets":[{"set":1,"home":25,"away":23,"winner":"home","overrideReason":null}],"status":"active","endReason":null,"canUndo":true,"scorer":{"deviceId":"phone-1","epoch":1},"broadcast":{"desired":"stopped","generation":0},"scorebugStyle":"lowerThird","pendingSetEnd":null,"output":{"destinationId":null,"recordOnly":false}}"##
     private let credential = MatchCredential(gameId: "match-1", deviceId: "phone-1", role: .score, token: "scoped-secret")
 
     func testSnapshotRoundTripPreservesWireNullsAndMillisecondDates() throws {

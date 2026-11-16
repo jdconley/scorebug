@@ -29,36 +29,19 @@ jobs:
         run: |
           xcodebuild -version
           brew install xcodegen
-          xcodegen generate --spec ios/Scoring.yml
           xcodegen generate --spec ios/Project.yml
-          xcodegen generate --spec ios/WatchModels.yml
-          xcodegen generate --spec ios/PhoneWatchModels.yml
-      - name: Shared scoring, recovery and quality-ladder contracts
+      - name: Shared scoring, setup links, set point, Watch protocol and quality-ladder contracts
         run: swift test --package-path ios/Packages/ScorebugCore --scratch-path ios/.build/core
       - name: Recording and publishing session
         run: swift test --package-path ios/Packages/ScorebugMedia --scratch-path ios/.build/media
       - name: SRT stream publisher
         run: swift test --package-path ios/Packages/ScorebugStreaming --scratch-path ios/.build/streaming
-      - name: Native scoring models
-        run: >-
-          xcodebuild test -project ios/ScorebugScoring.xcodeproj
-          -scheme ScorebugScoringModelTests -destination 'platform=macOS'
-          -derivedDataPath ios/DerivedData/ScoringModel
-          CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
-      - name: Capture, streaming and recording models
+      - name: App view models, capture, streaming and recording
         run: >-
           xcodebuild test -project ios/Scorebug.xcodeproj
-          -scheme ScorebugFilmModelTests -destination 'platform=macOS'
-          -derivedDataPath ios/DerivedData/FilmModel
+          -scheme ScorebugModelTests -destination 'platform=macOS'
+          -derivedDataPath ios/DerivedData/Model
           CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
-      - name: Watch and phone-Watch models
-        run: |
-          xcodebuild test -project ios/ScorebugWatchModels.xcodeproj \
-            -scheme ScorebugWatchModelTests -destination 'platform=macOS' \
-            -derivedDataPath ios/DerivedData/WatchModel CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
-          xcodebuild test -project ios/ScorebugPhoneWatchModels.xcodeproj \
-            -scheme ScorebugPhoneWatchModelTests -destination 'platform=macOS' \
-            -derivedDataPath ios/DerivedData/PhoneWatchModel CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
       - name: Build complete phone app and embedded Watch app
         run: >-
           xcodebuild build -project ios/Scorebug.xcodeproj -scheme Scorebug

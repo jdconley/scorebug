@@ -3,87 +3,158 @@ import SwiftUI
 import WatchKit
 
 @main
-@MainActor
 struct ScorebugWatchApp: App {
-    @StateObject private var model: WatchScoringModel
-    @StateObject private var connectivity: WatchSetupConnectivity
-    private let fixture: WatchPairingEnvelope?
+    @StateObject private var link = WatchLink()
+    @Environment(\.scenePhase) private var phase
 
-    init() {
-        let connectivity = WatchSetupConnectivity()
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Scorebug", isDirectory: true)
-        let pending = JSONFilePendingCommandStore(url: directory.appendingPathComponent("pending-command.json"))
-        let fixture = Self.simulatorSetup()
-        let bootstrap = connectivity.bootstrapRelayClient()
-        let setupRoutes = WatchRoutedBootstrapClient(direct: { pending in
-            let deadline = MatchHTTPDeadlineTransport(timeout: 2)
-            let client = MatchHTTPClient(endpoint: try ScoringEndpoint(pending.endpoint),
-                transport: { try await deadline.send($0) })
-            return try await client.redeemWatchPairing(gameId: pending.offer.gameId, pairingId: pending.offer.pairingId,
-                pairingToken: pending.offer.pairingToken, recoveryKey: pending.recoveryKey, request: pending.request)
-        }, companion: { try await bootstrap.redeem($0) }, companionAvailable: { [weak connectivity] in
-            guard let connectivity else { return false }
-            return await connectivity.canRelayRequests
-        })
-        let coordinator = WatchSetupCoordinator(storage: WatchSetupKeychain(), scoringOutbox: pending,
-            redemption: { try await setupRoutes.redeem($0) },
-            newDeviceId: { fixture?.offer.watchDeviceId ?? UUID().uuidString })
-        _connectivity = StateObject(wrappedValue: connectivity)
-        _model = StateObject(wrappedValue: WatchScoringModel(setupCoordinator: coordinator, pendingStore: pending,
-            scoringClientFactory: { paired in
-                let deadline = MatchHTTPDeadlineTransport(timeout: 2)
-                let direct = MatchHTTPClient(endpoint: try ScoringEndpoint(paired.endpoint),
-                    transport: { try await deadline.send($0) })
-                let companion = try connectivity.scoringRelayClient(for: paired)
-                return WatchRoutedScoringClient(direct: direct, companion: companion,
-                    companionAvailable: { [weak connectivity] in
-                        guard let connectivity else { return false }
-                        return await connectivity.canRelayRequests
-                    })
-            }, recoverUncertainSendImmediately: true,
-            onNotice: { try connectivity.sendNotice($0) },
-            acknowledgmentHaptic: { WKInterfaceDevice.current().play(.success) }))
-        self.fixture = fixture
-        connectivity.activate()
-    }
     var body: some Scene {
-        WindowGroup { WatchRootView(model: model, connectivity: connectivity, fixture: fixture) }
-    }
-    private static func simulatorSetup() -> WatchPairingEnvelope? {
-        #if DEBUG && targetEnvironment(simulator)
-        guard let text = ProcessInfo.processInfo.environment["SCOREBUG_TEST_WATCH_SETUP"],
-              let envelope = try? WatchCompanionCodec.decodeEnvelope(Data(text.utf8)),
-              URLComponents(string: envelope.endpoint)?.host == "127.0.0.1" else { return nil }
-        return envelope
-        #else
-        return nil
-        #endif
+        WindowGroup {
+            WatchRootView(link: link)
+                .onAppear { link.activate() }
+                .task { await link.keepFresh() }
+                .onChange(of: phase) { _, phase in if phase == .active { link.refresh() } }
+        }
     }
 }
 
-private struct WatchRootView: View {
-    @ObservedObject var model: WatchScoringModel
-    @ObservedObject var connectivity: WatchSetupConnectivity
-    let fixture: WatchPairingEnvelope?
-    @Environment(\.scenePhase) private var phase
+struct WatchRootView: View {
+    @ObservedObject var link: WatchLink
+
     var body: some View {
-        WatchScoringView(model: model)
-            .task(id: phase) {
-                await model.suspend()
-                guard !Task.isCancelled, phase == .active else { return }
-                connectivity.activate()
-                await model.wake()
-                var delivered: WatchPairingEnvelope?
-                while !Task.isCancelled {
-                    if let envelope = connectivity.latestEnvelope ?? fixture, envelope != delivered {
-                        await model.receive(envelope)
-                        delivered = envelope
+        if let state = link.state, !state.ended {
+            if let prompt = state.prompt {
+                WatchSetPointView(link: link, prompt: prompt)
+            } else if state.asksToSwap {
+                WatchSwapView(link: link, state: state)
+            } else {
+                WatchScoreView(link: link, state: state)
+            }
+        } else {
+            WatchIdleView(link: link, ended: link.state?.ended == true)
+        }
+    }
+}
+
+/// Two big team-colored halves ordered by court side; tap to score, long-press to undo.
+struct WatchScoreView: View {
+    @ObservedObject var link: WatchLink
+    let state: WatchRemote.State
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text(state.header).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(hex: "#C9CED6"))
+                Spacer()
+                if state.isLive {
+                    HStack(spacing: 4) {
+                        Circle().fill(Color(hex: "#FF6B60")).frame(width: 6, height: 6)
+                        Text("LIVE").font(.system(size: 12, weight: .bold))
                     }
-                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                    if model.pending || model.phase == .pending { await model.refresh() }
-                    else { await model.poll() }
+                    .foregroundStyle(Color(hex: "#FF6B60"))
+                    .accessibilityLabel("Live")
                 }
             }
+            .padding(.horizontal, 8)
+            half(state.left)
+            half(state.right)
+            HStack(spacing: 6) {
+                Button { link.send(.undo, haptic: .directionDown) } label: { Image(systemName: "arrow.uturn.backward") }
+                    .disabled(!state.canUndo)
+                    .accessibilityLabel("Undo")
+                Button { link.send(.swapSides) } label: { Image(systemName: "arrow.left.arrow.right") }
+                    .accessibilityLabel("Swap sides")
+            }
+            .font(.system(size: 15, weight: .semibold))
+            .buttonStyle(.bordered)
+            .frame(height: 34)
+            if let note = state.note ?? (link.connection == .phoneAway ? "iPhone out of reach" : nil) {
+                Text(note).font(.system(size: 11)).foregroundStyle(Color(hex: "#9AA3AE")).lineLimit(1)
+            }
+        }
+        .ignoresSafeArea(edges: .bottom)
+        .opacity(link.sending ? 0.85 : 1)
+    }
+
+    private func half(_ team: WatchRemote.Team) -> some View {
+        let fill = Color(hex: team.color)
+        let ink: Color = TeamPalette.prefersDarkText(on: team.color) ? Color(hex: "#0B0D10") : .white
+        return Button { link.send(.point(team.slot)) } label: {
+            HStack {
+                Text(team.shortName).font(.custom("BarlowCondensed-Bold", size: 20)).lineLimit(1).minimumScaleFactor(0.6)
+                Spacer(minLength: 4)
+                Text("\(team.points)").font(.custom("BarlowCondensed-Bold", size: 44)).monospacedDigit()
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!state.canScore)
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in
+            if state.canUndo { link.send(.undo, haptic: .directionDown) }
+        })
+        .accessibilityLabel("Point to \(team.shortName)")
+        .accessibilityValue("\(team.points)")
+        .accessibilityHint("Long-press to undo the last point")
+    }
+}
+
+struct WatchSetPointView: View {
+    @ObservedObject var link: WatchLink
+    let prompt: WatchRemote.Prompt
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                Text("SET POINT").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color(hex: "#9AA3AE"))
+                Text(prompt.title).font(.system(size: 17, weight: .bold)).multilineTextAlignment(.center)
+                Text(prompt.scoreLine).font(.custom("BarlowCondensed-Bold", size: 34))
+                Button(prompt.confirmLabel) { link.send(.confirmSetEnd, haptic: .success) }
+                    .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black)
+                Button("Undo point") { link.send(.undo, haptic: .directionDown) }
+                Button("Keep playing") { link.send(.declineSetEnd) }.font(.footnote)
+            }
+        }
+    }
+}
+
+struct WatchSwapView: View {
+    @ObservedObject var link: WatchLink
+    let state: WatchRemote.State
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                Text("Switching sides?").font(.system(size: 17, weight: .bold))
+                Text("\(state.right.shortName) ⇄ \(state.left.shortName)").font(.custom("BarlowCondensed-Bold", size: 22))
+                Button("Yes, switch") { link.send(.answerSwap(true)) }
+                    .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black)
+                Button("Keep sides") { link.send(.answerSwap(false)) }
+            }
+        }
+    }
+}
+
+struct WatchIdleView: View {
+    @ObservedObject var link: WatchLink
+    let ended: Bool
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: ended ? "flag.checkered" : "iphone")
+                .font(.system(size: 30)).foregroundStyle(Color(hex: "#9AA3AE"))
+            Text(ended ? "Match over" : "No match yet").font(.headline)
+            Text(link.connection == .phoneAway
+                 ? "Keep your iPhone nearby with Scorebug open."
+                 : "Start or join a match in Scorebug on your iPhone. It shows up here.")
+                .font(.footnote).foregroundStyle(Color(hex: "#9AA3AE")).multilineTextAlignment(.center)
+        }
+        .padding()
+        .onTapGesture { link.refresh() }
+    }
+}
+
+extension Color {
+    init(hex: String) {
+        let (r, g, b) = TeamPalette.components(hex) ?? (0.6, 0.64, 0.68)
+        self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
 }

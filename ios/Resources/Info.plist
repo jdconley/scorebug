@@ -18,6 +18,17 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>live.scorebug.links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>scorebug</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
@@ -28,21 +39,39 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Scorebug uses the camera when you choose to record video.</string>
+	<string>Scorebug films the match with the camera and scans setup and invite codes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Connect to your Scorebug server for native scoring and streaming.</string>
+	<string>Scorebug talks to your Scorebug server on this network.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Scorebug records audio with your video.</string>
+	<string>Scorebug records the gym's sound with your video.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Scorebug saves your match videos to Photos when you ask it to.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>BarlowCondensed-Bold.ttf</string>
+		<string>BarlowCondensed-SemiBold.ttf</string>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchScreen</key>
-	<dict/>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 </dict>
 </plist>

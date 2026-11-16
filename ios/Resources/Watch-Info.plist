@@ -20,18 +20,16 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Connect to your Scorebug server to score matches.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>BarlowCondensed-Bold.ttf</string>
+		<string>BarlowCondensed-SemiBold.ttf</string>
+	</array>
 	<key>WKApplication</key>
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>live.scorebug.app</string>
 	<key>WKRunsIndependentlyOfCompanionApp</key>
-	<true/>
+	<false/>
 </dict>
 </plist>

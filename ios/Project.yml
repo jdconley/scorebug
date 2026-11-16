@@ -9,7 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.10'
-    MARKETING_VERSION: '0.0.1'
+    MARKETING_VERSION: '0.1.0'
     CURRENT_PROJECT_VERSION: '1'
   configs:
     Debug:
@@ -29,23 +29,34 @@ targets:
     platform: iOS
     sources:
       - path: Sources/Scorebug
-      - path: Sources/WatchSupport
-      - path: Sources/ScorebugScoring
-        excludes:
-          - ScoringApp.swift
-    resources:
       - path: Resources/Assets.xcassets
+      - path: Resources/Fonts
+        buildPhase: resources
     info:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: Scorebug
-        UILaunchScreen: {}
-        NSCameraUsageDescription: Scorebug uses the camera when you choose to record video.
-        NSMicrophoneUsageDescription: Scorebug records audio with your video.
-        NSLocalNetworkUsageDescription: Connect to your Scorebug server for native scoring and streaming.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIAppFonts:
+          - BarlowCondensed-Bold.ttf
+          - BarlowCondensed-SemiBold.ttf
+        UIUserInterfaceStyle: Dark
+        CFBundleURLTypes:
+          - CFBundleURLName: live.scorebug.links
+            CFBundleURLSchemes:
+              - scorebug
+        NSCameraUsageDescription: Scorebug films the match with the camera and scans setup and invite codes.
+        NSMicrophoneUsageDescription: Scorebug records the gym's sound with your video.
+        NSPhotoLibraryAddUsageDescription: Scorebug saves your match videos to Photos when you ask it to.
+        NSLocalNetworkUsageDescription: Scorebug talks to your Scorebug server on this network.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
@@ -56,6 +67,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app
         TARGETED_DEVICE_FAMILY: '1,2'
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: ScorebugCore
       - package: ScorebugMedia
@@ -67,36 +79,27 @@ targets:
     platform: watchOS
     sources:
       - path: Sources/ScorebugWatch
-      - path: Sources/WatchSupport
+      - path: Resources/WatchAssets.xcassets
+      - path: Resources/Fonts
+        buildPhase: resources
     info:
       path: Resources/Watch-Info.plist
       properties:
         CFBundleDisplayName: Scorebug
         WKApplication: true
         WKCompanionAppBundleIdentifier: live.scorebug.app
-        WKRunsIndependentlyOfCompanionApp: true
-        NSLocalNetworkUsageDescription: Connect to your Scorebug server to score matches.
-        NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
+        WKRunsIndependentlyOfCompanionApp: false
+        UIAppFonts:
+          - BarlowCondensed-Bold.ttf
+          - BarlowCondensed-SemiBold.ttf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app.watchkitapp
         TARGETED_DEVICE_FAMILY: '4'
         SKIP_INSTALL: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: ScorebugCore
-  ScorebugWatchUITests:
-    type: bundle.ui-testing
-    platform: watchOS
-    sources:
-      - path: WatchUITests
-      - path: Sources/WatchSupport/WatchSetupProvenance.swift
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.watch.uitests
-    dependencies:
-      - target: ScorebugWatch
   ScorebugAppUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -109,60 +112,49 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app.uitests
     dependencies:
       - target: Scorebug
-  ScorebugFilmModelTests:
+  # View models, capture, streaming and recording on macOS: no simulator needed.
+  ScorebugModelTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '14.0'
     sources:
       - path: Sources/Scorebug/Capture
-      - path: Sources/Scorebug/Companion/PhoneWatchModel.swift
-      - path: Sources/ScorebugWatch/WatchScoringModel.swift
-      - path: Sources/WatchSupport/WatchSetupProvenance.swift
-      - path: Sources/WatchSupport/WatchRelaySessionGate.swift
+      - path: Sources/Scorebug/Models
       - path: AppUITests/RecoveryControlConfiguration.swift
       - path: Sources/Scorebug/Debug/RecoveryLoopbackConfiguration.swift
       - path: FilmModelTests
+      - path: AppModelTests
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.film.modeltests
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.modeltests
     dependencies:
       - package: ScorebugMedia
       - package: ScorebugStreaming
       - package: ScorebugCore
 schemes:
+  ScorebugModelTests:
+    build:
+      targets:
+        ScorebugModelTests: all
+    test:
+      targets:
+        - ScorebugModelTests
   ScorebugWatch:
     build:
       targets:
         ScorebugWatch: all
-    test:
-      targets:
-        - ScorebugWatchUITests
-      environmentVariables:
-        SCOREBUG_TEST_WATCH_SETUP: $(SCOREBUG_TEST_WATCH_SETUP)
-        SCOREBUG_DEVICE_WATCH_SCORING: $(SCOREBUG_DEVICE_WATCH_SCORING)
-        SCOREBUG_EXPECTED_WATCH_MATCH_ID: $(SCOREBUG_EXPECTED_WATCH_MATCH_ID)
-  ScorebugFilmModelTests:
-    build:
-      targets:
-        ScorebugFilmModelTests: all
-    test:
-      targets:
-        - ScorebugFilmModelTests
   Scorebug:
     build:
       targets:
         Scorebug: all
+    run:
+      environmentVariables:
+        SCOREBUG_TEST_API_URL: $(SCOREBUG_TEST_API_URL)
     test:
       targets:
         - ScorebugAppUITests
-      gatherCoverageData: true
       environmentVariables:
-        SCOREBUG_DEVICE_API_URL: $(SCOREBUG_DEVICE_API_URL)
-        SCOREBUG_DEVICE_TOKEN: $(SCOREBUG_DEVICE_TOKEN)
-        SCOREBUG_DEVICE_WATCH_SCORING: $(SCOREBUG_DEVICE_WATCH_SCORING)
-        SCOREBUG_TEST_FILE_CAPTURE: $(SCOREBUG_TEST_FILE_CAPTURE)
         SCOREBUG_TEST_API_URL: $(SCOREBUG_TEST_API_URL)
-        SCOREBUG_TEST_STREAM_HOLD_SECONDS: $(SCOREBUG_TEST_STREAM_HOLD_SECONDS)
-        SCOREBUG_TEST_MOTION_FIXTURE: $(SCOREBUG_TEST_MOTION_FIXTURE)
-        SCOREBUG_TEST_TOKEN: qa-phone-token-not-production
+        SCOREBUG_TEST_LINK: $(SCOREBUG_TEST_LINK)
+        SCOREBUG_TEST_TOUR: $(SCOREBUG_TEST_TOUR)
