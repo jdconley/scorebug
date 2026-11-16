@@ -251,6 +251,98 @@ export class Directory {
     return results.map((row) => ({ ...teamView(row), role: row.role }));
   }
 
+  async createTeam(
+    personId: string,
+    fields: { name: string; shortName: string; color: string },
+  ): Promise<Team> {
+    const id = randomUUID();
+    const now = this.now();
+    await this.db.batch([
+      this.db
+        .prepare(
+          'INSERT INTO teams(id,name,short_name,color,created_by,created_at) VALUES(?,?,?,?,?,?)',
+        )
+        .bind(id, fields.name, fields.shortName, fields.color, personId, now),
+      this.db
+        .prepare("INSERT INTO memberships(team_id,person_id,role,created_at) VALUES(?,?,'owner',?)")
+        .bind(id, personId, now),
+    ]);
+    return (await this.team(id))!;
+  }
+
+  async team(id: string): Promise<Team | null> {
+    const row = await this.db.prepare('SELECT * FROM teams WHERE id=?').bind(id).first<TeamRow>();
+    return row ? teamView(row) : null;
+  }
+
+  async updateTeam(
+    id: string,
+    patch: {
+      name?: string | undefined;
+      shortName?: string | undefined;
+      color?: string | undefined;
+    },
+  ): Promise<Team> {
+    await this.db
+      .prepare(
+        'UPDATE teams SET name=coalesce(?,name), short_name=coalesce(?,short_name), color=coalesce(?,color) WHERE id=?',
+      )
+      .bind(patch.name ?? null, patch.shortName ?? null, patch.color ?? null, id)
+      .run();
+    return (await this.team(id))!;
+  }
+
+  async membership(teamId: string, personId: string): Promise<TeamRole | null> {
+    const row = await this.db
+      .prepare('SELECT role FROM memberships WHERE team_id=? AND person_id=?')
+      .bind(teamId, personId)
+      .first<{ role: TeamRole }>();
+    return row?.role ?? null;
+  }
+
+  async members(
+    teamId: string,
+  ): Promise<{ personId: string; name: string | null; email: string; role: TeamRole }[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT people.id, people.name, people.email, memberships.role FROM memberships
+        JOIN people ON people.id=memberships.person_id WHERE team_id=?
+        ORDER BY memberships.role DESC, memberships.created_at, people.id`,
+      )
+      .bind(teamId)
+      .all<{ id: string; name: string | null; email: string; role: TeamRole }>();
+    return results.map((r) => ({ personId: r.id, name: r.name, email: r.email, role: r.role }));
+  }
+
+  /**
+   * Removes a membership unless it would leave the team without an owner. One statement, so
+   * two owners leaving at once can't both succeed. Email invites for the person on this team
+   * are revoked too, so their next sign-in does not put them back.
+   */
+  async removeMember(
+    teamId: string,
+    personId: string,
+  ): Promise<'removed' | 'not_found' | 'last_owner'> {
+    const result = await this.db
+      .prepare(
+        `DELETE FROM memberships WHERE team_id=?1 AND person_id=?2 AND (role='member' OR
+        (SELECT COUNT(*) FROM memberships WHERE team_id=?1 AND role='owner')>1)`,
+      )
+      .bind(teamId, personId)
+      .run();
+    if (result.meta.changes > 0) {
+      await this.db
+        .prepare(
+          `UPDATE team_invites SET revoked_at=? WHERE team_id=? AND revoked_at IS NULL
+          AND email=(SELECT email FROM people WHERE id=?)`,
+        )
+        .bind(this.now(), teamId, personId)
+        .run();
+      return 'removed';
+    }
+    return (await this.membership(teamId, personId)) ? 'last_owner' : 'not_found';
+  }
+
   // ----------------------------------------------------------- team invites
 
   /** Unexpired, unrevoked invites bound to this email. */
@@ -270,6 +362,58 @@ export class Directory {
       )
       .bind(codeHash, this.now())
       .first<TeamInviteRow>();
+  }
+
+  async teamInvites(teamId: string): Promise<TeamInvite[]> {
+    const { results } = await this.db
+      .prepare('SELECT * FROM team_invites WHERE team_id=? ORDER BY created_at DESC, id')
+      .bind(teamId)
+      .all<TeamInviteRow>();
+    return results.map(inviteView);
+  }
+
+  async liveInviteCount(teamId: string): Promise<number> {
+    const row = await this.db
+      .prepare(
+        'SELECT COUNT(*) AS n FROM team_invites WHERE team_id=? AND revoked_at IS NULL AND expires_at>?',
+      )
+      .bind(teamId, this.now())
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  /** False when the code hash is already taken (the caller retries with a new code). */
+  async insertInvite(row: Omit<TeamInviteRow, 'revoked_at'>): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `INSERT INTO team_invites(id,team_id,code_hash,email,created_by,created_at,expires_at)
+        VALUES(?,?,?,?,?,?,?) ON CONFLICT(code_hash) DO NOTHING`,
+      )
+      .bind(
+        row.id,
+        row.team_id,
+        row.code_hash,
+        row.email,
+        row.created_by,
+        row.created_at,
+        row.expires_at,
+      )
+      .run();
+    return result.meta.changes > 0;
+  }
+
+  async revokeInvite(teamId: string, inviteId: string): Promise<TeamInvite | null> {
+    await this.db
+      .prepare(
+        'UPDATE team_invites SET revoked_at=? WHERE team_id=? AND id=? AND revoked_at IS NULL',
+      )
+      .bind(this.now(), teamId, inviteId)
+      .run();
+    const row = await this.db
+      .prepare('SELECT * FROM team_invites WHERE team_id=? AND id=?')
+      .bind(teamId, inviteId)
+      .first<TeamInviteRow>();
+    return row ? inviteView(row) : null;
   }
 
   /** Joins as a member; an existing membership (and its role) is kept. */

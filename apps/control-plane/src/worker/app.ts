@@ -3,6 +3,7 @@ import { authRoutes, meRoutes } from './auth-routes.js';
 import { Directory } from './directory.js';
 import type { AppEnv, Env } from './env.js';
 import type { GoogleOAuth } from './google.js';
+import { teamInviteRoutes, teamRoutes } from './team-routes.js';
 
 export type WorkerDeps = { env: Env; google: GoogleOAuth; now?: () => number };
 
@@ -18,6 +19,8 @@ export function createWorkerApp(deps: WorkerDeps): Hono<AppEnv> {
   app.get('/healthz', (c) => c.json({ ok: true }));
   app.route('/v1/auth', authRoutes(deps.google));
   app.route('/v1/me', meRoutes());
+  app.route('/v1/teams', teamRoutes());
+  app.route('/v1/team-invites', teamInviteRoutes());
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
   app.onError((error, c) => {
     console.error('unhandled_error', String(error));

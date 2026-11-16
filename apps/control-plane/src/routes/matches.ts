@@ -18,19 +18,21 @@ const id = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
+export const teamName = z.string().trim().min(1).max(80);
+// Scorebug label: at most 8 characters (code points); defaults from the name.
+export const teamShortName = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => Array.from(value).length <= 8, {
+    message: 'Short name must be at most 8 characters',
+  });
+export const teamColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const team = z
   .object({
-    name: z.string().trim().min(1).max(80),
-    // Scorebug label: at most 8 characters (code points); defaults from the name.
-    shortName: z
-      .string()
-      .trim()
-      .min(1)
-      .refine((value) => Array.from(value).length <= 8, {
-        message: 'Short name must be at most 8 characters',
-      })
-      .optional(),
-    color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    name: teamName,
+    shortName: teamShortName.optional(),
+    color: teamColor,
   })
   .strict()
   .transform(({ shortName, ...value }) => ({

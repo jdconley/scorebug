@@ -96,3 +96,20 @@ export async function count(table: string): Promise<number> {
   const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
   return row?.n ?? 0;
 }
+
+type Json = Record<string, unknown>;
+/** A signed-in owner with a team, for tests that need one. */
+export async function ownerWithTeam(h: Harness, email = 'owner@example.com', name = 'Wildcats') {
+  await allow(email);
+  const owner = await h.signIn(email);
+  const created = await h.json('/v1/teams', { name }, { headers: h.auth(owner.token) });
+  if (created.status !== 201) throw new Error(`create team: ${created.status}`);
+  const { team } = (await created.json()) as { team: { id: string } };
+  return { ...owner, teamId: team.id };
+}
+
+export async function invite(h: Harness, token: string, teamId: string, body: Json = {}) {
+  const response = await h.json(`/v1/teams/${teamId}/invites`, body, { headers: h.auth(token) });
+  if (response.status !== 201) throw new Error(`invite: ${response.status}`);
+  return (await response.json()) as { invite: { id: string }; code: string; link: string };
+}
