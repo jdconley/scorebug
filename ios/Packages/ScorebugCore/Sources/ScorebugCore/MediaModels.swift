@@ -54,18 +54,29 @@ public struct RecordingReport: Codable, Equatable, Sendable {
     }
 }
 
-/// Public identifiers select server-configured publishing resources.
+/// Public identifiers select server-configured publishing resources. A start
+/// command leaves `workerId`/`outputId` out (nil is not encoded) and the server
+/// picks its worker; snapshots always carry the IDs it chose.
 public struct BroadcastSelection: Codable, Equatable, Sendable {
-    public var workerId: String
-    public var outputId: String
+    public var workerId: String?
+    public var outputId: String?
     public var captureDeviceId: String
     public var recordingId: String
 
-    public init(workerId: String, outputId: String, captureDeviceId: String, recordingId: String) {
+    public init(workerId: String? = nil, outputId: String? = nil, captureDeviceId: String, recordingId: String) {
         self.workerId = workerId
         self.outputId = outputId
         self.captureDeviceId = captureDeviceId
         self.recordingId = recordingId
+    }
+
+    /// Whether the server's selection is the one this request asked for. An
+    /// unset worker or output accepts whatever the server picked.
+    public func isMet(by actual: BroadcastSelection?) -> Bool {
+        guard let actual else { return false }
+        return actual.captureDeviceId == captureDeviceId && actual.recordingId == recordingId
+            && (workerId == nil || actual.workerId == workerId)
+            && (outputId == nil || actual.outputId == outputId)
     }
 }
 

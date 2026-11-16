@@ -15,8 +15,6 @@ import ScorebugStreaming
 
     @Published var endpoint = "http://localhost:18787"
     @Published var installationToken = ""
-    @Published var workerId = "local-worker"
-    @Published var outputId = "local-output"
     @Published private(set) var localState: LocalState = .idle
     @Published private(set) var message: String?
     @Published private(set) var connectedGameID: String?
@@ -127,7 +125,6 @@ import ScorebugStreaming
             if var saved = setup {
                 _ = try ScoringEndpoint(saved.endpoint)
                 endpoint = saved.endpoint; installationToken = saved.installationToken
-                workerId = saved.workerId; outputId = saved.outputId
                 for index in saved.reports.indices where saved.reports[index].report.status == .recording {
                     saved.reports[index].report.sequence += 1
                     saved.reports[index].report.status = .interrupted
@@ -182,12 +179,12 @@ import ScorebugStreaming
         guard !busy, !stopping, !publisherStopping, !controlBusy else { return }
         await restore()
         do {
-            if setup == nil || endpoint != setup?.endpoint || installationToken != setup?.installationToken || workerId != setup?.workerId || outputId != setup?.outputId {
+            if setup == nil || endpoint != setup?.endpoint || installationToken != setup?.installationToken {
                 guard canChangeSetup else { throw CaptureControlError.unresolved }
                 let valid = try ScoringEndpoint(endpoint)
-                guard !installationToken.isEmpty, validIdentifier(workerId), validIdentifier(outputId) else { throw CaptureControlError.noSetup }
+                guard !installationToken.isEmpty else { throw CaptureControlError.noSetup }
                 setup = SavedCaptureSetup(endpoint: valid.url.absoluteString, installationToken: installationToken,
-                    deviceId: setup?.deviceId ?? UUID().uuidString, workerId: workerId, outputId: outputId, credential: nil, reports: [])
+                    deviceId: setup?.deviceId ?? UUID().uuidString, credential: nil, reports: [])
                 try persist()
                 coordinator = nil; connectedGameID = nil; commandState = nil
             }
@@ -264,20 +261,21 @@ import ScorebugStreaming
                 try check(context, attempt)
                 commandState = state
                 guard state.pending == nil else { throw CaptureControlError.unresolved }
-                let selection = BroadcastSelection(workerId: setup.workerId, outputId: setup.outputId, captureDeviceId: setup.deviceId, recordingId: context.id)
+                // The server picks the worker and output.
+                let selection = BroadcastSelection(captureDeviceId: setup.deviceId, recordingId: context.id)
                 if let reconnecting {
                     guard reconnect?.id == reconnecting.id, credential.gameId == reconnecting.gameID,
                           state.snapshot?.broadcast.desired == .running,
                           state.snapshot?.broadcast.generation == reconnecting.generation,
-                          state.snapshot?.broadcast.selection == selection else { throw CaptureControlError.selectionChanged }
+                          selection.isMet(by: state.snapshot?.broadcast.selection) else { throw CaptureControlError.selectionChanged }
                 }
-                if state.snapshot?.broadcast.desired != .running || state.snapshot?.broadcast.selection != selection {
+                if state.snapshot?.broadcast.desired != .running || !selection.isMet(by: state.snapshot?.broadcast.selection) {
                     state = try await coordinator.submit(.start(selection: selection), activeRecordingId: context.id)
                     try check(context, attempt)
                     commandState = state
-                    guard state.outcome?.accepted == true else { throw CaptureControlError.rejected }
+                    guard state.outcome?.accepted == true else { throw CaptureControlError(rejection: state.outcome?.error) }
                 }
-                guard let broadcast = state.snapshot?.broadcast, broadcast.desired == .running, broadcast.selection == selection else { throw CaptureControlError.selectionChanged }
+                guard let broadcast = state.snapshot?.broadcast, broadcast.desired == .running, selection.isMet(by: broadcast.selection) else { throw CaptureControlError.selectionChanged }
                 let access = try await clientForSetup().publishAccess(recordingId: context.id, generation: broadcast.generation,
                     publishingAttemptId: attempt, credential: credential)
                 try check(context, attempt)
@@ -623,13 +621,15 @@ import ScorebugStreaming
             message = "This match isn't open on the server, so it can't stream. Recording continues."
         } else if error as? CaptureControlError == .noSetup {
             message = "Connect this phone to your server to stream. Recording continues."
+        } else if error as? CaptureControlError == .noWorker {
+            message = "No streaming worker is connected to the server. Recording continues."
+        } else if error as? CaptureControlError == .workerAmbiguous {
+            message = "More than one streaming worker is connected, so the server can't pick one. Recording continues."
+        } else if error as? CaptureControlError == .outputUnknown {
+            message = "The streaming worker needs an update before it can stream. Recording continues."
         } else {
             message = "Couldn't start the stream. Recording continues."
         }
-    }
-
-    private func validIdentifier(_ value: String) -> Bool {
-        !value.isEmpty && value.utf8.count <= 128 && value.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }
     }
 }
 

@@ -33,6 +33,22 @@ final class BroadcastCoordinatorTests: XCTestCase {
         XCTAssertEqual(applications, 1)
     }
 
+    func testStartWithoutWorkerAcceptsTheWorkerTheServerPicked() async throws {
+        let server = BroadcastServer()
+        let coordinator = try coordinator(server, store: BroadcastMemoryStore())
+        let request = BroadcastSelection(captureDeviceId: "camera", recordingId: "recording")
+        let result = try await coordinator.submit(.start(selection: request), activeRecordingId: "recording")
+        XCTAssertEqual(result.outcome?.accepted, true)
+        let picked = try XCTUnwrap(result.snapshot?.broadcast.selection)
+        XCTAssertEqual(picked.workerId, "home-1")
+        XCTAssertEqual(picked.outputId, "youtube")
+        XCTAssertTrue(request.isMet(by: picked))
+        XCTAssertFalse(selection.isMet(by: picked), "A named worker must match exactly")
+        XCTAssertFalse(request.isMet(by: nil))
+        var other = picked; other.recordingId = "other"
+        XCTAssertFalse(request.isMet(by: other))
+    }
+
     func testMissingReceiptNeverReplaysStartAfterLocalRecordingStopped() async throws {
         let store = BroadcastMemoryStore()
         let server = BroadcastServer()
@@ -327,7 +343,11 @@ private actor BroadcastServer {
                 applications += 1
                 snapshot.broadcast.generation += 1
                 switch command.operation {
-                case .start(let selection): snapshot.broadcast.desired = .running; snapshot.broadcast.selection = selection
+                case .start(var selection):
+                    // Like the API: fill in a worker the phone left out.
+                    selection.workerId = selection.workerId ?? "home-1"
+                    selection.outputId = selection.outputId ?? "youtube"
+                    snapshot.broadcast.desired = .running; snapshot.broadcast.selection = selection
                 case .stop: snapshot.broadcast.desired = .stopped; snapshot.broadcast.selection = nil
                 }
             }

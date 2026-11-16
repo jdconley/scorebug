@@ -62,6 +62,29 @@ import XCTest
         XCTAssertEqual(profiles, [.hd720])
         let operations = await server.operations
         XCTAssertEqual(operations, ["start"])
+        // The app names no worker or output; the server picks them.
+        let sent = await server.startSelections
+        XCTAssertEqual(sent, [BroadcastSelection(captureDeviceId: "capture-1", recordingId: "recording-1")])
+        let selected = await server.broadcast.selection
+        XCTAssertEqual(selected?.workerId, "home-1")
+    }
+
+    func testWorkerRejectionsExplainWhatHappened() async throws {
+        let cases = [
+            ("no_worker", "No streaming worker is connected to the server."),
+            ("worker_ambiguous", "More than one streaming worker is connected"),
+            ("output_unknown", "The streaming worker needs an update"),
+        ]
+        for (code, text) in cases {
+            server = CaptureTestServer()
+            await server.rejectStarts(with: code)
+            let model = makeModel()
+            await model.restore()
+            model.captureChanged(captureContext())
+            await model.startStreaming()
+            XCTAssertEqual(model.status, .recordingOnly, code)
+            XCTAssertTrue(model.message?.contains(text) == true, "\(code): \(String(describing: model.message))")
+        }
     }
 
     func testFourKRecordingStillStreamsAtMost1080p() async throws {
@@ -188,7 +211,7 @@ import XCTest
 
 func captureContext() -> CurrentCapture { CurrentCapture(id: "recording-1", startedAt: "2026-09-14T00:00:00Z", tap: PublishingTap()) }
 func captureSetup() -> SavedCaptureSetup {
-    SavedCaptureSetup(endpoint: "http://localhost:18787", installationToken: "test-token", deviceId: "capture-1", workerId: "worker-1", outputId: "output-1",
+    SavedCaptureSetup(endpoint: "http://localhost:18787", installationToken: "test-token", deviceId: "capture-1",
                       credential: MatchCredential(gameId: "game-1", deviceId: "capture-1", role: .capture, token: "capture-token"), reports: [])
 }
 final class CaptureMemoryStorage: CaptureSetupStorage {
@@ -253,7 +276,11 @@ actor CaptureTestServer {
     var broadcast = MediaBroadcast(desired: .stopped, generation: 0, selection: nil)
     var receipts: [String: BroadcastOutcome] = [:]
     var offline = false
+    /// What the app sent in each start command.
+    var startSelections: [BroadcastSelection] = []
+    var startRejection: String?
     func setOffline(_ value: Bool) { offline = value }
+    func rejectStarts(with code: String) { startRejection = code }
     func stopBroadcastRemotely() { broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil) }
     func respond(_ request: URLRequest) async throws -> (Data, URLResponse) {
         requestCount += 1
@@ -272,8 +299,18 @@ actor CaptureTestServer {
             data = try JSONEncoder().encode(RecordingReportResponse(recording: .init(gameId: "game-1", recordingId: report.recordingId, deviceId: "capture-1", startedAt: report.startedAt, updatedAt: time, status: report.status, sequence: report.sequence), serverTime: time))
         } else if path.hasSuffix("/commands") {
             let command = try JSONDecoder().decode(BroadcastCommand.self, from: request.httpBody!)
+            if case .start(let selection) = command.operation { startSelections.append(selection) }
+            if case .start = command.operation, let startRejection {
+                let result = BroadcastOutcome(commandId: command.commandId, accepted: false, error: startRejection, snapshot: snapshot())
+                receipts[command.commandId] = result
+                return (try JSONEncoder().encode(result), HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!)
+            }
             switch command.operation {
-            case .start(let selection): broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: selection); operations.append("start")
+            case .start(var selection):
+                // Like the API: fill in the worker the phone left out.
+                selection.workerId = selection.workerId ?? "home-1"
+                selection.outputId = selection.outputId ?? "youtube"
+                broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: selection); operations.append("start")
             case .stop: broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil); operations.append("stop")
             }
             let result = BroadcastOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: snapshot())

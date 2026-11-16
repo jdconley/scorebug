@@ -12,8 +12,6 @@ struct SavedCaptureSetup: Codable {
     var endpoint: String
     var installationToken: String
     var deviceId: String
-    var workerId: String
-    var outputId: String
     var credential: MatchCredential?
     var reports: [PendingCaptureReport]
     // Optional for decoding setups written before the stop-ownership ledger.
@@ -56,4 +54,16 @@ struct CaptureKeychain: CaptureSetupStorage {
     }
 }
 
-enum CaptureControlError: Error { case workerUnavailable, storage, noSetup, noActiveMatch, invalidCredential, recordingStopped, rejected, unresolved, selectionChanged }
+enum CaptureControlError: Error { case workerUnavailable, storage, noSetup, noActiveMatch, invalidCredential, recordingStopped, rejected, unresolved, selectionChanged,
+    /// The server could not pick a streaming worker for the broadcast.
+    noWorker, workerAmbiguous, outputUnknown
+
+    init(rejection code: String?) {
+        switch code {
+        case "no_worker": self = .noWorker
+        case "worker_ambiguous": self = .workerAmbiguous
+        case "output_unknown": self = .outputUnknown
+        default: self = .rejected
+        }
+    }
+}
