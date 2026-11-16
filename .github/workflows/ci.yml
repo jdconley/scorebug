@@ -38,6 +38,9 @@ jobs:
       - name: test
         run: pnpm test
 
+      - name: Worker tests (workerd)
+        run: pnpm --filter @scorebug/control-plane test:worker
+
       - name: real scoring API process recovery
         run: pnpm test:scoring
 

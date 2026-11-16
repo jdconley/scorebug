@@ -1,0 +1,36 @@
+// Scorebug's hosted API on Cloudflare Workers, served at https://scorebug.live.
+// Secrets (set with `wrangler secret put`, never committed):
+//   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SERVER_SECRET (>= 32 characters),
+//   ADMIN_EMAILS (comma-separated; a secret so no address is committed to this public repo).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "scorebug",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [{ "pattern": "scorebug.live", "custom_domain": true }],
+  "vars": {
+    "PUBLIC_URL": "https://scorebug.live",
+    "APP_AUTH_REDIRECT": "scorebug://auth",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "scorebug",
+      // TODO(production setup): replace with the id printed by `wrangler d1 create scorebug`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "TEAM", "class_name": "TeamObject" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TeamObject"] }],
+  "ratelimits": [
+    // /v1/auth/*: 20 requests a minute per client IP.
+    { "name": "AUTH_LIMIT", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
+    // Match code redemption and team invite accept: 10 a minute per client IP.
+    { "name": "REDEEM_LIMIT", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
+  ],
+  "observability": { "enabled": true },
+}
