@@ -131,6 +131,53 @@ import XCTest
         XCTAssertEqual(model.status, .live, String(describing: model.message))
     }
 
+    /// The app sets the hosted server before the first restore. That restore must not swap the
+    /// old self-hosted server back in, or every request goes to an address that's gone.
+    func testConnectKeepsTheServerSetBeforeTheFirstRestore() async throws {
+        var old = captureSetup()
+        old.endpoint = "https://old.example"
+        let storage = CaptureMemoryStorage(old)
+        let model = makeModel(storage: storage)
+        model.endpoint = "http://localhost:18787"
+        model.installationToken = "session"
+        model.teamId = "t1"
+        await model.connect()
+        XCTAssertNil(model.message)
+        XCTAssertEqual(model.endpoint, "http://localhost:18787")
+        XCTAssertEqual(storage.value?.endpoint, "http://localhost:18787")
+        XCTAssertEqual(storage.value?.teamId, "t1")
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+    }
+
+    /// The background poll restores before any match connects. A setup saved for the old
+    /// self-hosted server must be dropped then, not polled until its requests time out.
+    func testRestoreDropsASetupSavedForAnotherServerBeforeAnyPoll() async throws {
+        var old = captureSetup()
+        old.endpoint = "https://old.example"
+        old.reports = [PendingCaptureReport(credential: MatchCredential(gameId: "old-game", deviceId: "capture-1", role: .capture, token: "old"),
+                                            report: RecordingReport(recordingId: "old-recording", sequence: 2, status: .stopped,
+                                                                    startedAt: "2026-09-13T00:00:00Z"),
+                                            delivered: false)]
+        let storage = CaptureMemoryStorage(old)
+        let model = makeModel(storage: storage)
+        model.server = "http://localhost:18787"
+        await model.restore()
+        await model.pollControl()
+        let requests = await server.requestCount
+        XCTAssertEqual(requests, 0, "nothing is sent for the old server's setup")
+        XCTAssertEqual(storage.value?.endpoint, "http://localhost:18787")
+        XCTAssertEqual(storage.value?.reports.count, 0)
+        XCTAssertNil(storage.value?.credential)
+        model.installationToken = "session"
+        model.teamId = "t1"
+        model.captureChanged(captureContext())
+        await model.connect()
+        await model.startStreaming()
+        XCTAssertEqual(model.status, .live, String(describing: model.message))
+    }
+
     func testReportsForAMatchTheServerForgotAreDropped() async throws {
         var setup = captureSetup()
         setup.reports = [PendingCaptureReport(credential: MatchCredential(gameId: "gone", deviceId: "capture-1", role: .capture, token: "x"),
