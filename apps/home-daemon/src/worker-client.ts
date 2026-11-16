@@ -78,7 +78,7 @@ const connectionSchema = z.object({
         .string()
         .max(4096)
         .url()
-        .refine((value) => new URL(value).protocol === 'srt:'),
+        .refine((value) => ['srt:', 'rtmps:'].includes(new URL(value).protocol)),
       source: z.object({
         ready: z.boolean(),
         inboundBytes: integer,

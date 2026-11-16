@@ -106,7 +106,7 @@ export class FakeStream implements StreamApi {
     return {
       uid,
       publishUrl: `srt://live.cloudflare.example:778?passphrase=pub-${uid}&streamid=${uid}-publish`,
-      readUrl: `srt://live.cloudflare.example:778?passphrase=play-${uid}&streamid=play${uid}`,
+      readUrl: `rtmps://live.cloudflare.example:443/live/play-${uid}`,
     };
   }
   async deleteInput(uid: string) {

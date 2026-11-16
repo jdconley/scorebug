@@ -307,7 +307,7 @@ it('goes live: Stream input, one unlisted broadcast, the container, and the watc
   expect(connection.connection).toMatchObject({
     gameId: 'game-1',
     generation: 1,
-    readUrl: expect.stringMatching(/passphrase=play-/),
+    readUrl: expect.stringMatching(/^rtmps:\/\/live\.cloudflare\.example:443\/live\/play-/),
     source: { ready: true },
   });
   const refused = await team(owner.teamId).workerApi(
