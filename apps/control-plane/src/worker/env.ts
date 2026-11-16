@@ -1,3 +1,4 @@
+import type { Directory, Person } from './directory.js';
 import type { TeamObject } from './team-object.js';
 
 /** Bindings from wrangler.jsonc, plus the secrets set with `wrangler secret put`. */
@@ -12,7 +13,7 @@ export interface Env {
   PUBLIC_URL: string;
   /** scorebug://auth */
   APP_AUTH_REDIRECT: string;
-  /** Comma-separated emails that may open /admin. */
+  /** Comma-separated emails that may open /admin. A secret, so no address is committed. */
   ADMIN_EMAILS: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -20,4 +21,5 @@ export interface Env {
   SERVER_SECRET: string;
 }
 
-export type AppEnv = { Bindings: Env };
+export type AppEnv = { Bindings: Env; Variables: { directory: Directory } };
+export type PersonEnv = { Bindings: Env; Variables: { directory: Directory; person: Person } };
