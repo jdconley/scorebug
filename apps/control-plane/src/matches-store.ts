@@ -11,6 +11,7 @@ import type {
   ScorebugStyle,
   ScoringState,
   Teams,
+  WorkerOutputAssignment,
 } from '@scorebug/protocol';
 import {
   DEFAULT_SCOREBUG_STYLE,
@@ -68,6 +69,11 @@ type InviteRow = {
   expires_at: number;
   revoked_at: number | null;
 };
+export type MatchStoreOptions = {
+  /** The worker's output for a match, when something other than an owner destination
+   * supplies it (the hosted team's YouTube ingest). Null falls back to destinations. */
+  output?: (gameId: string) => WorkerOutputAssignment | null;
+};
 export class MatchStoreError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -105,6 +111,7 @@ export class MatchStore {
     private readonly db: SqlDb,
     private readonly credentialKey: string,
     private readonly now: () => number = Date.now,
+    options: MatchStoreOptions = {},
   ) {
     try {
       if (credentialKey.length < 16) throw new MatchStoreError('credential_key_too_short');
@@ -156,6 +163,8 @@ export class MatchStore {
           this.save(match);
         },
         output: (id) => {
+          const supplied = options.output?.(id);
+          if (supplied) return supplied;
           const output = this.get(id)?.output ?? NO_OUTPUT;
           return {
             destinationId: output.destinationId,

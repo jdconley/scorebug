@@ -9,7 +9,7 @@ import type { Config } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
 import { MediaStoreError } from '../media-store.js';
 import { MediaStateError } from '../media-state.js';
-import { RelayLifecycleError, type RelayLifecycle } from '../relay-lifecycle.js';
+import { RelayLifecycleError, type IngestLifecycle } from '../relay-lifecycle.js';
 import { PUBLISHING_ATTEMPT_ID_PATTERN } from '../publishing-attempt.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -50,7 +50,7 @@ export function mediaRoutes(
   config: Config,
   matches: MatchStore,
   installation: MiddlewareHandler = ownerAuth(matches.account),
-  relayLifecycle?: RelayLifecycle,
+  relayLifecycle?: IngestLifecycle,
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono<Env>();
@@ -153,7 +153,7 @@ export function mediaRoutes(
 export function workerRoutes(
   config: Config,
   matches: MatchStore,
-  relayLifecycle?: RelayLifecycle,
+  relayLifecycle?: IngestLifecycle,
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono();

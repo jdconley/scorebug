@@ -52,7 +52,18 @@ export type WorkerSupervisorOptions = {
   progressTimeoutMs?: number;
   retryWindowMs?: number;
   maxAttempts?: number;
+  /**
+   * Hold each score change this long before the overlay shows it, so the burned-in score
+   * matches video that reaches the worker late (Stream intake adds ~1.1 s). 0 = immediate.
+   */
+  scoreDelayMs?: number;
+  /**
+   * An attempt that ran at least this long before ending gives its retry back: a source that
+   * is absent (read timeout) or dropped is not a crash loop. Unset: every attempt counts.
+   */
+  retryFreeAfterMs?: number;
 };
+type QueuedScore = { active: Running; input: WorkerInput; due: number };
 type Running = {
   handle: PipelineHandle;
   input: WorkerInput;
@@ -73,6 +84,11 @@ export class WorkerSupervisor {
   private readonly progressTimeoutMs: number;
   private readonly retryWindowMs: number;
   private readonly maxAttempts: number;
+  private readonly scoreDelayMs: number;
+  private readonly retryFreeAfterMs: number | undefined;
+  private scoreQueue: QueuedScore[] = [];
+  private scoreTimer: ReturnType<typeof setTimeout> | undefined;
+  private scoreFlush: Promise<void> = Promise.resolve();
   private closed = false;
   private inFlight: Promise<void> | undefined;
   private closing?: Promise<void>;
@@ -97,6 +113,15 @@ export class WorkerSupervisor {
     this.progressTimeoutMs = options.progressTimeoutMs ?? 10000;
     this.retryWindowMs = options.retryWindowMs ?? 60000;
     this.maxAttempts = options.maxAttempts ?? 3;
+    this.scoreDelayMs = options.scoreDelayMs ?? 0;
+    this.retryFreeAfterMs = options.retryFreeAfterMs;
+    if (!Number.isSafeInteger(this.scoreDelayMs) || this.scoreDelayMs < 0)
+      throw new RangeError('scoreDelayMs must be a nonnegative integer');
+    if (
+      this.retryFreeAfterMs !== undefined &&
+      (!Number.isSafeInteger(this.retryFreeAfterMs) || this.retryFreeAfterMs <= 0)
+    )
+      throw new RangeError('retryFreeAfterMs must be a positive integer');
     for (const value of [
       this.controlTimeoutMs,
       this.drainTimeoutMs,
@@ -123,6 +148,7 @@ export class WorkerSupervisor {
   close(): Promise<void> {
     this.closed = true;
     clearTimeout(this.timer);
+    this.clearScores();
     this.closing ??= this.stop('shutdown').then(() => this.emit('closed'));
     return this.closing;
   }
@@ -212,6 +238,48 @@ export class WorkerSupervisor {
     // Shutdown and explicit replacement interrupt a pending graceful drain.
     if (!drain) this.signalStop(active);
     await active.exit;
+  }
+
+  private clearScores(): void {
+    clearTimeout(this.scoreTimer);
+    this.scoreTimer = undefined;
+    this.scoreQueue = [];
+  }
+
+  /** The newest revision the running pipeline shows or will show once its delay passes. */
+  private latestRevision(active: Running): number {
+    return Math.max(active.input.scoreRevision, this.scoreQueue.at(-1)?.input.scoreRevision ?? 0);
+  }
+
+  private armScores(): void {
+    clearTimeout(this.scoreTimer);
+    const next = this.scoreQueue[0];
+    if (!next || this.closed) return;
+    this.scoreTimer = setTimeout(
+      () => {
+        this.scoreFlush = this.scoreFlush.then(() => this.flushScores());
+      },
+      Math.max(0, next.due - this.now()),
+    );
+    this.scoreTimer.unref?.();
+  }
+
+  /** Writes every queued score whose delay has passed, oldest first. */
+  private async flushScores(): Promise<void> {
+    while (this.scoreQueue[0] && this.scoreQueue[0].due <= this.now()) {
+      const { active, input } = this.scoreQueue.shift()!;
+      if (this.closed || this.active !== active || active.stopping) continue;
+      try {
+        await this.writeScore(this.options.scoreFile, input.overlay);
+      } catch {
+        this.clearScores();
+        await this.stop('score_write_failed');
+        if (!this.closed) this.emit('failed', 'score_write_failed');
+        return;
+      }
+      if (this.active === active && !active.stopping) active.input = { ...input };
+    }
+    this.armScores();
   }
 
   private acceptProgress(active: Running, progress: PipelineProgress): void {
@@ -316,7 +384,12 @@ export class WorkerSupervisor {
     if (active) {
       if (controlRecovered)
         this.emit(active.progress ? 'producing_output' : 'starting', undefined, active.input);
-      if (input.scoreRevision <= active.input.scoreRevision) return;
+      if (input.scoreRevision <= this.latestRevision(active)) return;
+      if (this.scoreDelayMs > 0) {
+        this.scoreQueue.push({ active, input: { ...input }, due: this.now() + this.scoreDelayMs });
+        if (this.scoreQueue.length === 1) this.armScores();
+        return;
+      }
       try {
         await this.writeScore(this.options.scoreFile, input.overlay);
       } catch {
@@ -338,6 +411,7 @@ export class WorkerSupervisor {
       return;
     }
     this.attempts.push(now);
+    const budget = this.attempts;
     this.budgets.set(JSON.stringify([input.gameId, input.generation]), this.attempts);
     this.nextAttempt = now + Math.min(1000, this.retryWindowMs / this.maxAttempts);
     try {
@@ -373,8 +447,14 @@ export class WorkerSupervisor {
     };
     const started = running;
     this.active = started;
+    // A new pipeline starts from the latest score; nothing queued for an older one applies.
+    this.clearScores();
     started.exit = handle.waitExit().then(() => {
       clearTimeout(started.drainTimer);
+      if (this.retryFreeAfterMs !== undefined && this.now() - now >= this.retryFreeAfterMs) {
+        const index = budget.indexOf(now);
+        if (index >= 0) budget.splice(index, 1);
+      }
       if (this.active !== started) return;
       this.active = undefined;
       clearTimeout(this.timer);

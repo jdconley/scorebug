@@ -27,6 +27,12 @@ const supervisor = new WorkerSupervisor({
   scoreFile,
   outputId: config.OUTPUT_ID,
   onState: createWorkerStateLogger(log),
+  scoreDelayMs: config.SCORE_DELAY_MS,
+  progressTimeoutMs: config.OUTPUT_TIMEOUT_MS,
+  maxAttempts: config.RETRY_MAX_ATTEMPTS,
+  ...(config.RETRY_FREE_AFTER_MS === undefined
+    ? {}
+    : { retryFreeAfterMs: config.RETRY_FREE_AFTER_MS }),
   start: (input, onProgress) => {
     let outputs: ReturnType<typeof allocatePipelineOutputs>;
     try {
@@ -48,6 +54,10 @@ const supervisor = new WorkerSupervisor({
         decoderThreading: config.DECODER_THREADING,
         profile,
         ffmpegPath: config.FFMPEG_PATH,
+        inputProbe: config.INPUT_PROBE,
+        ...(config.INPUT_READ_TIMEOUT_MS === undefined
+          ? {}
+          : { inputReadTimeoutMs: config.INPUT_READ_TIMEOUT_MS }),
       },
       log,
       { onProgress, stopTimeoutMs: 1000 },
@@ -101,6 +111,8 @@ log.info('worker_started', {
   encoder: config.ENCODER,
   decoderThreading: config.DECODER_THREADING,
   profile: config.VIDEO_PROFILE,
+  scoreDelayMs: config.SCORE_DELAY_MS,
+  inputProbe: config.INPUT_PROBE,
 });
 void poll();
 void report();

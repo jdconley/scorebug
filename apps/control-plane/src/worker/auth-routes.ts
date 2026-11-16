@@ -45,11 +45,17 @@ export type SignInOutcome =
   | { status: 'ok'; person: Person }
   | { status: 'not_in_beta' | 'cancelled' | 'error' };
 
+export type SignInState = Exclude<OAuthState, { purpose: 'youtube' }>;
 /** What the callback does with a signed-in admin browser; set up by the admin page. */
 export type AdminCallback = (
   c: Parameters<MiddlewareHandler<AppEnv>>[0],
-  state: OAuthState,
+  state: SignInState,
   outcome: SignInOutcome,
+) => Promise<Response>;
+/** The YouTube channel connection leg of the shared callback (youtube-routes.ts). */
+export type YouTubeCallback = (
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  state: Extract<OAuthState, { purpose: 'youtube' }>,
 ) => Promise<Response>;
 
 /**
@@ -85,7 +91,7 @@ async function admit(
   return person;
 }
 
-export function authRoutes(google: GoogleOAuth, admin?: AdminCallback) {
+export function authRoutes(google: GoogleOAuth, admin?: AdminCallback, youtube?: YouTubeCallback) {
   const app = new Hono<AppEnv>();
   app.use('*', async (c, next) => (await limited(c, c.env.AUTH_LIMIT, 'auth')) ?? next());
 
@@ -118,11 +124,15 @@ export function authRoutes(google: GoogleOAuth, admin?: AdminCallback) {
   });
 
   app.get('/google/callback', async (c) => {
-    const state = verifyState(
+    const verified = verifyState(
       c.env.SERVER_SECRET,
       c.req.query('state') ?? '',
       c.var.directory.now(),
     );
+    // One registered redirect URI serves sign-in and channel connections.
+    if (verified?.purpose === 'youtube')
+      return youtube ? youtube(c, verified) : c.json({ error: 'invalid_request' }, 400);
+    const state = verified;
     const toApp = (outcome: SignInOutcome, ticket?: string) => {
       const query = new URLSearchParams({ status: outcome.status });
       if (ticket) query.set('ticket', ticket);

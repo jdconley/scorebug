@@ -30,7 +30,24 @@ export class FakeGoogle implements GoogleOAuth {
     url.searchParams.set('scope', p.scopes.join(' '));
     url.searchParams.set('redirect_uri', p.redirectUri);
     url.searchParams.set('prompt', p.prompt);
+    if (p.accessType) url.searchParams.set('access_type', p.accessType);
     return url.toString();
+  }
+
+  /** Scripts a channel-connection grant; `youtube: false` models an unticked box. */
+  youtubeGrant(opts: { refreshToken?: string | null; youtube?: boolean } = {}): string {
+    const code = `code-${++this.next}`;
+    this.grants.set(code, {
+      identity: { sub: 'unused', email: 'unused', emailVerified: true, name: null, picture: null },
+      refreshToken: opts.refreshToken === undefined ? `refresh-${code}` : opts.refreshToken,
+      scopes: opts.youtube === false ? [] : ['https://www.googleapis.com/auth/youtube'],
+    });
+    return code;
+  }
+
+  async exchangeForRefreshToken(code: string) {
+    const grant = await this.exchange(code);
+    return { refreshToken: grant.refreshToken, scopes: grant.scopes };
   }
 
   async exchange(code: string): Promise<GoogleGrant> {

@@ -212,25 +212,6 @@ it('recording report is accepted', async () => {
   expect(await report.json()).toMatchObject({ recording: { recordingId: 'rec-1' } });
 });
 
-it('broadcast publish has no relay yet', async () => {
-  const owner = await ownerWithTeam(h);
-  await createMatch(owner.token, owner.teamId);
-  const { credential } = (await (
-    await h.json(
-      `/v1/teams/${owner.teamId}/matches/game-1/join`,
-      { deviceId: 'camera-phone', role: 'capture' },
-      { headers: h.auth(owner.token) },
-    )
-  ).json()) as { credential: Credential };
-  const publish = await h.json(
-    '/v1/matches/game-1/media/publish',
-    { recordingId: 'rec-1', generation: 1 },
-    { headers: h.auth(credential.token) },
-  );
-  expect(publish.status).toBe(503);
-  expect(await publish.json()).toEqual({ error: 'relay_not_configured' });
-});
-
 it('a refused create keeps the claim of a match that exists', async () => {
   const owner = await ownerWithTeam(h);
   expect((await createMatch(owner.token, owner.teamId)).status).toBe(201);

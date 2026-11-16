@@ -1,6 +1,8 @@
 # Hosted Scorebug on Cloudflare
 
-Status: draft for JD's approval, 2026-11-16.
+Status: draft, 2026-11-16. Updated after the Stream + Container spike
+(`2026-11-16-stream-container-spike-results.md`): the container pulls Stream's SRT
+playback, not RTMPS; there's no slate; the container starts at Go Live, not early.
 
 ## Why
 
@@ -120,7 +122,7 @@ timing, and that overlay is the part of the product that's tested.
 
 ```text
 iPhone ──SRT──▶ Cloudflare Stream live input (one per match)
-                         │ RTMPS playback (pull)
+                         │ SRT playback (pull)
                          ▼
              Match container (FFmpeg + scorebug) ──RTMPS──▶ team's YouTube channel
                          ▲ score + control (HTTP via outbound handler)
@@ -249,10 +251,13 @@ connection work end to end, because Google's review is the long pole:
 2. **Go Live:**
     - the phone starts sending SRT to Stream, which is always ready to receive;
     - the team object creates the YouTube broadcast if the match has none yet;
-    - it starts the match container with the YouTube ingest URL and key, the
-      Stream input's RTMPS playback URL, and the match ID.
+    - it starts the match container. The worker gets the YouTube ingest URL and
+      key and the Stream input's SRT playback URL from the team object over the
+      `/v1/worker/*` contract, not from its environment.
+    - No early start: cold start is about 17 s from Go Live to YouTube (spike).
 3. **The container:**
-    - **Input:** it pulls RTMPS from Stream, retrying until the feed exists.
+    - **Input:** it pulls Stream's SRT playback URL, retrying until the feed
+      exists. SRT keeps the worker's tested reader; the spike pulled it first time.
     - **Score:** it fetches the score from `http://api.internal/...`, which an
       outbound handler sends straight to the team object. No token sits in the
       container.
@@ -266,21 +271,23 @@ connection work end to end, because Google's review is the long pole:
    offline in the meantime.
 5. **End of match:** the team object destroys the container, deletes the
    Stream live input, and ends the YouTube broadcast.
-6. **Phone drops:** the container keeps reading and holds YouTube on the last
-   frame or a short slate, depending on what the spike shows works. It
-   reconnects when Stream gets the feed back, exactly as it does with the
-   relay today.
+6. **Phone drops:** no slate. YouTube holds the last frame under its spinner,
+   and with auto-stop off the broadcast and link survived 10 s, 60 s and
+   5-minute gaps in the spike. The worker's read times out after 4 s and it
+   retries every few seconds without using up its crash budget, so output is
+   back about 10 s after Stream gets the feed again.
 
 **Teardown guards.** Nothing should keep billing:
 
 - **While live:** the container's activity timeout is renewed, Streamline
   style.
 - **Hard cap:** 4 hours per match.
-- **Idle:** if no video has reached Stream for 10 minutes, the team object
-  destroys the container. The match, the Stream input and the YouTube
-  broadcast stay. When video reaches Stream again (a Stream webhook, or the
-  phone's own reconnect calling Go Live), the container starts again on its
-  own, so a long gym network outage recovers without a tap.
+- **Idle:** if the worker has produced no output for 10 minutes, the team
+  object destroys the container. The match, the Stream input and the YouTube
+  broadcast stay. While parked, the team object's alarm checks the Stream
+  input's status every 30 s, and the phone's next publish request also wakes
+  it. When video reaches Stream again the container starts again on its own,
+  so a long gym network outage recovers without a tap.
 - **Daily sweep:** a scheduled Worker deletes any Stream input or container
   older than its match, and alerts.
 - **Beta cost guard (my call):** a cap on concurrent live matches across all
@@ -292,13 +299,17 @@ connection work end to end, because Google's review is the long pole:
 
 - The image is today's `apps/home-daemon` worker, in a container image built
   by Wrangler.
-- **Input:** it takes the RTMPS playback URL from Stream instead of the SRT
-  relay URL.
-- **Startup:** its config comes from container env vars instead of the
-  polled assignment.
-- **Encoder:** x264 `veryfast` with `zerolatency`, on `standard-4`.
-  1080p30 is the target and 720p30 the fallback. The spike decides the
-  default.
+- **Input:** Stream's SRT playback URL in place of the relay's SRT URL, served
+  by the team object's `/v1/worker/connection`.
+- **Startup:** the worker polls the same `/v1/worker/*` assignment as today, at
+  `http://api.internal/`, an outbound intercept that goes straight to the team
+  object. Env vars carry only tuning: the score delay (1.1 s), fast SRT probing,
+  a 4 s read timeout, a 15 s output timeout and the gentler retry budget.
+- **Encoder:** x264 `veryfast` with `zerolatency`, on `standard-4`. 1080p30
+  is the default (31% CPU in the spike); 720p30 is the fallback. Custom
+  instance sizes are for enterprise plans only, so `standard-4` it is.
+- **Score delay:** the worker holds each score change 1.1 s, the measured
+  intake delay through Stream, so the burned-in score matches the play.
 - **Dropped:** the NVENC and VideoToolbox paths stay in code but aren't used
   in production.
 
@@ -430,11 +441,11 @@ there are other users, and Wrangler's version rollback is the undo.
 
 - Durable Object and D1 schemas, route shapes beyond what the protocol already
   defines, and token formats.
-- Stream API details: per-match input creation, and RTMPS or SRT playback for
-  the pull, whichever the spike finds more robust.
+- Stream API details: per-match input creation (SRT playback for the pull,
+  per the spike).
 - How the container fetches the score: poll or WebSocket through the outbound
   handler.
-- The slate or last-frame behavior during a phone drop.
+- The last-frame behavior during a phone drop (no slate: YouTube holds it).
 - The look of the web pages and the admin page, following the app's style.
 - Wrangler and project layout. The `apps/` directory names can change, for
   example `apps/home-daemon` to `apps/match-worker`.

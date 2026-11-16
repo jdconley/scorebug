@@ -9,6 +9,7 @@ import { requirePerson } from './auth-routes.js';
 import type { Team, TeamRole } from './directory.js';
 import type { PersonEnv } from './env.js';
 import { invalid, limited, readJson, serverTime } from './http.js';
+import { channels, teamYouTubeView } from './youtube-routes.js';
 import {
   normalizeEmail,
   normalizeTeamInviteCode,
@@ -75,14 +76,16 @@ export function teamRoutes() {
     const dir = c.var.directory;
     const team = c.var.team;
     const owner = c.var.role === 'owner';
-    const [members, invites] = await Promise.all([
+    const [members, invites, youtube] = await Promise.all([
       dir.members(team.id),
       owner ? dir.teamInvites(team.id) : Promise.resolve(undefined),
+      channels(c, dir.now).teamConnection(team.id),
     ]);
     return c.json({
       team,
       role: c.var.role,
       members,
+      youtube: teamYouTubeView(youtube),
       ...(invites ? { invites } : {}),
       serverTime: serverTime(),
     });
@@ -101,6 +104,24 @@ export function teamRoutes() {
     if (!input) return invalid(c);
     const team = await c.var.directory.updateTeam(c.var.team.id, input);
     return c.json({ team, serverTime: serverTime() });
+  });
+
+  /** The owner picks one of their own connections (or null) as the team's channel. */
+  const channel = z.object({ connectionId: z.uuid().nullable() }).strict();
+  app.put('/:teamId/youtube', requireMember('owner'), async (c) => {
+    const input = await readJson(c, channel);
+    if (!input) return invalid(c);
+    const store = channels(c, c.var.directory.now);
+    if (input.connectionId !== null) {
+      const row = await store.connection(input.connectionId);
+      if (!row || row.person_id !== c.var.person.id)
+        return c.json({ error: 'connection_not_found' }, 404);
+    }
+    await store.setTeamChannel(c.var.team.id, input.connectionId);
+    return c.json({
+      youtube: teamYouTubeView(await store.teamConnection(c.var.team.id)),
+      serverTime: serverTime(),
+    });
   });
 
   const newInvite = z

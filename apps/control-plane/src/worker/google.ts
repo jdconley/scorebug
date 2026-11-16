@@ -23,11 +23,19 @@ export interface GoogleOAuth {
     state: string;
     scopes: string[];
     redirectUri: string;
-    prompt: 'select_account' | 'consent';
+    prompt: 'select_account' | 'consent' | 'select_account consent';
     loginHint?: string;
+    /** `offline` asks for a refresh token (the YouTube channel connection). */
+    accessType?: 'online' | 'offline';
   }): string;
-  /** Throws GoogleOAuthError. */
+  /** Sign-in: needs the id_token. Throws GoogleOAuthError. */
   exchange(code: string, redirectUri: string): Promise<GoogleGrant>;
+  /** Channel connection: the grant's refresh token and scopes; no identity needed.
+   * Throws GoogleOAuthError. */
+  exchangeForRefreshToken(
+    code: string,
+    redirectUri: string,
+  ): Promise<{ refreshToken: string | null; scopes: string[] }>;
 }
 
 const AUTHORIZE = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -79,7 +87,7 @@ export function realGoogle(
   now: () => number = Date.now,
 ): GoogleOAuth {
   return {
-    authorizeUrl({ state, scopes, redirectUri, prompt, loginHint }) {
+    authorizeUrl({ state, scopes, redirectUri, prompt, loginHint, accessType }) {
       const url = new URL(AUTHORIZE);
       url.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
       url.searchParams.set('redirect_uri', redirectUri);
@@ -89,31 +97,11 @@ export function realGoogle(
       url.searchParams.set('prompt', prompt);
       url.searchParams.set('include_granted_scopes', 'true');
       if (loginHint) url.searchParams.set('login_hint', loginHint);
+      if (accessType) url.searchParams.set('access_type', accessType);
       return url.toString();
     },
     async exchange(code, redirectUri) {
-      let response: Response;
-      try {
-        response = await fetcher(TOKEN, {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            code,
-            client_id: env.GOOGLE_CLIENT_ID,
-            client_secret: env.GOOGLE_CLIENT_SECRET,
-            redirect_uri: redirectUri,
-            grant_type: 'authorization_code',
-          }),
-        });
-      } catch {
-        throw new GoogleOAuthError('google_unreachable');
-      }
-      if (!response.ok) throw new GoogleOAuthError('token_exchange_failed');
-      const body = (await response.json()) as {
-        id_token?: string;
-        refresh_token?: string;
-        scope?: string;
-      };
+      const body = await token(code, redirectUri);
       if (!body.id_token) throw new GoogleOAuthError('id_token_missing');
       return {
         identity: identityFromIdToken(body.id_token, env.GOOGLE_CLIENT_ID, now()),
@@ -121,5 +109,37 @@ export function realGoogle(
         scopes: (body.scope ?? '').split(' ').filter(Boolean),
       };
     },
+    async exchangeForRefreshToken(code, redirectUri) {
+      const body = await token(code, redirectUri);
+      return {
+        refreshToken: body.refresh_token ?? null,
+        scopes: (body.scope ?? '').split(' ').filter(Boolean),
+      };
+    },
   };
+
+  async function token(code: string, redirectUri: string) {
+    let response: Response;
+    try {
+      response = await fetcher(TOKEN, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: env.GOOGLE_CLIENT_ID,
+          client_secret: env.GOOGLE_CLIENT_SECRET,
+          redirect_uri: redirectUri,
+          grant_type: 'authorization_code',
+        }),
+      });
+    } catch {
+      throw new GoogleOAuthError('google_unreachable');
+    }
+    if (!response.ok) throw new GoogleOAuthError('token_exchange_failed');
+    return (await response.json()) as {
+      id_token?: string;
+      refresh_token?: string;
+      scope?: string;
+    };
+  }
 }

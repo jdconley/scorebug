@@ -21,7 +21,17 @@ export type PipelineSpec = {
   decoderThreading?: 'automatic' | 'slice';
   profile?: { width: number; height: number; fps: number; bitrateKbps: number };
   ffmpegPath?: string;
+  /**
+   * Input probing. `fast` bounds FFmpeg's stream analysis for a known SRT/MPEG-TS source
+   * (H.264 + AAC from the phone): it saves several seconds per attempt through Stream.
+   */
+  inputProbe?: 'default' | 'fast';
+  /** Ends the attempt when the source sends nothing for this long (FFmpeg rw_timeout). */
+  inputReadTimeoutMs?: number;
 };
+
+/** Bounded analysis for `inputProbe: 'fast'`: enough for one 2 s phone GOP at 6+ Mbps. */
+export const FAST_PROBE_ARGS = ['-probesize', '2000000', '-analyzeduration', '2500000'] as const;
 
 export type PipelineHandle = {
   spec: PipelineSpec;
@@ -86,6 +96,14 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
       profile.bitrateKbps > 100000)
   )
     throw new Error('invalid_video_profile');
+  const inputProbe = spec.inputProbe ?? 'default';
+  if (!['default', 'fast'].includes(inputProbe)) throw new Error('invalid_input_probe');
+  const readTimeout = spec.inputReadTimeoutMs;
+  if (
+    readTimeout !== undefined &&
+    (!Number.isSafeInteger(readTimeout) || readTimeout < 500 || readTimeout > 120_000)
+  )
+    throw new Error('invalid_input_read_timeout');
   const encoder = spec.encoder ?? (spec.nvenc ? 'nvenc' : 'software');
   const video = videoEncoderArgs(encoder);
   video.push(
@@ -161,6 +179,10 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     ...(profile ? ['-reinit_filter:v:0', '0'] : []),
     // Input-scoped: never changes the selected output encoder's threading.
     ...(decoderThreading === 'slice' ? ['-thread_type:v:0', 'slice'] : []),
+    ...(inputProbe === 'fast' ? FAST_PROBE_ARGS : []),
+    // Microseconds. A read that waits this long fails the attempt, so an absent source
+    // costs a short retry instead of a full output timeout.
+    ...(readTimeout !== undefined ? ['-rw_timeout', String(readTimeout * 1000)] : []),
     '-i',
     spec.pullUrl,
     // Bounded overlay prefetch: the feed writes at most ~2 frames ahead of main.

@@ -1,14 +1,23 @@
 import { Hono } from 'hono';
 import { adminCallback, adminRoutes } from './admin-page.js';
-import { authRoutes, meRoutes } from './auth-routes.js';
+import { authRoutes, callbackUrl, meRoutes } from './auth-routes.js';
 import { Directory } from './directory.js';
 import type { AppEnv, Env } from './env.js';
 import type { GoogleOAuth } from './google.js';
 import { matchForwardingRoutes } from './match-forwarding.js';
+import { mediaAdapters } from './media-adapters.js';
 import { siteRoutes } from './site.js';
 import { teamInviteRoutes, teamRoutes } from './team-routes.js';
+import type { YouTubeApi } from './youtube.js';
+import { youtubeCallback, youtubeRoutes } from './youtube-routes.js';
 
-export type WorkerDeps = { env: Env; google: GoogleOAuth; now?: () => number };
+export type WorkerDeps = {
+  env: Env;
+  google: GoogleOAuth;
+  /** Defaults to the real (or test-overridden) adapter for the request's env. */
+  youtube?: YouTubeApi;
+  now?: () => number;
+};
 
 export function createWorkerApp(deps: WorkerDeps): Hono<AppEnv> {
   const now = deps.now ?? Date.now;
@@ -30,7 +39,14 @@ export function createWorkerApp(deps: WorkerDeps): Hono<AppEnv> {
     }
     await next();
   });
-  app.route('/v1/auth', authRoutes(deps.google, adminCallback));
+  app.route(
+    '/v1/auth',
+    authRoutes(deps.google, adminCallback, youtubeCallback(deps.google, callbackUrl)),
+  );
+  app.route(
+    '/v1/youtube',
+    youtubeRoutes(deps.google, () => deps.youtube ?? mediaAdapters(deps.env).youtube, callbackUrl),
+  );
   app.route('/admin', adminRoutes());
   app.route('/v1/me', meRoutes());
   app.route('/', matchForwardingRoutes());
