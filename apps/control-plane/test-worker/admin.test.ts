@@ -118,3 +118,10 @@ it('cookie is scoped to /admin', async () => {
   expect(admin).toContain('SameSite=Strict');
   expect(admin).toContain('Max-Age=43200');
 });
+
+it('the page keeps the Origin header on its own form posts', async () => {
+  const cookie = await adminCookie();
+  const page = await h.call('/admin', { headers: { cookie } });
+  // no-referrer would make browsers send `Origin: null` on the form posts.
+  expect(page.headers.get('referrer-policy')).toBe('same-origin');
+});

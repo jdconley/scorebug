@@ -271,12 +271,18 @@ export function inviteRoutes(store: MatchStore, access: MatchAccess) {
       c.get('issuer'),
       input.expiresInMinutes === undefined ? undefined : input.expiresInMinutes * 60_000,
     );
-    await access.onInvite?.issued({
-      inviteId: invite.id,
-      code,
-      gameId: invite.gameId,
-      expiresAt: invite.expiresAt,
-    });
+    try {
+      await access.onInvite?.issued({
+        inviteId: invite.id,
+        code,
+        gameId: invite.gameId,
+        expiresAt: invite.expiresAt,
+      });
+    } catch (error) {
+      // A code nobody can route to must not linger or count toward the invite limit.
+      store.revokeInvite(invite.gameId, invite.id);
+      throw error;
+    }
     return c.json(
       {
         invite,

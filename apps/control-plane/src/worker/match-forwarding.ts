@@ -67,10 +67,18 @@ async function create(c: Context<TeamEnv>, member: string): Promise<Response> {
     member,
     body: text,
   });
-  if (claimed && response.status !== 201)
-    await c.env.DB.prepare('DELETE FROM match_index WHERE game_id=? AND team_id=?')
-      .bind(id, teamId)
-      .run();
+  // Release the claim only when the match does not exist: match_id_reused means a concurrent
+  // create of the same ID (without this request's claim) made it.
+  if (claimed && response.status !== 201) {
+    const body = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { error?: unknown } | null;
+    if (body?.error !== 'match_id_reused')
+      await c.env.DB.prepare('DELETE FROM match_index WHERE game_id=? AND team_id=?')
+        .bind(id, teamId)
+        .run();
+  }
   return response;
 }
 

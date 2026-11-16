@@ -17,7 +17,8 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy':
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   'Cache-Control': 'no-store',
-  'Referrer-Policy': 'no-referrer',
+  // Not no-referrer: that makes browsers send `Origin: null` on this page's form posts.
+  'Referrer-Policy': 'same-origin',
   'X-Content-Type-Options': 'nosniff',
 };
 

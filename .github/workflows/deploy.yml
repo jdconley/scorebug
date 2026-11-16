@@ -10,10 +10,11 @@ on:
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
-# A newer push to main replaces an older deploy that's still running.
+# Deploys queue: cancelling one between the migration and the deploy would leave the schema
+# ahead of the code.
 concurrency:
   group: deploy-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   worker:

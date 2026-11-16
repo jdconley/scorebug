@@ -230,3 +230,35 @@ it('broadcast publish has no relay yet', async () => {
   expect(publish.status).toBe(503);
   expect(await publish.json()).toEqual({ error: 'relay_not_configured' });
 });
+
+it('a refused create keeps the claim of a match that exists', async () => {
+  const owner = await ownerWithTeam(h);
+  expect((await createMatch(owner.token, owner.teamId)).status).toBe(201);
+  // As if a concurrent same-ID create won the race without this request's claim.
+  await env.DB.prepare('DELETE FROM match_index').run();
+  const different = await h.json(
+    `/v1/teams/${owner.teamId}/matches`,
+    { ...creation(), rules: { ...fixture.creation.rules, pointsToWin: 21 } },
+    { headers: h.auth(owner.token) },
+  );
+  expect(different.status).toBe(409);
+  expect(await different.json()).toMatchObject({ error: 'match_id_reused' });
+  const row = await env.DB.prepare('SELECT team_id FROM match_index WHERE game_id=?')
+    .bind('game-1')
+    .first<{ team_id: string }>();
+  expect(row?.team_id).toBe(owner.teamId);
+});
+
+it('a join code collides across teams only while the other team holds it live', async () => {
+  const { memberAccess } = await import('../src/worker/team-object.js');
+  const routeFor = (team: string) => memberAccess(env, () => team).onInvite!;
+  const later = new Date(Date.now() + 60_000).toISOString();
+  const issue = (team: string, inviteId: string, expiresAt = later) =>
+    routeFor(team).issued({ inviteId, code: 'ABC234', gameId: `${team}-game`, expiresAt });
+  await issue('team-a', 'invite-a');
+  await expect(issue('team-b', 'invite-b')).rejects.toThrow('another team');
+  await env.DB.prepare("UPDATE match_codes SET expires_at=1 WHERE invite_id='invite-a'").run();
+  await issue('team-b', 'invite-b');
+  const row = await env.DB.prepare('SELECT team_id, invite_id FROM match_codes').first();
+  expect(row).toEqual({ team_id: 'team-b', invite_id: 'invite-b' });
+});

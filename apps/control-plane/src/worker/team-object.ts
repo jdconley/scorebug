@@ -37,8 +37,12 @@ export function memberAccess(env: Env, team: () => string | null): MatchAccess {
         const teamId = team();
         const normalized = normalizeInviteCode(code);
         if (!teamId || !normalized) throw new Error('match code routing needs a team and a code');
-        await env.DB.prepare(
-          'INSERT INTO match_codes(code_hash,invite_id,team_id,game_id,expires_at) VALUES(?,?,?,?,?)',
+        // Codes are unique per team object only; across teams an expired row may hold the
+        // same hash and is replaced. A live collision fails, and the caller revokes the code.
+        const result = await env.DB.prepare(
+          `INSERT INTO match_codes(code_hash,invite_id,team_id,game_id,expires_at) VALUES(?,?,?,?,?)
+          ON CONFLICT(code_hash) DO UPDATE SET invite_id=excluded.invite_id, team_id=excluded.team_id,
+            game_id=excluded.game_id, expires_at=excluded.expires_at WHERE match_codes.expires_at<=?`,
         )
           .bind(
             routeCodeHash(env.SERVER_SECRET, MATCH_CODE_PURPOSE, normalized),
@@ -46,8 +50,10 @@ export function memberAccess(env: Env, team: () => string | null): MatchAccess {
             teamId,
             gameId,
             Date.parse(expiresAt),
+            Date.now(),
           )
           .run();
+        if (result.meta.changes === 0) throw new Error('match code already routed by another team');
       },
       async revoked({ inviteId }) {
         await env.DB.prepare('DELETE FROM match_codes WHERE invite_id=?').bind(inviteId).run();
