@@ -36,6 +36,8 @@ targets:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: Scorebug
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIAppFonts:
@@ -92,6 +94,8 @@ targets:
       path: Resources/Watch-Info.plist
       properties:
         CFBundleDisplayName: Scorebug
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         WKApplication: true
         WKCompanionAppBundleIdentifier: live.scorebug.app
         WKRunsIndependentlyOfCompanionApp: false
