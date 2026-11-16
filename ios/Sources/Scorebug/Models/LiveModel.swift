@@ -45,7 +45,13 @@ import ScorebugCore
     /// recordings, which briefly blocks a new recording after a relaunch mid-match.
     func startRecording() async {
         guard !film.canStop else { return }
-        for _ in 0..<300 where !film.canStart && film.state != .stopping { try? await Task.sleep(for: .milliseconds(100)) }
+        for _ in 0..<300 where !film.canStart && film.state != .stopping {
+            try? await Task.sleep(for: .milliseconds(100))
+            // The screen left (match ended) while waiting: never start the camera for a match that's over,
+            // or the next match finds the camera busy and never goes live.
+            if Task.isCancelled || finishing { return }
+        }
+        guard !Task.isCancelled, !finishing else { return }
         film.selectQuality(recordIn4K ? .uhd2160 : .hd1080)
         await film.start()
         noteRecording()
@@ -120,5 +126,6 @@ import ScorebugCore
         scoreboard.isLiveForWatch = false
         await streaming.stopStreaming()
         await film.stop()
+        await streaming.releaseMatch()
     }
 }
