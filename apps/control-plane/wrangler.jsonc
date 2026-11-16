@@ -10,6 +10,9 @@
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Fonts and icons for the public pages. Requests that match a file are served without running
+  // the Worker; everything else falls through to it.
+  "assets": { "directory": "./public", "binding": "ASSETS" },
   "routes": [{ "pattern": "scorebug.live", "custom_domain": true }],
   "vars": {
     "PUBLIC_URL": "https://scorebug.live",
