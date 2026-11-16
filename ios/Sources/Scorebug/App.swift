@@ -64,6 +64,7 @@ struct ScorebugApp: App {
         let environment = ProcessInfo.processInfo.environment["SCOREBUG_TEST_API_URL"].flatMap { $0.isEmpty ? nil : $0 }
         if let address = environment ?? preferences.serverOverride, let custom = try? ScoringEndpoint(address) { server = custom }
         #endif
+        streaming.server = server.url.absoluteString
         _app = StateObject(wrappedValue: AppModel(store: KeychainStore(), preferences: preferences, server: server,
                                                   browser: WebAuthenticationBrowser(), deviceName: { UIDevice.current.name }))
         #if DEBUG

@@ -14,6 +14,9 @@ import ScorebugStreaming
     static let publishingHealthInterval: Duration = .milliseconds(500)
 
     @Published var endpoint = "http://localhost:18787"
+    /// The server this app talks to, known at launch. Set before the first restore so a setup
+    /// saved for any other server is dropped instead of polled.
+    var server: String?
     @Published var installationToken = ""
     /// Team match routes (`/v1/teams/:teamId/matches`) for the active match and broadcast commands.
     @Published var teamId: String?
@@ -129,6 +132,13 @@ import ScorebugStreaming
             setup = try storage.load()
             if var saved = setup {
                 _ = try ScoringEndpoint(saved.endpoint)
+                if let server, Self.server(saved.endpoint) != Self.server(server) {
+                    // Saved for another server (the self-hosted build's, say). Its reports, credential and
+                    // pending command can never be delivered; polling it only stalls Go Live on timeouts.
+                    try pendingStore.save(nil)
+                    saved = SavedCaptureSetup(endpoint: server, installationToken: "", deviceId: saved.deviceId,
+                                              credential: nil, reports: [])
+                }
                 endpoint = saved.endpoint; installationToken = saved.installationToken; teamId = saved.teamId
                 for index in saved.reports.indices where saved.reports[index].report.status == .recording {
                     saved.reports[index].report.sequence += 1
@@ -182,7 +192,13 @@ import ScorebugStreaming
 
     func connect() async {
         guard !busy, !stopping, !publisherStopping, !controlBusy else { return }
+        // The caller set the server, token and team before connecting; the first restore must not
+        // put back the ones saved by an older build (a phone that used a self-hosted server).
+        let wanted = (endpoint: endpoint, token: installationToken, teamId: teamId)
         await restore()
+        if !wanted.token.isEmpty {
+            endpoint = wanted.endpoint; installationToken = wanted.token; teamId = wanted.teamId
+        }
         do {
             if let old = setup, publishing == nil, Self.server(old.endpoint) != Self.server(endpoint) {
                 // A different server (the self-hosted one before hosted Scorebug, say) can never
