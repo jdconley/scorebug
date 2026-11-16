@@ -21,7 +21,7 @@ public struct SetupRedeemed: Codable, Equatable, Sendable {
     public var serverTime: String
 }
 
-/// `GET /v1/devices/me`. `device` is null for the legacy PHONE_TOKEN.
+/// `GET /v1/devices/me`. `legacy` is only sent by servers from before setup links.
 public struct CurrentDevice: Codable, Equatable, Sendable {
     public var role: String
     public var legacy: Bool?

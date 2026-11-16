@@ -205,10 +205,6 @@ print_phone_setup() {
   say 'Scan the QR code with the phone camera, or text the link to yourself and'
   say 'open it on the phone. Each link sets up one phone. Another phone: run'
   say "  $0 phone"
-  say ''
-  say 'Older app versions without setup links: open Film -> streaming settings and enter'
-  say "  Server: $(https_base)   Worker: $(env_get "$SERVER_ENV" WORKER_ID)   Output: $(env_get "$SERVER_ENV" OUTPUT_ID)"
-  say "  Installation token: run  sed -n 's/^PHONE_TOKEN=//p' $SERVER_ENV"
 }
 
 # Save the YouTube URL from the installer as the default streaming destination
@@ -248,7 +244,7 @@ HTTP_PORT=$HTTP_PORT
 HTTPS_PORT=$HTTPS_PORT
 CADDY_TLS=$CADDY_TLS
 PUBLIC_URL=$(https_base)
-PHONE_TOKEN=$PHONE_TOKEN
+SERVER_SECRET=$SERVER_SECRET
 HOME_TOKEN=$HOME_TOKEN
 RELAY_API_PASSWORD=$RELAY_API_PASSWORD
 WORKER_ID=$WORKER_ID
@@ -386,7 +382,7 @@ cmd_server() {
     warn 'public certificates need this host reachable on ports 80 and 443'
   fi
 
-  for key in PHONE_TOKEN HOME_TOKEN RELAY_API_PASSWORD; do
+  for key in SERVER_SECRET HOME_TOKEN RELAY_API_PASSWORD; do
     value=$(env_get "$SERVER_ENV" "$key")
     if [ "$ROTATE" -eq 1 ] || [ -z "$value" ]; then value=$(random_hex); fi
     eval "$key=\$value"

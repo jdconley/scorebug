@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 const env = {
-  PHONE_TOKEN: 'phone-token-not-production',
+  SERVER_SECRET: 'server-secret-not-production',
   HOME_TOKEN: 'home-token-not-production',
 };
 it('preserves unset publishing delay and accepts bounded millisecond overrides', () => {
@@ -111,4 +111,20 @@ it('treats an empty PUBLIC_URL as unset and rejects non-HTTP link bases', () => 
   );
   for (const PUBLIC_URL of ['ftp://x', 'https://x/?a=1', 'not a url'])
     expect(() => loadConfig({ ...env, PUBLIC_URL })).toThrow();
+});
+
+it('takes the default worker as a WORKER_ID/OUTPUT_ID pair; empty means unset', () => {
+  expect(loadConfig({ ...env, WORKER_ID: 'home', OUTPUT_ID: 'youtube' })).toMatchObject({
+    WORKER_ID: 'home',
+    OUTPUT_ID: 'youtube',
+  });
+  expect(loadConfig({ ...env, WORKER_ID: '', OUTPUT_ID: '' }).WORKER_ID).toBeUndefined();
+  expect(() => loadConfig({ ...env, WORKER_ID: 'home' })).toThrow();
+  expect(() => loadConfig({ ...env, WORKER_ID: 'bad id', OUTPUT_ID: 'out' })).toThrow();
+});
+
+it('no longer reads PHONE_TOKEN', () => {
+  expect(() =>
+    loadConfig({ PHONE_TOKEN: env.SERVER_SECRET, HOME_TOKEN: env.HOME_TOKEN }),
+  ).toThrow();
 });

@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { publishAttemptQuery } from '../src/publishing-attempt.js';
 import type { Config } from '../src/config.js';
+import type { MatchStore } from '../src/matches-store.js';
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
-    PHONE_TOKEN: 'phone-token-1234567890abcdef',
+    SERVER_SECRET: 'server-secret-1234567890abcdef',
     HOME_TOKEN: 'home-token-1234567890abcdef',
     PORT: 0,
     HOST: '127.0.0.1',
@@ -14,6 +16,13 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     DATABASE_PATH: ':memory:',
     ...overrides,
   };
+}
+
+/** Enroll an owner phone the way a setup link does and return its device token. */
+export function ownerToken(matches: MatchStore): string {
+  const { code } = matches.account.mintSetupCode();
+  return matches.account.redeemSetupCode({ code, deviceId: randomUUID(), deviceName: 'Test phone' })
+    .token;
 }
 
 export function phoneAuth(token: string) {

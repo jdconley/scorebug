@@ -22,6 +22,7 @@
     "test:worker-container": "node scripts/test-worker-container.mjs",
     "test:scoring": "pnpm --filter @scorebug/protocol build && node scripts/test-scoring.mjs",
     "dev:api": "pnpm --filter @scorebug/protocol build && node --env-file=infra/local/.env.example apps/control-plane/node_modules/tsx/dist/cli.mjs apps/control-plane/src/index.ts",
+    "dev:setup-link": "node --env-file=infra/local/.env.example apps/control-plane/node_modules/tsx/dist/cli.mjs apps/control-plane/src/cli.ts setup-link --qr none",
     "local:up": "docker compose -f docker-compose.dev.yml up -d",
     "local:down": "docker compose -f docker-compose.dev.yml down",
     "typecheck": "pnpm -r typecheck",

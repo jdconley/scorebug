@@ -13,15 +13,14 @@ YouTube.
 The whole path works end to end on a development Mac: the iPhone and Watch apps
 score a match, the phone records and streams, the worker draws the score on the
 video and publishes it to a local stand-in for YouTube. It has not yet been used
-with a real YouTube stream, on a remote server, or through a full match. Work in
-progress: a simpler adaptive-quality ladder, a dark camera-first app redesign,
-configurable scorebug styles, and phone-to-phone match invites.
+with a real YouTube stream, on a remote server, or through a full match.
 
 ## How it fits together
 
 ```text
 iPhone (film + record) ──SRT──▶ MediaMTX relay ──SRT──▶ worker (FFmpeg + score) ──RTMPS──▶ YouTube
-iPhone / Watch scoring ──HTTPS──▶ control plane (Hono + SQLite) ◀──HTTPS── worker
+iPhone scoring ──HTTPS──▶ control plane (Hono + SQLite) ◀──HTTPS── worker
+Watch ◀──WatchConnectivity──▶ paired iPhone
 ```
 
 See [docs/architecture.md](docs/architecture.md) for details.

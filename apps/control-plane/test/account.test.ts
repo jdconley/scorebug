@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { MatchStore } from '../src/matches-store.js';
 import { RedeemGuard } from '../src/rate-limit.js';
-import { testConfig } from './helpers.js';
+import { ownerToken, testConfig } from './helpers.js';
 
 const apps: ReturnType<typeof createApp>[] = [];
 const dirs: string[] = [];
@@ -34,7 +34,7 @@ function setup(
     path = join(dir, 'db.sqlite');
   }
   const config = testConfig({ PUBLIC_URL: 'https://scorebug.example.com', DATABASE_PATH: path });
-  const matches = new MatchStore(path, config.PHONE_TOKEN, () => clock.now);
+  const matches = new MatchStore(path, config.SERVER_SECRET, () => clock.now);
   const value = createApp(config, {
     matches,
     ...(options.setupGuard ? { setupGuard: options.setupGuard } : {}),
@@ -60,7 +60,10 @@ function setup(
     const text = await response.text();
     return { status: response.status, text, json: text ? JSON.parse(text) : null, response };
   };
-  return { ...value, path, clock, legacy: config.PHONE_TOKEN, call };
+  let owner: string | undefined;
+  // Enrolled on first use, so tests that count devices see only their own.
+  const ownerOf = () => (owner ??= ownerToken(matches));
+  return { ...value, path, clock, config, owner: ownerOf, call };
 }
 type Fixture = ReturnType<typeof setup>;
 
@@ -99,7 +102,6 @@ it('redeems a one-time setup code for a revocable owner device credential', asyn
   expect(devices.text).not.toContain(token);
   expect((await f.call('GET', '/v1/devices/me', token)).json).toMatchObject({
     role: 'owner',
-    legacy: false,
     device: { id: deviceId },
   });
   // Single use: another phone cannot reuse the code.
@@ -112,7 +114,7 @@ it('redeems a one-time setup code for a revocable owner device credential', asyn
   expect(reuse.json.error).toBe('setup_code_used');
   // Revocation takes effect immediately.
   expect(
-    (await f.call('DELETE', `/v1/devices/${deviceId}`, f.legacy)).json.device.revokedAt,
+    (await f.call('DELETE', `/v1/devices/${deviceId}`, f.owner())).json.device.revokedAt,
   ).not.toBeNull();
   expect((await f.call('GET', '/v1/devices', token)).status).toBe(401);
   expect((await createMatch(f, token, { id: 'game-2' })).status).toBe(401);
@@ -164,11 +166,14 @@ it('stores only hashes of setup codes and device tokens', async () => {
   for (const secret of [code, token, pending]) expect(raw).not.toContain(secret);
 });
 
-it('keeps the legacy PHONE_TOKEN working as an owner credential', async () => {
+it('accepts only enrolled device tokens as owner credentials', async () => {
   const f = setup();
-  expect((await createMatch(f, f.legacy)).status).toBe(201);
-  expect((await f.call('GET', '/v1/devices/me', f.legacy)).json).toMatchObject({ legacy: true });
-  expect((await f.call('GET', '/v1/devices', 'wrong-token')).status).toBe(401);
+  // The server secret keys credentials; it is never a bearer token.
+  for (const token of [f.config.SERVER_SECRET, f.config.HOME_TOKEN, 'wrong-token']) {
+    expect((await createMatch(f, token)).status).toBe(401);
+    expect((await f.call('GET', '/v1/devices', token)).status).toBe(401);
+  }
+  expect((await createMatch(f, f.owner())).status).toBe(201);
 });
 
 it('lets an owner mint a setup link for another phone', async () => {
@@ -257,7 +262,7 @@ it('mints short typeable multi-use invites that redeem for scorer credentials', 
 
 it('gives invite scorers scoring and takeover only', async () => {
   const { f } = await inviteFixture();
-  const { code } = (await f.call('POST', '/v1/matches/game-1/invites', f.legacy)).json;
+  const { code } = (await f.call('POST', '/v1/matches/game-1/invites', f.owner())).json;
   const scorer = (await f.call('POST', '/v1/invites/redeem', undefined, { code, deviceId: 'mom' }))
     .json.credential;
   const command = (operation: unknown, revision: number, epoch: number, commandId: string) =>
@@ -305,9 +310,9 @@ it('gives invite scorers scoring and takeover only', async () => {
 it('expires, revokes and ends invites, and revocation removes their scorers', async () => {
   const { f, ownerScore } = await inviteFixture();
   const short = (
-    await f.call('POST', '/v1/matches/game-1/invites', f.legacy, { expiresInMinutes: 5 })
+    await f.call('POST', '/v1/matches/game-1/invites', f.owner(), { expiresInMinutes: 5 })
   ).json;
-  const long = (await f.call('POST', '/v1/matches/game-1/invites', f.legacy)).json;
+  const long = (await f.call('POST', '/v1/matches/game-1/invites', f.owner())).json;
   const scorer = (
     await f.call('POST', '/v1/invites/redeem', undefined, { code: long.code, deviceId: 'mom' })
   ).json.credential;
@@ -321,7 +326,7 @@ it('expires, revokes and ends invites, and revocation removes their scorers', as
   expect(expired.text).not.toContain('snapshot');
 
   expect((await f.call('GET', '/v1/matches/game-1', scorer.token)).status).toBe(200);
-  const revoked = await f.call('DELETE', `/v1/matches/game-1/invites/${long.invite.id}`, f.legacy);
+  const revoked = await f.call('DELETE', `/v1/matches/game-1/invites/${long.invite.id}`, f.owner());
   expect(revoked.json.invite.revokedAt).not.toBeNull();
   expect((await f.call('GET', '/v1/matches/game-1', scorer.token)).status).toBe(401);
   const afterRevoke = await f.call('POST', '/v1/invites/redeem', undefined, {
@@ -330,7 +335,7 @@ it('expires, revokes and ends invites, and revocation removes their scorers', as
   });
   expect(afterRevoke.json.error).toBe('invite_revoked');
 
-  const third = (await f.call('POST', '/v1/matches/game-1/invites', f.legacy)).json;
+  const third = (await f.call('POST', '/v1/matches/game-1/invites', f.owner())).json;
   const end = await f.call('POST', '/v1/matches/game-1/commands', ownerScore.token, {
     commandId: 'end',
     gameId: 'game-1',
@@ -347,14 +352,14 @@ it('expires, revokes and ends invites, and revocation removes their scorers', as
   });
   expect(ended.status).toBe(410);
   expect(ended.json.error).toBe('match_ended');
-  expect((await f.call('POST', '/v1/matches/game-1/invites', f.legacy)).json.error).toBe(
+  expect((await f.call('POST', '/v1/matches/game-1/invites', f.owner())).json.error).toBe(
     'match_ended',
   );
 });
 
 it('refuses invite device IDs that alias existing match credentials', async () => {
   const { f } = await inviteFixture();
-  const { code } = (await f.call('POST', '/v1/matches/game-1/invites', f.legacy)).json;
+  const { code } = (await f.call('POST', '/v1/matches/game-1/invites', f.owner())).json;
   const alias = await f.call('POST', '/v1/invites/redeem', undefined, {
     code,
     deviceId: 'owner-phone',
@@ -436,7 +441,8 @@ it('never returns or logs a destination stream key', async () => {
 
 it('validates destinations, keeps one default and protects one in use', async () => {
   const f = setup();
-  const add = (body: Record<string, unknown>) => f.call('POST', '/v1/destinations', f.legacy, body);
+  const add = (body: Record<string, unknown>) =>
+    f.call('POST', '/v1/destinations', f.owner(), body);
   expect((await add({ name: 'x', rtmpUrl: 'rtmp://h/app', streamKey: 'has space' })).status).toBe(
     400,
   );
@@ -451,34 +457,39 @@ it('validates destinations, keeps one default and protects one in use', async ()
   ).json.destination;
   expect(first.isDefault).toBe(true);
   expect(second.isDefault).toBe(false);
-  await f.call('PATCH', `/v1/destinations/${second.id}`, f.legacy, { isDefault: true });
-  const list = (await f.call('GET', '/v1/destinations', f.legacy)).json.destinations;
+  await f.call('PATCH', `/v1/destinations/${second.id}`, f.owner(), { isDefault: true });
+  const list = (await f.call('GET', '/v1/destinations', f.owner())).json.destinations;
   expect(list.map((d: { isDefault: boolean }) => d.isDefault)).toEqual([false, true]);
   expect(
-    (await createMatch(f, f.legacy, { destinationId: first.id })).json.snapshot.output,
+    (await createMatch(f, f.owner(), { destinationId: first.id })).json.snapshot.output,
   ).toEqual({
     destinationId: first.id,
     recordOnly: false,
   });
-  const inUse = await f.call('DELETE', `/v1/destinations/${first.id}`, f.legacy);
+  const inUse = await f.call('DELETE', `/v1/destinations/${first.id}`, f.owner());
   expect(inUse.status).toBe(409);
   expect(inUse.json.error).toBe('destination_in_use');
-  expect((await f.call('DELETE', `/v1/destinations/${second.id}`, f.legacy)).status).toBe(200);
-  expect((await f.call('GET', `/v1/destinations/${second.id}`, f.legacy)).status).toBe(404);
-  expect((await f.call('PATCH', `/v1/destinations/${first.id}`, f.legacy, {})).status).toBe(400);
+  expect((await f.call('DELETE', `/v1/destinations/${second.id}`, f.owner())).status).toBe(200);
+  expect((await f.call('GET', `/v1/destinations/${second.id}`, f.owner())).status).toBe(404);
+  expect((await f.call('PATCH', `/v1/destinations/${first.id}`, f.owner(), {})).status).toBe(400);
 });
 
 it('assigns match outputs: named, default, record-only or the worker fallback', async () => {
   const f = setup();
   // No destinations: the worker's own OUTPUT_URL applies.
-  const legacy = await createMatch(f, f.legacy);
-  expect(legacy.json.snapshot.output).toEqual({ destinationId: null, recordOnly: false });
+  const fallback = await createMatch(f, f.owner());
+  expect(fallback.json.snapshot.output).toEqual({ destinationId: null, recordOnly: false });
   expect(
-    (await createMatch(f, f.legacy, { id: 'other', recordOnly: true, destinationId: randomUUID() }))
-      .status,
+    (
+      await createMatch(f, f.owner(), {
+        id: 'other',
+        recordOnly: true,
+        destinationId: randomUUID(),
+      })
+    ).status,
   ).toBe(400);
   const g = setup();
-  const missing = await createMatch(g, g.legacy, { destinationId: randomUUID() });
+  const missing = await createMatch(g, g.owner(), { destinationId: randomUUID() });
   expect(missing.json.error).toBe('destination_not_found');
 });
 
@@ -512,22 +523,22 @@ it('hands the worker its match destination URL; record-only matches never broadc
     rtmpUrl: 'rtmps://a.rtmp.youtube.com/live2/',
     streamKey: STREAM_KEY,
   });
-  const created = await createMatch(f, f.legacy);
+  const created = await createMatch(f, f.owner());
   // Omitted destinationId resolves to the default destination at creation.
   expect(created.json.snapshot.output.destinationId).toBe(destination.id);
-  expect((await startBroadcast(f, f.legacy)).json.accepted).toBe(true);
+  expect((await startBroadcast(f, f.owner())).json.accepted).toBe(true);
   const worker = await f.call('GET', '/v1/worker/snapshot?workerId=w1', testConfig().HOME_TOKEN);
   expect(worker.json.assignment.output).toEqual({
     destinationId: destination.id,
     publishUrl: `rtmps://a.rtmp.youtube.com/live2/${STREAM_KEY}`,
   });
   // Only the worker token sees it.
-  expect((await f.call('GET', '/v1/worker/snapshot?workerId=w1', f.legacy)).status).toBe(401);
+  expect((await f.call('GET', '/v1/worker/snapshot?workerId=w1', f.owner())).status).toBe(401);
 
   const g = setup();
-  const recordOnly = await createMatch(g, g.legacy, { recordOnly: true });
+  const recordOnly = await createMatch(g, g.owner(), { recordOnly: true });
   expect(recordOnly.json.snapshot.output).toEqual({ destinationId: null, recordOnly: true });
-  const refused = await startBroadcast(g, g.legacy);
+  const refused = await startBroadcast(g, g.owner());
   expect(refused.json).toMatchObject({ accepted: false, error: 'record_only_match' });
 });
 
@@ -536,7 +547,7 @@ it('hands the worker its match destination URL; record-only matches never broadc
 it('defaults team short names from the name and limits them to 8 characters', async () => {
   const f = setup();
   const make = (home: unknown, id = 'game-1') =>
-    f.call('POST', '/v1/matches', f.legacy, {
+    f.call('POST', '/v1/matches', f.owner(), {
       id,
       deviceId: 'p',
       teams: { home, away: team('Diggers') },
@@ -549,7 +560,7 @@ it('defaults team short names from the name and limits them to 8 characters', as
   expect(created.json.snapshot.teams.home.shortName).toBe('🏐 BAJ 🏐');
   expect(created.json.snapshot.teams.away.shortName).toBe('Diggers');
   const g = setup();
-  const defaulted = await g.call('POST', '/v1/matches', g.legacy, {
+  const defaulted = await g.call('POST', '/v1/matches', g.owner(), {
     id: 'g',
     deviceId: 'p',
     teams: { home: team('  Bay   Area Juniors '), away: team('A') },
@@ -560,7 +571,7 @@ it('defaults team short names from the name and limits them to 8 characters', as
 
 it('reports pendingSetEnd at set point and keeps points after it allowed', async () => {
   const f = setup();
-  const created = (await createMatch(f, f.legacy)).json;
+  const created = (await createMatch(f, f.owner())).json;
   let revision = 0;
   const run = async (operation: unknown) => {
     const result = await f.call('POST', '/v1/matches/game-1/commands', created.credential.token, {
@@ -598,9 +609,10 @@ it('mints links only from PUBLIC_URL, never from the request Host header', async
   const config = testConfig();
   const value = createApp(config);
   apps.push(value);
+  const owner = ownerToken(value.matches);
   const created = await value.app.request('/v1/matches', {
     method: 'POST',
-    headers: { authorization: `Bearer ${config.PHONE_TOKEN}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       id: 'game-1',
       deviceId: 'p',
@@ -613,7 +625,7 @@ it('mints links only from PUBLIC_URL, never from the request Host header', async
     const response = await value.app.request(path, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${config.PHONE_TOKEN}`,
+        authorization: `Bearer ${owner}`,
         host: 'attacker.example',
         'x-forwarded-host': 'attacker.example',
       },

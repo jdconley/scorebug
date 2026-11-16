@@ -18,7 +18,7 @@ const usage = `Usage: cli.js <command> [options]
       as the default destination, unless any destination already exists. With
       --replace, update the default destination's URL and key instead.
 
-Environment: DATABASE_PATH, PHONE_TOKEN, PUBLIC_URL (default for --server).`;
+Environment: DATABASE_PATH, SERVER_SECRET, PUBLIC_URL (default for --server).`;
 
 function fail(message: string): never {
   process.stderr.write(`error: ${message}\n`);
@@ -26,9 +26,10 @@ function fail(message: string): never {
 }
 
 function openStore(): MatchStore {
-  const token = process.env.PHONE_TOKEN;
-  if (!token || token.length < 16) fail('PHONE_TOKEN is not set (run this inside the container)');
-  return new MatchStore(process.env.DATABASE_PATH ?? 'data/scorebug.sqlite', token);
+  const secret = process.env.SERVER_SECRET;
+  if (!secret || secret.length < 16)
+    fail('SERVER_SECRET is not set (run this inside the container)');
+  return new MatchStore(process.env.DATABASE_PATH ?? 'data/scorebug.sqlite', secret);
 }
 
 async function readStdin(): Promise<string> {

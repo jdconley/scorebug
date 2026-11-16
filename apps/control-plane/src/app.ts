@@ -33,7 +33,7 @@ export function createApp(
   overrides: Partial<AppDeps> = {},
 ): AppDeps & { app: Hono } {
   const log = overrides.log ?? createLogger(config.LOG_LEVEL);
-  const matches = overrides.matches ?? new MatchStore(config.DATABASE_PATH, config.PHONE_TOKEN);
+  const matches = overrides.matches ?? new MatchStore(config.DATABASE_PATH, config.SERVER_SECRET);
   const observations = overrides.observations ?? new WorkerObservations(matches.media);
   const relay =
     overrides.relay ??
@@ -50,7 +50,7 @@ export function createApp(
       ? new RelayLifecycle(
           relay,
           {
-            installationSecret: config.PHONE_TOKEN,
+            installationSecret: config.SERVER_SECRET,
             host: config.INGEST_HOST,
             port: config.INGEST_PORT,
             ...(config.INGEST_PUBLISH_HOST === undefined

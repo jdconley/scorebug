@@ -346,7 +346,7 @@ it.each([undefined, { host: '::1', port: 19990 }])(
     expect(publish.host).toBe(endpoint ? '[::1]:19990' : 'ingest.test:8890');
     const grant = [...f.paths.values()][0];
     const streamid = publish.searchParams.get('streamid')!;
-    expect(attemptOf(f.config.PHONE_TOKEN, grant.path, streamid.split(':')[2])).toBe(
+    expect(attemptOf(f.config.SERVER_SECRET, grant.path, streamid.split(':')[2])).toBe(
       publishingAttemptId,
     );
     expect(publish.searchParams.get('passphrase') === grant.publishPassphrase).toBe(true);

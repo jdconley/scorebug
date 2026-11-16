@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { cancellation } from './cancellation.mjs';
 
-import { startScoringTestServer, scoringTestToken } from './scoring-test-server.mjs';
+import { enrollOwner, startScoringTestServer } from './scoring-test-server.mjs';
 const dir = await mkdtemp(join(tmpdir(), 'scorebug-recovery-'));
 const checkCancellation = cancellation();
-const token = scoringTestToken;
+let token;
 let processHandle;
 async function stop() {
   if (!processHandle) return;
@@ -35,6 +35,7 @@ async function request(base, path, credential, body) {
 }
 try {
   let base = await start();
+  token = await enrollOwner(base, join(dir, 'match.sqlite'));
   const match = await request(base, '/v1/matches', token, {
     id: 'recovery-game',
     deviceId: 'phone-a',

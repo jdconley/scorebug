@@ -8,7 +8,6 @@ import { SCOREBUG_STYLES } from '@scorebug/protocol';
 import { ownerAuth } from '../auth.js';
 import type { Config } from '../config.js';
 import { mediaRoutes } from './media.js';
-import { watchPairingRoutes } from './watch-pairings.js';
 import { inviteRoutes } from './account.js';
 import { defaultShortName } from '../scoring.js';
 import type { RelayLifecycle } from '../relay-lifecycle.js';
@@ -107,7 +106,7 @@ export function matchesRoutes(
     c.header('Cache-Control', 'no-store');
     await next();
   });
-  const bootstrap = ownerAuth(config.PHONE_TOKEN, store.account);
+  const bootstrap = ownerAuth(store.account);
   const scoped = createMiddleware<Env>(async (c, next) => {
     const token = c.req.header('authorization')?.match(/^Bearer (.+)$/i)?.[1] ?? '';
     const credential = store.authenticate(c.req.param('id') ?? '', token);
@@ -159,7 +158,6 @@ export function matchesRoutes(
     const outcome = store.receipt(credential.gameId, credential.deviceId, c.req.param('commandId'));
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
-  app.route('/:id/watch-pairings', watchPairingRoutes(config, store));
   app.route('/:id/invites', inviteRoutes(config, store));
   app.route('/:id/media', mediaRoutes(config, store, relayLifecycle, observations));
   app.onError((error, c) => {

@@ -256,3 +256,22 @@ it('reads matches stored before scorebug styles existed as the default bar style
   legacy.close();
   expect(store(path).get('game-1')?.scorebugStyle).toBe('bar');
 });
+it('drops the retired watch_pairings table from an existing database', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scorebug-db-'));
+  dirs.push(dir);
+  const path = join(dir, 'matches.sqlite');
+  const first = store(path);
+  first.create({ id: 'game-1', deviceId: 'phone-a', teams, rules });
+  first.close();
+  const old = new DatabaseSync(path);
+  old.exec(`CREATE TABLE watch_pairings(game_id TEXT NOT NULL REFERENCES matches(id), pairing_id TEXT NOT NULL,
+    PRIMARY KEY(game_id,pairing_id));
+    INSERT INTO watch_pairings VALUES('game-1','pairing');`);
+  old.close();
+  expect(store(path).get('game-1')?.id).toBe('game-1');
+  const reopened = new DatabaseSync(path);
+  expect(
+    reopened.prepare("SELECT name FROM sqlite_master WHERE name='watch_pairings'").all(),
+  ).toEqual([]);
+  reopened.close();
+});

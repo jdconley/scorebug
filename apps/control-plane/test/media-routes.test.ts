@@ -1,13 +1,15 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
-import { testConfig, phoneAuth } from './helpers.js';
+import { ownerToken, testConfig, phoneAuth } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
+import type { Config } from '../src/config.js';
 const stores: MatchStore[] = [];
 afterEach(() => stores.splice(0).forEach((store) => store.close()));
-async function fixture() {
-  const config = testConfig();
+async function fixture(overrides: Partial<Config> = {}) {
+  const config = testConfig(overrides);
   const { app, matches } = createApp(config);
   stores.push(matches);
+  const owner = ownerToken(matches);
   const team = { name: 'Team', shortName: 'T', color: '#123456' };
   const request = async (path: string, token: string, body?: unknown) =>
     app.request(path, {
@@ -15,14 +17,14 @@ async function fixture() {
       headers: { ...phoneAuth(token), 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-  const created = await request('/v1/matches', config.PHONE_TOKEN, {
+  const created = await request('/v1/matches', owner, {
     id: 'match',
     deviceId: 'scorer',
     teams: { home: team, away: team },
     rules: { bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
   });
   const scorer = (await created.json()).credential;
-  const joined = await request('/v1/matches/match/join', config.PHONE_TOKEN, {
+  const joined = await request('/v1/matches/match/join', owner, {
     deviceId: 'phone',
     role: 'capture',
   });
@@ -44,7 +46,7 @@ async function fixture() {
       },
     },
   };
-  return { app, config, matches, request, scorer, capture, report, command };
+  return { app, config, matches, owner, request, scorer, capture, report, command };
 }
 it('requires scoped credentials for media reads and capture role for recording reports', async () => {
   const f = await fixture();
@@ -77,47 +79,39 @@ it('reserves broadcast mutation and receipts for installation access', async () 
   expect(
     (await f.request('/v1/matches/match/media/commands', f.capture.token, f.command)).status,
   ).toBe(401);
-  const response = await f.request(
-    '/v1/matches/match/media/commands',
-    f.config.PHONE_TOKEN,
-    f.command,
-  );
+  const response = await f.request('/v1/matches/match/media/commands', f.owner, f.command);
   expect(response.status).toBe(200);
   const outcome = await response.json();
   expect(outcome.snapshot.broadcast).toMatchObject({ desired: 'running', generation: 1 });
   expect(
-    await (
-      await f.request('/v1/matches/match/media/commands', f.config.PHONE_TOKEN, f.command)
-    ).json(),
+    await (await f.request('/v1/matches/match/media/commands', f.owner, f.command)).json(),
   ).toEqual(outcome);
-  expect(
-    await (await f.request('/v1/matches/match/media/commands/start', f.config.PHONE_TOKEN)).json(),
-  ).toEqual(outcome);
+  expect(await (await f.request('/v1/matches/match/media/commands/start', f.owner)).json()).toEqual(
+    outcome,
+  );
   expect((await f.request('/v1/matches/match/media/commands/start', f.scorer.token)).status).toBe(
     401,
   );
-  expect(
-    (await f.request('/v1/matches/match/media/commands/missing', f.config.PHONE_TOKEN)).status,
-  ).toBe(404);
+  expect((await f.request('/v1/matches/match/media/commands/missing', f.owner)).status).toBe(404);
 });
 it('checks route identity, generation, and expired broadcast commands', async () => {
   const f = await fixture();
   await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
   expect(
     (
-      await f.request('/v1/matches/match/media/commands', f.config.PHONE_TOKEN, {
+      await f.request('/v1/matches/match/media/commands', f.owner, {
         ...f.command,
         gameId: 'other',
       })
     ).status,
   ).toBe(403);
-  const stale = await f.request('/v1/matches/match/media/commands', f.config.PHONE_TOKEN, {
+  const stale = await f.request('/v1/matches/match/media/commands', f.owner, {
     ...f.command,
     expectedGeneration: 1,
   });
   expect(stale.status).toBe(409);
   expect((await stale.json()).error).toBe('generation_conflict');
-  const expired = await f.request('/v1/matches/match/media/commands', f.config.PHONE_TOKEN, {
+  const expired = await f.request('/v1/matches/match/media/commands', f.owner, {
     ...f.command,
     commandId: 'old',
     issuedAt: new Date(Date.now() - 30_000).toISOString(),
@@ -127,7 +121,7 @@ it('checks route identity, generation, and expired broadcast commands', async ()
 it('gives the selected worker current match state on late attachment and stops assignment on end', async () => {
   const f = await fixture();
   await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
-  await f.request('/v1/matches/match/media/commands', f.config.PHONE_TOKEN, f.command);
+  await f.request('/v1/matches/match/media/commands', f.owner, f.command);
   expect((await f.request('/v1/worker/snapshot?workerId=mac', f.scorer.token)).status).toBe(401);
   expect((await f.request('/v1/worker/snapshot', f.config.HOME_TOKEN)).status).toBe(400);
   const selected = await (
@@ -167,4 +161,75 @@ it('gives the selected worker current match state on late attachment and stops a
       .assignment,
   ).toBeNull();
   expect(f.matches.media.get('match').recordings[0]?.status).toBe('recording');
+});
+
+describe('a start command without workerId/outputId', () => {
+  type Fixture = Awaited<ReturnType<typeof fixture>>;
+  const autoStart = (f: Fixture, commandId = 'auto') => ({
+    ...f.command,
+    commandId,
+    issuedAt: new Date().toISOString(),
+    operation: { type: 'start', selection: { captureDeviceId: 'phone', recordingId: 'archive' } },
+  });
+  const send = async (f: Fixture, body: unknown) =>
+    (await f.request('/v1/matches/match/media/commands', f.owner, body)).json();
+  const start = async (f: Fixture) => {
+    await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
+    return send(f, autoStart(f));
+  };
+  const register = (f: Fixture, workerId: string, outputId?: string) =>
+    f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+      workerId,
+      runId: `${workerId}-run`,
+      ...(outputId ? { outputId } : {}),
+    });
+
+  it('goes to the one connected worker and the output it registered', async () => {
+    const f = await fixture();
+    expect((await register(f, 'home-1', 'youtube')).status).toBe(200);
+    const outcome = await start(f);
+    expect(outcome.accepted).toBe(true);
+    expect(outcome.snapshot.broadcast.selection).toMatchObject({
+      workerId: 'home-1',
+      outputId: 'youtube',
+    });
+    const worker = await f.request('/v1/worker/snapshot?workerId=home-1', f.config.HOME_TOKEN);
+    expect((await worker.json()).assignment.media.broadcast.generation).toBe(1);
+  });
+
+  it('prefers the configured WORKER_ID/OUTPUT_ID, even before that worker connects', async () => {
+    const f = await fixture({ WORKER_ID: 'garage', OUTPUT_ID: 'youtube' });
+    await register(f, 'other', 'elsewhere');
+    const outcome = await start(f);
+    expect(outcome.snapshot.broadcast.selection).toMatchObject({
+      workerId: 'garage',
+      outputId: 'youtube',
+    });
+  });
+
+  it('refuses when no worker, several workers or no known output', async () => {
+    const none = await fixture();
+    expect(await start(none)).toMatchObject({ accepted: false, error: 'no_worker' });
+
+    const many = await fixture();
+    await register(many, 'a', 'out');
+    await register(many, 'b', 'out');
+    expect(await start(many)).toMatchObject({ accepted: false, error: 'worker_ambiguous' });
+
+    // A worker from before outputId registration: polling alone names no output.
+    const unknown = await fixture();
+    await unknown.request('/v1/worker/snapshot?workerId=old', unknown.config.HOME_TOKEN);
+    expect(await start(unknown)).toMatchObject({ accepted: false, error: 'output_unknown' });
+  });
+
+  it('replays the first outcome on retry even if the workers changed', async () => {
+    const f = await fixture();
+    await register(f, 'home-1', 'youtube');
+    await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
+    const body = autoStart(f, 'retry');
+    const first = await send(f, body);
+    expect(first.accepted).toBe(true);
+    await register(f, 'home-2', 'youtube');
+    expect(await send(f, body)).toEqual(first);
+  });
 });

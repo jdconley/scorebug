@@ -114,7 +114,7 @@ export function setupRoutes(config: Config, store: MatchStore, guard: RedeemGuar
     }
   });
   // Another owner phone (or the CLI) can mint a setup link for a new phone.
-  app.post('/links', ownerAuth(config.PHONE_TOKEN, store.account), async (c) => {
+  app.post('/links', ownerAuth(store.account), async (c) => {
     const input = await body(
       c,
       z.object({ expiresInHours: z.number().int().min(1).max(720).optional() }).strict(),
@@ -138,15 +138,12 @@ export function deviceRoutes(config: Config, store: MatchStore) {
     c.header('Cache-Control', 'no-store');
     await next();
   });
-  app.use('*', ownerAuth(config.PHONE_TOKEN, store.account));
+  app.use('*', ownerAuth(store.account));
   app.get('/', (c) => c.json({ devices: store.account.listDevices(), serverTime: now() }));
   app.get('/me', (c) => {
-    const owner = c.get('owner');
-    const device =
-      owner.kind === 'device'
-        ? store.account.listDevices().find((d) => d.id === owner.deviceId)
-        : null;
-    return c.json({ role: 'owner', legacy: owner.kind === 'legacy', device, serverTime: now() });
+    const { deviceId } = c.get('owner');
+    const device = store.account.listDevices().find((d) => d.id === deviceId) ?? null;
+    return c.json({ role: 'owner', device, serverTime: now() });
   });
   app.delete('/:id', (c) =>
     c.json({ device: store.account.revokeDevice(c.req.param('id')), serverTime: now() }),
@@ -190,7 +187,7 @@ export function destinationRoutes(config: Config, store: MatchStore) {
     c.header('Cache-Control', 'no-store');
     await next();
   });
-  app.use('*', ownerAuth(config.PHONE_TOKEN, store.account));
+  app.use('*', ownerAuth(store.account));
   app.get('/', (c) =>
     c.json({ destinations: store.account.listDestinations(), serverTime: now() }),
   );
@@ -253,9 +250,9 @@ export function inviteRoutes(config: Config, store: MatchStore) {
   app.use('*', async (c, next) => {
     const token = bearerToken(c);
     const gameId = c.req.param('id') ?? '';
-    const owner: Owner | undefined = resolveOwner(token, config.PHONE_TOKEN, store.account);
+    const owner: Owner | undefined = resolveOwner(token, store.account);
     let issuer: string | undefined;
-    if (owner) issuer = owner.kind === 'device' ? `device:${owner.deviceId}` : 'legacy';
+    if (owner) issuer = `device:${owner.deviceId}`;
     else {
       const credential: Omit<MatchCredential, 'token'> | undefined = store.authenticate(
         gameId,

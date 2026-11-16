@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
-import { testConfig, phoneAuth } from './helpers.js';
+import { ownerToken, testConfig, phoneAuth } from './helpers.js';
 const apps: ReturnType<typeof createApp>[] = [];
 afterEach(() => {
   for (const item of apps.splice(0)) item.matches?.close();
@@ -18,7 +18,7 @@ function setup() {
   const config = testConfig();
   const value = createApp(config);
   apps.push(value);
-  return { ...value, token: config.PHONE_TOKEN };
+  return { ...value, token: ownerToken(value.matches) };
 }
 async function post(
   app: ReturnType<typeof createApp>['app'],

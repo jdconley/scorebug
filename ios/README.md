@@ -78,8 +78,7 @@ recorder as the camera, and show a drawn court in place of the camera preview.
 
 ```sh
 pnpm dev:api        # 127.0.0.1:18787, PUBLIC_URL=http://127.0.0.1:18787
-curl -s -X POST http://127.0.0.1:18787/v1/setup/links \
-  -H "Authorization: Bearer qa-phone-token-not-production" -H "Content-Type: application/json" -d '{}'
+pnpm -s dev:setup-link   # prints a one-time scorebug://connect link
 xcodebuild test -project ios/Scorebug.xcodeproj -scheme Scorebug \
   -destination 'platform=iOS Simulator,name=<phone>' -derivedDataPath ios/DerivedData/Sim \
   -only-testing:ScorebugAppUITests/ScreenTourTests/testFilmingTourStart \
@@ -87,8 +86,9 @@ xcodebuild test -project ios/Scorebug.xcodeproj -scheme Scorebug \
   SCOREBUG_TEST_TOUR=/tmp/scorebug-shots 'SCOREBUG_TEST_LINK=<the scorebug://connect link>'
 ```
 
-Then mint an invite for the open match (`POST /v1/matches/<id>/invites` with the
-same token), run `testScorerTour` on a second simulator with that
+Then mint an invite for the open match with an owner token: redeem a second setup
+link (`POST /v1/setup/redeem` with `{"code": "<code>", "deviceId": "<uuid>"}` returns
+`token`), then `POST /v1/matches/<id>/invites` with it. Run `testScorerTour` on a second simulator with that
 `scorebug://join` link, and `testFilmingTourFinish` on the first. Debug Simulator
 builds honor `SCOREBUG_TEST_RESET=1` (fresh install state) and
 `SCOREBUG_TEST_LINK` (open a link on launch); Release builds ignore both.

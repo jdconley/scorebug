@@ -1,7 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   BroadcastCommand,
+  BroadcastOperation,
   BroadcastOutcome,
+  BroadcastSelection,
   MatchSnapshot,
   MediaBroadcast,
   MediaSnapshot,
@@ -17,6 +19,28 @@ export class MediaStoreError extends Error {
     super(code);
   }
 }
+/** Picks the worker and output for a start selection that leaves them out. */
+export type WorkerSelector = (requested: {
+  workerId?: string | undefined;
+  outputId?: string | undefined;
+}) => Pick<BroadcastSelection, 'workerId' | 'outputId'>;
+
+function withWorker(
+  operation: BroadcastOperation,
+  selectWorker: WorkerSelector | undefined,
+): BroadcastOperation {
+  if (
+    operation?.type !== 'start' ||
+    !operation.selection ||
+    typeof operation.selection !== 'object'
+  )
+    return operation;
+  const { selection } = operation;
+  if (selection.workerId !== undefined && selection.outputId !== undefined) return operation;
+  if (!selectWorker) throw new MediaStateError('no_worker');
+  return { type: 'start', selection: { ...selection, ...selectWorker(selection) } };
+}
+
 type Dependencies = {
   transaction: <T>(body: () => T) => T;
   match: (id: string) => MatchSnapshot | undefined;
@@ -124,7 +148,9 @@ export class MediaStore {
       .get(gameId, commandId) as { outcome: string } | undefined;
     return row ? (JSON.parse(row.outcome) as BroadcastOutcome) : undefined;
   }
-  execute(command: BroadcastCommand): BroadcastOutcome {
+  /** `selectWorker` fills a start selection that omits workerId/outputId. It runs after the
+   * receipt check, so a retry of the same command replays its first outcome. */
+  execute(command: BroadcastCommand, selectWorker?: WorkerSelector): BroadcastOutcome {
     return this.deps.transaction(() => {
       if (
         !/^[A-Za-z0-9_-]{1,128}$/.test(command.commandId) ||
@@ -155,7 +181,7 @@ export class MediaStore {
         try {
           const broadcast = applyBroadcastOperation(
             snapshot.broadcast,
-            command.operation,
+            withWorker(command.operation, selectWorker),
             snapshot.recordings,
             this.match(command.gameId).status,
           );

@@ -22,8 +22,14 @@ const report = z
     startedAt: z.iso.datetime({ offset: true }),
   })
   .strict();
+// The app may leave workerId/outputId out; the server then picks its worker.
 const selection = z
-  .object({ workerId: id, outputId: id, captureDeviceId: id, recordingId: id })
+  .object({
+    workerId: id.optional(),
+    outputId: id.optional(),
+    captureDeviceId: id,
+    recordingId: id,
+  })
   .strict();
 const command = z
   .object({
@@ -47,7 +53,7 @@ export function mediaRoutes(
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono<Env>();
-  const installation = ownerAuth(config.PHONE_TOKEN, matches.account);
+  const installation = ownerAuth(matches.account);
   const scoped = createMiddleware<Env>(async (c, next) => {
     const token = c.req.header('authorization')?.match(/^Bearer (.+)$/i)?.[1] ?? '';
     const credential = matches.authenticate(c.req.param('id') ?? '', token);
@@ -114,7 +120,13 @@ export function mediaRoutes(
   app.post('/commands', installation, zValidator('json', command), (c) => {
     const command = c.req.valid('json');
     if (command.gameId !== c.req.param('id')) return c.json({ error: 'forbidden' }, 403);
-    const outcome = matches.media.execute(command);
+    const configured =
+      config.WORKER_ID && config.OUTPUT_ID
+        ? { workerId: config.WORKER_ID, outputId: config.OUTPUT_ID }
+        : undefined;
+    const outcome = matches.media.execute(command, (requested) =>
+      observations.selectWorker(requested, configured),
+    );
     return c.json(outcome, outcome.accepted ? 200 : 409);
   });
   app.get('/commands/:commandId', installation, (c) => {
@@ -150,8 +162,10 @@ export function workerRoutes(
     await next();
   });
   app.use('*', bearer(config.HOME_TOKEN, 'worker'));
-  app.post('/sessions', zValidator('json', z.object({ workerId: id, runId: id }).strict()), (c) =>
-    c.json(observations.register(c.req.valid('json'))),
+  app.post(
+    '/sessions',
+    zValidator('json', z.object({ workerId: id, runId: id, outputId: id.optional() }).strict()),
+    (c) => c.json(observations.register(c.req.valid('json'))),
   );
   app.post(
     '/observations',
@@ -202,12 +216,14 @@ export function workerRoutes(
       );
     },
   );
-  app.get('/snapshot', zValidator('query', z.object({ workerId: id }).strict()), (c) =>
-    c.json({
-      assignment: matches.media.workerAssignment(c.req.valid('query').workerId),
+  app.get('/snapshot', zValidator('query', z.object({ workerId: id }).strict()), (c) => {
+    const { workerId } = c.req.valid('query');
+    observations.seen(workerId);
+    return c.json({
+      assignment: matches.media.workerAssignment(workerId),
       serverTime: new Date().toISOString(),
-    }),
-  );
+    });
+  });
   app.get('/connection', zValidator('query', z.object({ workerId: id }).strict()), async (c) => {
     if (!relayLifecycle) return c.json({ error: 'relay_not_configured' }, 503);
     const connection = await relayLifecycle.worker(c.req.valid('query').workerId);

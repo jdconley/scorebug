@@ -25,7 +25,8 @@ pnpm dev:api
 ```
 
 The API listens on `http://127.0.0.1:18787` with the settings in
-`infra/local/.env.example` (installation token `qa-phone-token-not-production`). The
+`infra/local/.env.example`. Set up a phone or simulator with a one-time link from
+`pnpm -s dev:setup-link`. The
 relay takes SRT on `127.0.0.1:18890/udp`; the mock sink takes RTMP on
 `127.0.0.1:11935`. Stop the stack with `pnpm local:down`.
 
@@ -40,8 +41,9 @@ cp apps/home-daemon/.env.example apps/home-daemon/.env   # set FFMPEG_PATH, FONT
 node --env-file=apps/home-daemon/.env apps/home-daemon/node_modules/tsx/dist/cli.mjs apps/home-daemon/src/index.ts
 ```
 
-The example points at the local API and sends to the mock sink. `WORKER_ID` and
-`OUTPUT_ID` must match the broadcast selected in the app. See
+The example points at the local API and sends to the mock sink. When the phone
+starts a broadcast, the API picks the one connected worker and the `OUTPUT_ID` it
+registered (or `WORKER_ID`/`OUTPUT_ID` if the API has them set). See
 [the worker README](../apps/home-daemon/README.md) for settings and deployment.
 
 ## iPhone and Watch apps

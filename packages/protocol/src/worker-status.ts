@@ -41,7 +41,12 @@ export type WorkerObservation = {
   scoreRevision: number | null;
   output?: WorkerOutput;
 };
-export type WorkerSessionRequest = { workerId: string; runId: string };
+/** `outputId` is the worker's OUTPUT_ID, used when a phone starts a broadcast without one. */
+export type WorkerSessionRequest = {
+  workerId: string;
+  runId: string;
+  outputId?: string | undefined;
+};
 export type WorkerSessionResponse = { sessionId: string; serverTime: string };
 export type WorkerObservationRequest = {
   workerId: string;
