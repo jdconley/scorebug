@@ -45,6 +45,7 @@ export type Identity = {
 };
 
 export const TICKET_TTL_MS = 2 * 60 * 1000;
+export const ADMIN_DEVICE_NAME = 'admin web';
 const LAST_USED_RESOLUTION_MS = 60 * 1000;
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -189,6 +190,19 @@ export class Directory {
         .bind(now, hash)
         .run();
     return personView(row);
+  }
+
+  /** An admin web session: made by the admin sign-in, unrevoked and younger than `maxAgeMs`. */
+  async adminSessionPerson(token: string, maxAgeMs: number): Promise<Person | null> {
+    if (!token) return null;
+    const row = await this.db
+      .prepare(
+        `SELECT people.* FROM sessions JOIN people ON people.id=sessions.person_id
+        WHERE token_hash=? AND revoked_at IS NULL AND device_name=? AND sessions.created_at>?`,
+      )
+      .bind(sha256Hex(token), ADMIN_DEVICE_NAME, this.now() - maxAgeMs)
+      .first<PersonRow>();
+    return row ? personView(row) : null;
   }
 
   async revokeSession(token: string): Promise<void> {
@@ -341,6 +355,18 @@ export class Directory {
       return 'removed';
     }
     return (await this.membership(teamId, personId)) ? 'last_owner' : 'not_found';
+  }
+
+  async teamsWithCounts(): Promise<(Team & { members: number; owners: number })[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT teams.*, COUNT(memberships.person_id) AS members,
+          SUM(CASE WHEN memberships.role='owner' THEN 1 ELSE 0 END) AS owners
+        FROM teams LEFT JOIN memberships ON memberships.team_id=teams.id
+        GROUP BY teams.id ORDER BY teams.created_at, teams.id`,
+      )
+      .all<TeamRow & { members: number; owners: number }>();
+    return results.map((row) => ({ ...teamView(row), members: row.members, owners: row.owners }));
   }
 
   // ----------------------------------------------------------- team invites

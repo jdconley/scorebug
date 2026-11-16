@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { adminCallback, adminRoutes } from './admin-page.js';
 import { authRoutes, meRoutes } from './auth-routes.js';
 import { Directory } from './directory.js';
 import type { AppEnv, Env } from './env.js';
@@ -18,7 +19,8 @@ export function createWorkerApp(deps: WorkerDeps): Hono<AppEnv> {
       c.header('Cache-Control', 'no-store');
   });
   app.get('/healthz', (c) => c.json({ ok: true }));
-  app.route('/v1/auth', authRoutes(deps.google));
+  app.route('/v1/auth', authRoutes(deps.google, adminCallback));
+  app.route('/admin', adminRoutes());
   app.route('/v1/me', meRoutes());
   app.route('/', matchForwardingRoutes());
   app.route('/v1/teams', teamRoutes());

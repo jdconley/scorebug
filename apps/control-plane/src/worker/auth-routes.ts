@@ -31,6 +31,14 @@ export function requirePerson(): MiddlewareHandler<PersonEnv> {
   });
 }
 
+/** ADMIN_EMAILS, a comma-separated Worker secret, compared normalized. */
+export const isAdmin = (env: Env, email: string) =>
+  (env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map(normalizeEmail)
+    .filter(Boolean)
+    .includes(normalizeEmail(email));
+
 export const callbackUrl = (env: Env) => `${env.PUBLIC_URL}/v1/auth/google/callback`;
 
 export type SignInOutcome =
@@ -53,6 +61,7 @@ async function admit(
   c: Parameters<MiddlewareHandler<AppEnv>>[0],
   identity: GoogleIdentity,
   invite: string | null,
+  admin: boolean,
 ): Promise<Person | null> {
   if (!identity.emailVerified) return null;
   const dir = c.var.directory;
@@ -68,7 +77,8 @@ async function admit(
     : null;
   const link = linkRow && (linkRow.email === null || linkRow.email === email) ? linkRow : null;
   const member = existing ? await dir.hasMembership(existing.id) : false;
-  if (!beta && !member && emailInvites.length === 0 && !link) return null;
+  if (!beta && !member && emailInvites.length === 0 && !link && !(admin && isAdmin(c.env, email)))
+    return null;
   const person = await dir.upsertPerson({ ...identity, email });
   const teams = new Set([...emailInvites, ...(link ? [link] : [])].map((row) => row.team_id));
   for (const teamId of teams) await dir.join(teamId, person.id);
@@ -137,7 +147,7 @@ export function authRoutes(google: GoogleOAuth, admin?: AdminCallback) {
       }
       throw cause;
     }
-    const person = await admit(c, identity, state.invite);
+    const person = await admit(c, identity, state.invite, state.purpose === 'admin');
     return finish(person ? { status: 'ok', person } : { status: 'not_in_beta' });
   });
 
