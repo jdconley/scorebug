@@ -1,4 +1,3 @@
-import type { DatabaseSync } from 'node:sqlite';
 import type {
   BroadcastCommand,
   BroadcastOperation,
@@ -12,6 +11,7 @@ import type {
   WorkerOutputAssignment,
 } from '@scorebug/protocol';
 import { canonical } from './canonical-json.js';
+import type { SqlDb } from './sql.js';
 import { applyBroadcastOperation, applyRecordingReport, MediaStateError } from './media-state.js';
 
 export class MediaStoreError extends Error {
@@ -53,11 +53,11 @@ type Dependencies = {
 /** Shares the match database transaction, so match end and broadcast stop commit together. */
 export class MediaStore {
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: SqlDb,
     private readonly deps: Dependencies,
   ) {}
 
-  static migrate(db: DatabaseSync): void {
+  static migrate(db: SqlDb): void {
     db.exec(`
       CREATE TABLE IF NOT EXISTS recordings(game_id TEXT NOT NULL REFERENCES matches(id), recording_id TEXT NOT NULL,
         device_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(game_id, recording_id));
@@ -73,12 +73,13 @@ export class MediaStore {
   }
   private read(gameId: string): MediaSnapshot {
     const match = this.match(gameId);
-    const row = this.db.prepare('SELECT data FROM media_broadcasts WHERE game_id=?').get(gameId) as
+    const row = this.db.get('SELECT data FROM media_broadcasts WHERE game_id=?', gameId) as
       | { data: string }
       | undefined;
-    const recordings = this.db
-      .prepare('SELECT data FROM recordings WHERE game_id=? ORDER BY recording_id')
-      .all(gameId) as { data: string }[];
+    const recordings = this.db.all(
+      'SELECT data FROM recordings WHERE game_id=? ORDER BY recording_id',
+      gameId,
+    ) as { data: string }[];
     return {
       gameId,
       recordings: recordings.map((row) => JSON.parse(row.data) as RecordingAssociation),
@@ -107,13 +108,17 @@ export class MediaStore {
   reportRecording(gameId: string, deviceId: string, report: RecordingReport): RecordingAssociation {
     return this.deps.transaction(() => {
       this.match(gameId);
-      const capture = this.db
-        .prepare("SELECT 1 FROM credentials WHERE game_id=? AND device_id=? AND role='capture'")
-        .get(gameId, deviceId);
+      const capture = this.db.get(
+        "SELECT 1 FROM credentials WHERE game_id=? AND device_id=? AND role='capture'",
+        gameId,
+        deviceId,
+      );
       if (!capture) throw new MediaStoreError('capture_access_required');
-      const row = this.db
-        .prepare('SELECT data FROM recordings WHERE game_id=? AND recording_id=?')
-        .get(gameId, report.recordingId) as { data: string } | undefined;
+      const row = this.db.get(
+        'SELECT data FROM recordings WHERE game_id=? AND recording_id=?',
+        gameId,
+        report.recordingId,
+      ) as { data: string } | undefined;
       const next = applyRecordingReport(
         row ? (JSON.parse(row.data) as RecordingAssociation) : undefined,
         gameId,
@@ -121,31 +126,35 @@ export class MediaStore {
         report,
         new Date(this.deps.now()).toISOString(),
       );
-      this.db
-        .prepare(
-          `INSERT INTO recordings(game_id,recording_id,device_id,data) VALUES(?,?,?,?)
+      this.db.run(
+        `INSERT INTO recordings(game_id,recording_id,device_id,data) VALUES(?,?,?,?)
         ON CONFLICT(game_id,recording_id) DO UPDATE SET data=excluded.data`,
-        )
-        .run(gameId, next.recordingId, deviceId, JSON.stringify(next));
+        gameId,
+        next.recordingId,
+        deviceId,
+        JSON.stringify(next),
+      );
       return next;
     });
   }
   private saveBroadcast(gameId: string, broadcast: MediaBroadcast): void {
-    this.db
-      .prepare(
-        `INSERT INTO media_broadcasts(game_id,data) VALUES(?,?)
+    this.db.run(
+      `INSERT INTO media_broadcasts(game_id,data) VALUES(?,?)
       ON CONFLICT(game_id) DO UPDATE SET data=excluded.data`,
-      )
-      .run(gameId, JSON.stringify(broadcast));
+      gameId,
+      JSON.stringify(broadcast),
+    );
   }
   /** Internal: caller must already hold the transaction used to end this match. */
   stopForMatchEndWithinTransaction(gameId: string, generation: number): void {
     this.saveBroadcast(gameId, { desired: 'stopped', generation, selection: null });
   }
   receipt(gameId: string, commandId: string): BroadcastOutcome | undefined {
-    const row = this.db
-      .prepare('SELECT outcome FROM media_commands WHERE game_id=? AND command_id=?')
-      .get(gameId, commandId) as { outcome: string } | undefined;
+    const row = this.db.get(
+      'SELECT outcome FROM media_commands WHERE game_id=? AND command_id=?',
+      gameId,
+      commandId,
+    ) as { outcome: string } | undefined;
     return row ? (JSON.parse(row.outcome) as BroadcastOutcome) : undefined;
   }
   /** `selectWorker` fills a start selection that omits workerId/outputId. It runs after the
@@ -159,9 +168,11 @@ export class MediaStore {
         throw new MediaStoreError('invalid_id');
       const snapshot = this.read(command.gameId);
       const request = canonical(command);
-      const previous = this.db
-        .prepare('SELECT request,outcome FROM media_commands WHERE game_id=? AND command_id=?')
-        .get(command.gameId, command.commandId) as { request: string; outcome: string } | undefined;
+      const previous = this.db.get(
+        'SELECT request,outcome FROM media_commands WHERE game_id=? AND command_id=?',
+        command.gameId,
+        command.commandId,
+      ) as { request: string; outcome: string } | undefined;
       if (previous)
         return previous.request === request
           ? (JSON.parse(previous.outcome) as BroadcastOutcome)
@@ -198,9 +209,13 @@ export class MediaStore {
         error,
         snapshot: this.read(command.gameId),
       };
-      this.db
-        .prepare('INSERT INTO media_commands(game_id,command_id,request,outcome) VALUES(?,?,?,?)')
-        .run(command.gameId, command.commandId, request, JSON.stringify(outcome));
+      this.db.run(
+        'INSERT INTO media_commands(game_id,command_id,request,outcome) VALUES(?,?,?,?)',
+        command.gameId,
+        command.commandId,
+        request,
+        JSON.stringify(outcome),
+      );
       return outcome;
     });
   }

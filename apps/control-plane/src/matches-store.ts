@@ -1,7 +1,4 @@
 import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import type {
   CommandOutcome,
   InviteRedeemRequest,
@@ -24,6 +21,7 @@ import {
 import { AccountStore } from './account-store.js';
 import { canonical } from './canonical-json.js';
 import { MediaStore } from './media-store.js';
+import type { SqlDb } from './sql.js';
 import {
   applyScoringOperation,
   initialScoringState,
@@ -40,6 +38,7 @@ export type CreateMatch = {
   destinationId?: string | undefined;
   recordOnly?: boolean | undefined;
 };
+const SCHEMA_VERSION = 5;
 export const INVITE_TTL_MS = 6 * 60 * 60 * 1000;
 const NO_OUTPUT: MatchOutput = { destinationId: null, recordOnly: false };
 // Match rows are JSON documents: rows written before scorebugStyle existed lack
@@ -100,24 +99,22 @@ function snapshot(match: StoredMatch): MatchSnapshot {
 
 /** Synchronous transactions serialize all commands, including competing processes. */
 export class MatchStore {
-  private readonly db: DatabaseSync;
   readonly media: MediaStore;
   readonly account: AccountStore;
-  private closed = false;
   constructor(
-    path: string,
+    private readonly db: SqlDb,
     private readonly credentialKey: string,
     private readonly now: () => number = Date.now,
   ) {
-    if (credentialKey.length < 16) throw new MatchStoreError('credential_key_too_short');
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.db = new DatabaseSync(path);
     try {
-      this.db.exec(
-        'PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;',
+      if (credentialKey.length < 16) throw new MatchStoreError('credential_key_too_short');
+      // Durable Objects reject PRAGMA user_version, so the version lives in a table.
+      db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT)');
+      const version = db.get<{ value: string }>(
+        "SELECT value FROM schema_meta WHERE key='version'",
       );
-      const version = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-      if (version.user_version > 5) throw new MatchStoreError('unsupported_database_version');
+      if (Number(version?.value ?? 0) > SCHEMA_VERSION)
+        throw new MatchStoreError('unsupported_database_version');
       this.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS matches(id TEXT PRIMARY KEY, status TEXT NOT NULL, data TEXT NOT NULL);
@@ -138,7 +135,10 @@ export class MatchStore {
           CREATE TABLE IF NOT EXISTS invite_redemptions(game_id TEXT NOT NULL REFERENCES matches(id), device_id TEXT NOT NULL,
             invite_id TEXT NOT NULL REFERENCES match_invites(id), redeemed_at INTEGER NOT NULL, PRIMARY KEY(game_id,device_id));
         `);
-        this.db.exec('PRAGMA user_version=5;');
+        this.db.run(
+          "INSERT INTO schema_meta(key,value) VALUES('version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          String(SCHEMA_VERSION),
+        );
       });
       this.account = new AccountStore(this.db, {
         transaction: (body) => this.transaction(body),
@@ -165,39 +165,30 @@ export class MatchStore {
         now: this.now,
       });
     } catch (error) {
-      this.db.close();
-      this.closed = true;
+      db.close();
       throw error;
     }
   }
   close(): void {
-    if (!this.closed) {
-      this.db.close();
-      this.closed = true;
-    }
+    this.db.close();
   }
   private transaction<T>(body: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = body();
-      this.db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    return this.db.transaction(body);
   }
   private load(id: string): StoredMatch {
-    const row = this.db.prepare('SELECT data FROM matches WHERE id=?').get(id) as
+    const row = this.db.get('SELECT data FROM matches WHERE id=?', id) as
       | { data: string }
       | undefined;
     if (!row) throw new MatchStoreError('match_not_found');
     return JSON.parse(row.data) as StoredMatch;
   }
   private save(match: StoredMatch): void {
-    this.db
-      .prepare('UPDATE matches SET status=?,data=? WHERE id=?')
-      .run(match.scoring.status, JSON.stringify(match), match.id);
+    this.db.run(
+      'UPDATE matches SET status=?,data=? WHERE id=?',
+      match.scoring.status,
+      JSON.stringify(match),
+      match.id,
+    );
   }
   get(id: string): MatchSnapshot | undefined {
     try {
@@ -208,7 +199,7 @@ export class MatchStore {
     }
   }
   active(): MatchSnapshot | undefined {
-    const row = this.db.prepare("SELECT data FROM matches WHERE status='active'").get() as
+    const row = this.db.get("SELECT data FROM matches WHERE status='active'") as
       | { data: string }
       | undefined;
     return row ? snapshot(JSON.parse(row.data) as StoredMatch) : undefined;
@@ -245,9 +236,12 @@ export class MatchStore {
         output,
         creationRequest: canonical(input),
       };
-      this.db
-        .prepare('INSERT INTO matches(id,status,data) VALUES(?,?,?)')
-        .run(input.id, 'active', JSON.stringify(match));
+      this.db.run(
+        'INSERT INTO matches(id,status,data) VALUES(?,?,?)',
+        input.id,
+        'active',
+        JSON.stringify(match),
+      );
       return snapshot(match);
     });
   }
@@ -278,20 +272,23 @@ export class MatchStore {
     role: MatchCredential['role'],
   ): MatchCredential {
     const credential = this.credential(gameId, deviceId, role);
-    this.db
-      .prepare(
-        `INSERT INTO credentials(game_id,device_id,role,token_hash) VALUES(?,?,?,?)
+    this.db.run(
+      `INSERT INTO credentials(game_id,device_id,role,token_hash) VALUES(?,?,?,?)
         ON CONFLICT(game_id,device_id,role) DO UPDATE SET token_hash=excluded.token_hash`,
-      )
-      .run(gameId, deviceId, role, digest(credential.token));
+      gameId,
+      deviceId,
+      role,
+      digest(credential.token),
+    );
     return credential;
   }
   // ---------------------------------------------------------------- invites
 
   private inviteView(row: InviteRow): MatchInvite {
-    const { count } = this.db
-      .prepare('SELECT COUNT(*) AS count FROM invite_redemptions WHERE invite_id=?')
-      .get(row.id) as { count: number };
+    const { count } = this.db.get(
+      'SELECT COUNT(*) AS count FROM invite_redemptions WHERE invite_id=?',
+      row.id,
+    ) as { count: number };
     return {
       id: row.id,
       gameId: row.game_id,
@@ -312,41 +309,46 @@ export class MatchStore {
     return this.transaction(() => {
       if (this.load(gameId).scoring.status !== 'active') throw new MatchStoreError('match_ended');
       const now = this.now();
-      const { count } = this.db
-        .prepare(
-          'SELECT COUNT(*) AS count FROM match_invites WHERE game_id=? AND revoked_at IS NULL AND expires_at>?',
-        )
-        .get(gameId, now) as { count: number };
+      const { count } = this.db.get(
+        'SELECT COUNT(*) AS count FROM match_invites WHERE game_id=? AND revoked_at IS NULL AND expires_at>?',
+        gameId,
+        now,
+      ) as { count: number };
       if (count >= 16) throw new MatchStoreError('invite_limit');
       for (let attempt = 0; attempt < 8; attempt++) {
         let code = '';
         for (let i = 0; i < INVITE_CODE_LENGTH; i++)
           code += INVITE_CODE_ALPHABET[randomInt(INVITE_CODE_ALPHABET.length)];
         const hash = this.account.codeHash('match-invite', code);
-        if (this.db.prepare('SELECT 1 FROM match_invites WHERE code_hash=?').get(hash)) continue;
+        if (this.db.get('SELECT 1 FROM match_invites WHERE code_hash=?', hash)) continue;
         const id = randomUUID();
-        this.db
-          .prepare(
-            'INSERT INTO match_invites(id,game_id,code_hash,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)',
-          )
-          .run(id, gameId, hash, createdBy, now, now + ttlMs);
+        this.db.run(
+          'INSERT INTO match_invites(id,game_id,code_hash,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)',
+          id,
+          gameId,
+          hash,
+          createdBy,
+          now,
+          now + ttlMs,
+        );
         return { invite: this.inviteView(this.inviteRow(gameId, id)!), code };
       }
       throw new MatchStoreError('invite_code_exhausted');
     });
   }
   private inviteRow(gameId: string, inviteId: string): InviteRow | undefined {
-    return this.db
-      .prepare('SELECT * FROM match_invites WHERE game_id=? AND id=?')
-      .get(gameId, inviteId) as InviteRow | undefined;
+    return this.db.get('SELECT * FROM match_invites WHERE game_id=? AND id=?', gameId, inviteId) as
+      | InviteRow
+      | undefined;
   }
   listInvites(gameId: string): MatchInvite[] {
     return this.transaction(() => {
       this.load(gameId);
       return (
-        this.db
-          .prepare('SELECT * FROM match_invites WHERE game_id=? ORDER BY created_at, rowid')
-          .all(gameId) as InviteRow[]
+        this.db.all(
+          'SELECT * FROM match_invites WHERE game_id=? ORDER BY created_at, rowid',
+          gameId,
+        ) as InviteRow[]
       ).map((row) => this.inviteView(row));
     });
   }
@@ -356,15 +358,13 @@ export class MatchStore {
       const row = this.inviteRow(gameId, inviteId);
       if (!row) throw new MatchStoreError('invite_not_found');
       if (row.revoked_at === null) {
-        this.db
-          .prepare('UPDATE match_invites SET revoked_at=? WHERE id=?')
-          .run(this.now(), inviteId);
-        this.db
-          .prepare(
-            `DELETE FROM credentials WHERE game_id=? AND role='score' AND device_id IN
+        this.db.run('UPDATE match_invites SET revoked_at=? WHERE id=?', this.now(), inviteId);
+        this.db.run(
+          `DELETE FROM credentials WHERE game_id=? AND role='score' AND device_id IN
             (SELECT device_id FROM invite_redemptions WHERE invite_id=?)`,
-          )
-          .run(gameId, inviteId);
+          gameId,
+          inviteId,
+        );
       }
       return this.inviteView(this.inviteRow(gameId, inviteId)!);
     });
@@ -378,7 +378,7 @@ export class MatchStore {
       const code = normalizeInviteCode(input.code);
       if (!code) throw new MatchStoreError('invite_invalid');
       const hash = this.account.codeHash('match-invite', code);
-      const row = this.db.prepare('SELECT * FROM match_invites WHERE code_hash=?').get(hash) as
+      const row = this.db.get('SELECT * FROM match_invites WHERE code_hash=?', hash) as
         | InviteRow
         | undefined;
       if (!row || !timingSafeEqual(Buffer.from(row.code_hash), Buffer.from(hash)))
@@ -387,15 +387,19 @@ export class MatchStore {
       if (this.now() >= row.expires_at) throw new MatchStoreError('invite_expired');
       if (this.load(row.game_id).scoring.status !== 'active')
         throw new MatchStoreError('match_ended');
-      const redeemed = this.db
-        .prepare('SELECT 1 FROM invite_redemptions WHERE game_id=? AND device_id=?')
-        .get(row.game_id, input.deviceId);
+      const redeemed = this.db.get(
+        'SELECT 1 FROM invite_redemptions WHERE game_id=? AND device_id=?',
+        row.game_id,
+        input.deviceId,
+      );
       // Invite device IDs must not alias the owner's or another device's existing credentials.
       if (
         !redeemed &&
-        this.db
-          .prepare('SELECT 1 FROM credentials WHERE game_id=? AND device_id=?')
-          .get(row.game_id, input.deviceId)
+        this.db.get(
+          'SELECT 1 FROM credentials WHERE game_id=? AND device_id=?',
+          row.game_id,
+          input.deviceId,
+        )
       )
         throw new MatchStoreError('device_id_taken');
       const credential = this.issueCredentialWithinTransaction(
@@ -403,40 +407,44 @@ export class MatchStore {
         input.deviceId,
         'score',
       );
-      this.db
-        .prepare(
-          `INSERT INTO invite_redemptions(game_id,device_id,invite_id,redeemed_at) VALUES(?,?,?,?)
+      this.db.run(
+        `INSERT INTO invite_redemptions(game_id,device_id,invite_id,redeemed_at) VALUES(?,?,?,?)
           ON CONFLICT(game_id,device_id) DO UPDATE SET invite_id=excluded.invite_id`,
-        )
-        .run(row.game_id, input.deviceId, row.id, this.now());
+        row.game_id,
+        input.deviceId,
+        row.id,
+        this.now(),
+      );
       return { credential, snapshot: snapshot(this.load(row.game_id)) };
     });
   }
   authenticate(gameId: string, token: string): Omit<MatchCredential, 'token'> | undefined {
-    const row = this.db
-      .prepare('SELECT device_id,role FROM credentials WHERE game_id=? AND token_hash=?')
-      .get(gameId, digest(token)) as
-      | { device_id: string; role: MatchCredential['role'] }
-      | undefined;
+    const row = this.db.get(
+      'SELECT device_id,role FROM credentials WHERE game_id=? AND token_hash=?',
+      gameId,
+      digest(token),
+    ) as { device_id: string; role: MatchCredential['role'] } | undefined;
     return row ? { gameId, deviceId: row.device_id, role: row.role } : undefined;
   }
   receipt(gameId: string, deviceId: string, commandId: string): CommandOutcome | undefined {
-    const row = this.db
-      .prepare('SELECT outcome FROM commands WHERE game_id=? AND device_id=? AND command_id=?')
-      .get(gameId, deviceId, commandId) as { outcome: string } | undefined;
+    const row = this.db.get(
+      'SELECT outcome FROM commands WHERE game_id=? AND device_id=? AND command_id=?',
+      gameId,
+      deviceId,
+      commandId,
+    ) as { outcome: string } | undefined;
     return row ? (JSON.parse(row.outcome) as CommandOutcome) : undefined;
   }
   execute(command: MatchCommand): CommandOutcome {
     return this.transaction(() => {
       const match = this.load(command.gameId);
       const request = canonical(command);
-      const existing = this.db
-        .prepare(
-          'SELECT request,outcome FROM commands WHERE game_id=? AND device_id=? AND command_id=?',
-        )
-        .get(command.gameId, command.deviceId, command.commandId) as
-        | { request: string; outcome: string }
-        | undefined;
+      const existing = this.db.get(
+        'SELECT request,outcome FROM commands WHERE game_id=? AND device_id=? AND command_id=?',
+        command.gameId,
+        command.deviceId,
+        command.commandId,
+      ) as { request: string; outcome: string } | undefined;
       if (existing)
         return existing.request === request
           ? (JSON.parse(existing.outcome) as CommandOutcome)
@@ -447,9 +455,11 @@ export class MatchStore {
               snapshot: snapshot(match),
             };
       let error: string | null = null;
-      const canScore = this.db
-        .prepare("SELECT 1 FROM credentials WHERE game_id=? AND device_id=? AND role='score'")
-        .get(command.gameId, command.deviceId);
+      const canScore = this.db.get(
+        "SELECT 1 FROM credentials WHERE game_id=? AND device_id=? AND role='score'",
+        command.gameId,
+        command.deviceId,
+      );
       const age = this.now() - Date.parse(command.issuedAt);
       if (!canScore) error = 'scoring_access_required';
       else if (match.scoring.status === 'ended') error = 'match_ended';
@@ -488,11 +498,14 @@ export class MatchStore {
         error,
         snapshot: snapshot(match),
       };
-      this.db
-        .prepare(
-          'INSERT INTO commands(game_id,device_id,command_id,request,outcome) VALUES(?,?,?,?,?)',
-        )
-        .run(command.gameId, command.deviceId, command.commandId, request, JSON.stringify(outcome));
+      this.db.run(
+        'INSERT INTO commands(game_id,device_id,command_id,request,outcome) VALUES(?,?,?,?,?)',
+        command.gameId,
+        command.deviceId,
+        command.commandId,
+        request,
+        JSON.stringify(outcome),
+      );
       return outcome;
     });
   }

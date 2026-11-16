@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { setupLink } from '@scorebug/protocol';
 import { MatchStore } from './matches-store.js';
+import { openNodeSqlite } from './sql-node.js';
 import { renderQr } from './qr.js';
 import { rtmpUrlSchema, streamKeySchema } from './routes/account.js';
 
@@ -29,7 +30,10 @@ function openStore(): MatchStore {
   const secret = process.env.SERVER_SECRET;
   if (!secret || secret.length < 16)
     fail('SERVER_SECRET is not set (run this inside the container)');
-  return new MatchStore(process.env.DATABASE_PATH ?? 'data/scorebug.sqlite', secret);
+  return new MatchStore(
+    openNodeSqlite(process.env.DATABASE_PATH ?? 'data/scorebug.sqlite'),
+    secret,
+  );
 }
 
 async function readStdin(): Promise<string> {
