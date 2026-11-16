@@ -30,23 +30,31 @@ sign-in screen or Settings → Developer, or with `SCOREBUG_TEST_API_URL`.
    and **New match**. One team shows directly; several stack. **Join with a code**
    (K7P-4QX scores one match, ABCD-EFGH joins a team), the last match, Recordings.
    People JD lets create teams see **Create team**.
-3. **Team.** Members; owners also rename, invite by email or with a link (share sheet),
-   revoke invites and remove members. Anyone can leave.
+3. **Team.** The team's YouTube channel, members and invites. Owners **Connect a YouTube
+   channel** (`POST /v1/youtube/connect` in `ASWebAuthenticationSession`, landing on
+   `scorebug://auth?purpose=youtube&status=…&ticket=…`, claimed at
+   `POST /v1/youtube/connections`), pick one of their connections (`PUT /v1/teams/:id/youtube`),
+   **Reconnect** one that needs it, or **Check again** after YouTube's 24-hour wait. Members
+   see the channel, or "Ask your team owner to reconnect YouTube". Owners also rename, invite
+   by email or with a link (share sheet), revoke invites and remove members. Anyone can leave.
 4. **Links.** Universal links `https://scorebug.live/invite/<code>` (team invite: signs in
    with the invite if needed) and `https://scorebug.live/join/<code>` (score one match),
    always confirmed with a tap. The app has the `applinks:scorebug.live` entitlement; the
    Worker serves `/.well-known/apple-app-site-association`.
 5. **New match.** Team 1 starts as the team (names, short names ≤ 8 characters
    prefilled from the name, colors), format, scorebug style, the team's YouTube channel
-   or record only, Record in 4K. **Go live** starts recording and the stream together.
+   or record only, Record in 4K. **Go live** starts recording and the stream together; it's
+   off, with the reason, when the team has no channel or the channel needs attention.
    The sheet remembers the last opponent. The app never says home or away: Team 1 is the
    API's `home`, Team 2 `away`. Member routes go through `/v1/teams/:teamId/matches`
    with the session token; match-token routes stay `/v1/matches/:id`.
 6. **Live (landscape).** Tap the left or right half of the picture to give the
    team on that side a point; Undo; **Swap sides**. LIVE, elapsed time,
-   `REC 1080p · 720p out · good`. **Invite scorer** shows a QR (for the Camera app), a
-   6-character code and a share link. Stream problems are a small banner; the recording
-   never stops because of the stream.
+   `REC 1080p · 720p out · good`. **Watch link** shares the match's YouTube link (one per
+   match, from the Go Live reply or `GET /v1/matches/:id`). **Invite scorer** shows a QR
+   (for the Camera app), a 6-character code and a share link. Stream problems, including a
+   refused Go Live (`busy`, `time_limit`, no channel…), are a small banner with **Go live
+   again**; the recording never stops because of the stream.
 7. **Set point.** When the server reports `pendingSetEnd` the scorer confirms
    ("Cascade wins set 3?"): End set / End match, Undo last point, or Keep playing.
    After a set ends: "Teams switching sides?".
@@ -95,7 +103,9 @@ recorder as the camera, and show a drawn court in place of the camera preview.
 `ios/AppUITests/ScreenTourTests.swift` signs in, hits the private beta screen, creates a
 team, invites, joins a second team by code and scores its match. It runs against the
 real Worker app in `ios/AppUITests/LocalWorker`, with a stand-in Google that signs in as
-whoever `POST /dev/identity` (`{"email": …, "name": …}`) names. Use `127.0.0.1`, not
+whoever `POST /dev/identity` (`{"email": …, "name": …}`) names, and the Worker tests'
+in-memory YouTube, Stream and match container (so Go Live returns a watch link, while the
+SRT publish goes nowhere). Use `127.0.0.1`, not
 `localhost`: the web sign-in sheet tries IPv6 first and the Worker listens on IPv4.
 
 ```sh

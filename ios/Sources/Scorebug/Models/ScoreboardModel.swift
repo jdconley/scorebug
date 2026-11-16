@@ -62,6 +62,11 @@ import ScorebugCore
 
     func team(on side: CourtSide) -> TeamSlot { layout.team(on: side) }
     func info(_ slot: TeamSlot) -> MatchTeam? { snapshot?.teams[slot] }
+    /// "Cascade 14 Black vs Summit 14 Red", for sharing the watch link.
+    var matchTitle: String? {
+        guard let team1 = info(.team1)?.name, let team2 = info(.team2)?.name else { return nil }
+        return "\(team1) vs \(team2)"
+    }
     func points(_ slot: TeamSlot) -> Int { snapshot?.score.points(slot) ?? 0 }
     func sets(_ slot: TeamSlot) -> Int { snapshot?.score.sets(slot) ?? 0 }
 

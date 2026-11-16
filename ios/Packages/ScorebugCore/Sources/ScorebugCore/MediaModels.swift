@@ -161,15 +161,18 @@ public struct BroadcastOutcome: Codable, Equatable, Sendable {
     public var accepted: Bool
     public var error: String?
     public var snapshot: MediaSnapshot
+    /// Hosted: the match's YouTube broadcast once it has one.
+    public var youtube: MatchYouTube?
 
-    public init(commandId: String, accepted: Bool, error: String?, snapshot: MediaSnapshot) {
+    public init(commandId: String, accepted: Bool, error: String?, snapshot: MediaSnapshot, youtube: MatchYouTube? = nil) {
         self.commandId = commandId
         self.accepted = accepted
         self.error = error
         self.snapshot = snapshot
+        self.youtube = youtube
     }
 
-    private enum CodingKeys: String, CodingKey { case commandId, accepted, error, snapshot }
+    private enum CodingKeys: String, CodingKey { case commandId, accepted, error, snapshot, youtube }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -177,6 +180,7 @@ public struct BroadcastOutcome: Codable, Equatable, Sendable {
         try container.encode(accepted, forKey: .accepted)
         try container.encode(error, forKey: .error)
         try container.encode(snapshot, forKey: .snapshot)
+        try container.encodeIfPresent(youtube, forKey: .youtube)
     }
 }
 

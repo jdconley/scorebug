@@ -8,6 +8,7 @@ struct ScorerScreen: View {
     let session: MatchSession
     @ObservedObject var watch: PhoneWatchLink
     @StateObject private var board: ScoreboardModel
+    @StateObject private var watchLink = WatchLinkModel()
     @State private var confirmLeave = false
 
     init(app: AppModel, session: MatchSession, watch: PhoneWatchLink) {
@@ -81,6 +82,7 @@ struct ScorerScreen: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+        .task { await watchLink.watch(session, every: .seconds(15)) }
         .onDisappear { watch.attach(nil) }
     }
 
@@ -95,6 +97,15 @@ struct ScorerScreen: View {
                 HStack(spacing: 6) { Circle().fill(.white).frame(width: 7, height: 7); Text("LIVE").font(.footnote.weight(.bold)).kerning(1) }
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(Theme.live, in: RoundedRectangle(cornerRadius: 6))
+            }
+            if let url = watchLink.url {
+                ShareLink(item: url, subject: Text("Watch our match live"),
+                          message: Text(watchLink.shareText(teams: board.matchTitle) ?? "")) {
+                    Image(systemName: "play.rectangle.fill")
+                }
+                .buttonStyle(OverlayButtonStyle())
+                .accessibilityLabel("Share the YouTube watch link")
+                .accessibilityIdentifier("scorer.watchLink")
             }
             Button("Leave") { confirmLeave = true }
                 .buttonStyle(OverlayButtonStyle())

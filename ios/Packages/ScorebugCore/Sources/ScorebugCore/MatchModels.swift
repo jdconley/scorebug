@@ -353,6 +353,8 @@ public struct MatchSessionResponse: Codable, Equatable, Sendable {
 
 public struct MatchSnapshotResponse: Codable, Equatable, Sendable {
     public var snapshot: MatchSnapshot
+    /// Hosted: the match's YouTube broadcast, nil before its first Go Live.
+    public var youtube: MatchYouTube? = nil
     public var serverTime: String
 
     public init(snapshot: MatchSnapshot, serverTime: String) {
@@ -363,6 +365,8 @@ public struct MatchSnapshotResponse: Codable, Equatable, Sendable {
 
 public struct ActiveMatchResponse: Codable, Equatable, Sendable {
     public var snapshot: MatchSnapshot?
+    /// Hosted: the match's YouTube broadcast, nil before its first Go Live.
+    public var youtube: MatchYouTube? = nil
     public var serverTime: String
 
     public init(snapshot: MatchSnapshot?, serverTime: String) {
@@ -371,12 +375,13 @@ public struct ActiveMatchResponse: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case snapshot, serverTime
+        case snapshot, youtube, serverTime
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(snapshot, forKey: .snapshot)
+        try container.encodeIfPresent(youtube, forKey: .youtube)
         try container.encode(serverTime, forKey: .serverTime)
     }
 }

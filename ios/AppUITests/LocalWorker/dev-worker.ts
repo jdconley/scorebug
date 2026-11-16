@@ -1,14 +1,20 @@
 // Simulator QA only (ios/README.md): the real Worker app with a stand-in Google that signs in as
-// whoever POST /dev/identity names. Never deployed: it has its own wrangler config.
+// whoever POST /dev/identity names, and the Worker tests' in-memory YouTube, Stream and match
+// container. Never deployed: it has its own wrangler config.
+import '../../../apps/control-plane/test-worker/fake-media.js';
 import { createWorkerApp } from '../../../apps/control-plane/src/worker/app.js';
 import type { Env } from '../../../apps/control-plane/src/worker/env.js';
 import type { GoogleOAuth } from '../../../apps/control-plane/src/worker/google.js';
 export { TeamObject } from '../../../apps/control-plane/src/worker/team-object.js';
+export { WorkerApi } from '../../../apps/control-plane/src/worker/worker-api.js';
 
 let email = 'jd@example.com';
 let name = 'JD Conley';
+const youtubeScope = 'https://www.googleapis.com/auth/youtube';
+
 const google: GoogleOAuth = {
   authorizeUrl(p) {
+    // Straight back to the Worker's callback, as if the person approved everything.
     const url = new URL(p.redirectUri);
     url.searchParams.set('state', p.state);
     url.searchParams.set('code', 'dev-' + Date.now());
@@ -20,6 +26,10 @@ const google: GoogleOAuth = {
       refreshToken: null,
       scopes: ['openid', 'email', 'profile'],
     };
+  },
+  async exchangeForRefreshToken() {
+    // FakeYouTube accepts refresh tokens that start with "refresh-".
+    return { refreshToken: 'refresh-' + email, scopes: ['openid', 'email', 'profile', youtubeScope] };
   },
 };
 

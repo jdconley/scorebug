@@ -1,5 +1,6 @@
 import ScorebugCore
 import ScorebugMedia
+import Security
 import SwiftUI
 import UIKit
 
@@ -29,6 +30,14 @@ struct ScorebugApp: App {
         if ProcessInfo.processInfo.environment["SCOREBUG_TEST_RESET"] == "1" {
             let keychain = KeychainStore()
             for key in [StoreKey.account, StoreKey.session] { try? keychain.set(nil, for: key) }
+            // The streaming setup too, so a fresh local server starts with no leftover reports.
+            SecItemDelete([kSecClass as String: kSecClassGenericPassword,
+                           kSecAttrService as String: "live.scorebug.capture.setup"] as CFDictionary)
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Scorebug", isDirectory: true)
+            for file in ["pending-broadcast.json", "pending-command.json"] {
+                try? FileManager.default.removeItem(at: support.appendingPathComponent(file))
+            }
             UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "")
         }
         #endif

@@ -73,6 +73,13 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(app.buttons["team.invite"].waitForExistence(timeout: 15))
         shot(app, "05-team-new")
 
+        // Connect the team's YouTube channel (the local Worker's stand-in YouTube).
+        if app.buttons["team.channel.connect"].waitForExistence(timeout: 5) {
+            signIn(app, button: "team.channel.connect")
+            XCTAssertTrue(app.staticTexts["team.channel.title"].waitForExistence(timeout: 20))
+            shot(app, "05b-team-channel")
+        }
+
         // Invite with a link; a coach with an account accepts it.
         app.buttons["team.invite"].tap()
         XCTAssertTrue(app.buttons["invite.createLink"].waitForExistence(timeout: 5))
@@ -144,6 +151,8 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(app.buttons["signIn.google"].waitForExistence(timeout: 15))
         signIn(app)
         XCTAssertTrue(app.buttons["home.settings"].waitForExistence(timeout: 20))
+        Thread.sleep(forTimeInterval: 2)
+        shot(app, "13b-home")
         app.buttons["home.settings"].tap()
         XCTAssertTrue(app.buttons["settings.signOut"].waitForExistence(timeout: 5))
         shot(app, "14-settings")
@@ -155,7 +164,32 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(team2.waitForExistence(timeout: 5))
         team2.tap(); team2.typeText("Summit 14 Red\n")
         shot(app, "15-new-match")
-        app.buttons["Cancel"].tap()
+        app.swipeUp()
+        shot(app, "16-new-match-go-live")
+        let goLive = app.buttons["newMatch.goLive"]
+        if goLive.exists, goLive.isEnabled {
+            goLive.tap()
+            let watchLink = app.buttons["live.watchLink"]
+            XCTAssertTrue(watchLink.waitForExistence(timeout: 40))
+            Thread.sleep(forTimeInterval: 2)
+            shot(app, "17-live-watch-link")
+            watchLink.tap()
+            Thread.sleep(forTimeInterval: 2)
+            shot(app, "18-share-watch-link")
+            // Close the share sheet, then end the match.
+            XCUIApplication().swipeDown(velocity: .fast)
+            Thread.sleep(forTimeInterval: 1)
+            if app.buttons["Close"].exists { app.buttons["Close"].tap() }
+            app.buttons["live.end"].tap()
+            app.buttons["End match"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["matchOver.done"].waitForExistence(timeout: 30))
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: app.buttons["matchOver.done"])
+            wait(for: [enabled], timeout: 60)
+            app.buttons["matchOver.done"].tap()
+        } else {
+            app.buttons["Cancel"].tap()
+        }
+        XCTAssertTrue(app.buttons["home.settings"].waitForExistence(timeout: 15))
         app.buttons["home.settings"].tap()
         app.buttons["settings.signOut"].tap()
         app.sheets.buttons["Sign out"].firstMatch.tap()

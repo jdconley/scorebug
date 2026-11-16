@@ -24,7 +24,8 @@ struct HomeView: View {
                         NoTeamCard(canCreate: app.me?.canCreateTeams == true) { creatingTeam = true }
                     }
                     ForEach(app.teams) { team in
-                        TeamBlock(team: team, match: home.activeMatches[team.id], prominent: app.teams.count == 1,
+                        TeamBlock(team: team, match: home.activeMatches[team.id], watchLink: home.watchLinks[team.id],
+                                  channel: home.channels[team.id], prominent: app.teams.count == 1,
                                   busy: home.busy,
                                   openTeam: { path.append(Destination.team(team.id)) },
                                   newMatch: { newMatchTeam = team },
@@ -67,7 +68,8 @@ struct HomeView: View {
         }
         .sheet(item: $newMatchTeam) { team in
             if let access = app.access(teamId: team.id) {
-                NewMatchSheet(app: app, model: NewMatchModel(team: team.team, access: access, preferences: app.preferences))
+                NewMatchSheet(app: app, model: NewMatchModel(team: team.team, isOwner: team.isOwner, access: access,
+                                                            preferences: app.preferences))
             }
         }
         .sheet(isPresented: $joining) { JoinSheet(app: app) }
@@ -109,6 +111,9 @@ struct HomeView: View {
 private struct TeamBlock: View {
     let team: TeamMembership
     let match: MatchSnapshot?
+    let watchLink: MatchYouTube?
+    /// Outer nil: not read yet. Inner nil: no channel set.
+    let channel: TeamYouTube??
     let prominent: Bool
     let busy: Bool
     let openTeam: () -> Void
@@ -132,8 +137,13 @@ private struct TeamBlock: View {
             .accessibilityLabel("\(team.name), \(team.isOwner ? "owner" : "member")")
             .accessibilityHint("Members and invites")
             .accessibilityIdentifier("home.team.\(team.id)")
+            if let note = channelNote {
+                Label(note, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote.weight(.medium)).foregroundStyle(Theme.warn)
+                    .accessibilityIdentifier("home.channelNote")
+            }
             if let match {
-                ActiveMatchCard(match: match, busy: busy, open: { open(match, $0) })
+                ActiveMatchCard(match: match, watchLink: watchLink, busy: busy, open: { open(match, $0) })
             }
             Button(action: newMatch) {
                 Label("New match", systemImage: "plus").labelStyle(.titleAndIcon)
@@ -142,11 +152,23 @@ private struct TeamBlock: View {
             .accessibilityIdentifier("home.newMatch")
         }
     }
+
+    /// A channel problem worth seeing before the gym: the team can't go live as it stands.
+    private var channelNote: String? {
+        guard case .some(let current) = channel else { return nil }
+        guard let current else { return team.isOwner ? "No YouTube channel yet. Connect one to go live." : nil }
+        switch current.status {
+        case .ready: return nil
+        case .liveDisabled: return "\(current.channelTitle) can't live stream yet (YouTube's 24-hour wait)."
+        case .needsReconnect: return team.isOwner ? "YouTube needs reconnecting" : "Ask your team owner to reconnect YouTube"
+        }
+    }
 }
 
 /// The team's open match, as it stands, with Film and Score.
 private struct ActiveMatchCard: View {
     let match: MatchSnapshot
+    let watchLink: MatchYouTube?
     let busy: Bool
     let open: (MatchSession.Kind) -> Void
 
@@ -154,8 +176,17 @@ private struct ActiveMatchCard: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 StatusDot(color: Theme.live)
-                Text("Match open · Set \(match.score.set)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
+                Text(match.broadcast.desired == .running ? "Live · Set \(match.score.set)" : "Match open · Set \(match.score.set)")
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
                 Spacer()
+                if let url = watchLink?.url {
+                    ShareLink(item: url, subject: Text("Watch our match live"),
+                              message: Text("Watch \(match.teams.home.name) vs \(match.teams.away.name) live on YouTube: \(url.absoluteString)")) {
+                        Label("Watch link", systemImage: "play.rectangle.fill").font(.footnote.weight(.semibold))
+                    }
+                    .foregroundStyle(Theme.text)
+                    .accessibilityIdentifier("home.match.watchLink")
+                }
             }
             .padding(.horizontal, 16).padding(.top, 14)
             row(.team1).padding(.top, 10).padding(.bottom, 6)
