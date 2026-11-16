@@ -4,7 +4,8 @@ import { cors } from 'hono/cors';
 import type { Config } from './config.js';
 import { createLogger, type Logger } from './logger.js';
 import { MatchStore } from './matches-store.js';
-import { matchesRoutes } from './routes/matches.js';
+import { openNodeSqlite } from './sql-node.js';
+import { matchesRoutes, ownerAccess } from './routes/matches.js';
 import { workerRoutes } from './routes/media.js';
 import { IngestRelay } from './ingest.js';
 import { RelayLifecycle, type RelayAdapter } from './relay-lifecycle.js';
@@ -33,7 +34,8 @@ export function createApp(
   overrides: Partial<AppDeps> = {},
 ): AppDeps & { app: Hono } {
   const log = overrides.log ?? createLogger(config.LOG_LEVEL);
-  const matches = overrides.matches ?? new MatchStore(config.DATABASE_PATH, config.SERVER_SECRET);
+  const matches =
+    overrides.matches ?? new MatchStore(openNodeSqlite(config.DATABASE_PATH), config.SERVER_SECRET);
   const observations = overrides.observations ?? new WorkerObservations(matches.media);
   const relay =
     overrides.relay ??
@@ -102,7 +104,10 @@ export function createApp(
 
   app.get('/healthz', (c) => c.json({ ok: true }));
 
-  app.route('/v1/matches', matchesRoutes(config, matches, relayLifecycle, observations));
+  app.route(
+    '/v1/matches',
+    matchesRoutes(config, matches, ownerAccess(config, matches), relayLifecycle, observations),
+  );
   app.route('/v1/worker', workerRoutes(config, matches, relayLifecycle, observations));
   app.route('/v1/setup', setupRoutes(config, matches, setupGuard));
   app.route('/v1/devices', deviceRoutes(config, matches));

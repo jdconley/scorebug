@@ -1,5 +1,4 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
 import type {
   Destination,
   DestinationCreate,
@@ -8,6 +7,7 @@ import type {
   SetupRedeemRequest,
 } from '@scorebug/protocol';
 import { canonical } from './canonical-json.js';
+import type { SqlDb } from './sql.js';
 
 export class AccountStoreError extends Error {
   constructor(readonly code: string) {
@@ -64,16 +64,16 @@ const sameHex = (a: string, b: string) =>
 export class AccountStore {
   private readonly key: Buffer;
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: SqlDb,
     private readonly deps: Dependencies,
   ) {
-    const row = db.prepare("SELECT value FROM server_keys WHERE name='hmac'").get() as {
+    const row = db.get("SELECT value FROM server_keys WHERE name='hmac'") as {
       value: string;
     };
     this.key = Buffer.from(row.value, 'base64url');
   }
 
-  static migrate(db: DatabaseSync): void {
+  static migrate(db: SqlDb): void {
     db.exec(`
       CREATE TABLE IF NOT EXISTS server_keys(name TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS setup_codes(code_hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
@@ -84,7 +84,8 @@ export class AccountStore {
         stream_key TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0,1)),
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     `);
-    db.prepare("INSERT OR IGNORE INTO server_keys(name,value) VALUES('hmac',?)").run(
+    db.run(
+      "INSERT OR IGNORE INTO server_keys(name,value) VALUES('hmac',?)",
       randomBytes(32).toString('base64url'),
     );
   }
@@ -104,14 +105,18 @@ export class AccountStore {
     return this.deps.transaction(() => {
       const now = this.deps.now();
       // Unredeemed codes are useless a week after expiry; redeemed rows keep the retry receipt.
-      this.db
-        .prepare('DELETE FROM setup_codes WHERE redeemed_at IS NULL AND expires_at < ?')
-        .run(now - 7 * SETUP_CODE_TTL_MS);
+      this.db.run(
+        'DELETE FROM setup_codes WHERE redeemed_at IS NULL AND expires_at < ?',
+        now - 7 * SETUP_CODE_TTL_MS,
+      );
       const code = randomBytes(18).toString('base64url');
       const expiresAt = now + ttlMs;
-      this.db
-        .prepare('INSERT INTO setup_codes(code_hash,created_at,expires_at) VALUES(?,?,?)')
-        .run(this.codeHash('setup-code', code), now, expiresAt);
+      this.db.run(
+        'INSERT INTO setup_codes(code_hash,created_at,expires_at) VALUES(?,?,?)',
+        this.codeHash('setup-code', code),
+        now,
+        expiresAt,
+      );
       return { code, expiresAt: new Date(expiresAt).toISOString() };
     });
   }
@@ -126,7 +131,7 @@ export class AccountStore {
     return this.deps.transaction(() => {
       const now = this.deps.now();
       const hash = this.codeHash('setup-code', input.code);
-      const row = this.db.prepare('SELECT * FROM setup_codes WHERE code_hash=?').get(hash) as
+      const row = this.db.get('SELECT * FROM setup_codes WHERE code_hash=?', hash) as
         | CodeRow
         | undefined;
       if (!row || !sameHex(row.code_hash, hash)) throw new AccountStoreError('setup_code_invalid');
@@ -146,14 +151,20 @@ export class AccountStore {
       if (now >= row.expires_at) throw new AccountStoreError('setup_code_expired');
       if (this.deviceRow(input.deviceId)) throw new AccountStoreError('device_id_taken');
       const token = this.deviceToken(input.deviceId, row.code_hash);
-      this.db
-        .prepare(
-          "INSERT INTO devices(id,name,role,token_hash,created_at,last_seen_at) VALUES(?,?,'owner',?,?,?)",
-        )
-        .run(input.deviceId, input.deviceName, sha256(token), now, now);
-      this.db
-        .prepare('UPDATE setup_codes SET redeemed_at=?,device_id=? WHERE code_hash=?')
-        .run(now, input.deviceId, row.code_hash);
+      this.db.run(
+        "INSERT INTO devices(id,name,role,token_hash,created_at,last_seen_at) VALUES(?,?,'owner',?,?,?)",
+        input.deviceId,
+        input.deviceName,
+        sha256(token),
+        now,
+        now,
+      );
+      this.db.run(
+        'UPDATE setup_codes SET redeemed_at=?,device_id=? WHERE code_hash=?',
+        now,
+        input.deviceId,
+        row.code_hash,
+      );
       return { device: deviceView(this.deviceRow(input.deviceId)!), token };
     });
   }
@@ -161,28 +172,29 @@ export class AccountStore {
   // ---------------------------------------------------------------- devices
 
   private deviceRow(id: string): DeviceRow | undefined {
-    return this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) as DeviceRow | undefined;
+    return this.db.get('SELECT * FROM devices WHERE id=?', id) as DeviceRow | undefined;
   }
 
   /** Owner device for a bearer token, or undefined (unknown or revoked). */
   authenticateDevice(token: string): Device | undefined {
     if (!token) return undefined;
-    const row = this.db
-      .prepare('SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL')
-      .get(sha256(token)) as DeviceRow | undefined;
+    const row = this.db.get(
+      'SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL',
+      sha256(token),
+    ) as DeviceRow | undefined;
     if (!row) return undefined;
     const now = this.deps.now();
     if (row.last_seen_at === null || now - row.last_seen_at >= LAST_SEEN_RESOLUTION_MS) {
-      this.db.prepare('UPDATE devices SET last_seen_at=? WHERE id=?').run(now, row.id);
+      this.db.run('UPDATE devices SET last_seen_at=? WHERE id=?', now, row.id);
       row.last_seen_at = now;
     }
     return deviceView(row);
   }
 
   listDevices(): Device[] {
-    return (
-      this.db.prepare('SELECT * FROM devices ORDER BY created_at, rowid').all() as DeviceRow[]
-    ).map(deviceView);
+    return (this.db.all('SELECT * FROM devices ORDER BY created_at, rowid') as DeviceRow[]).map(
+      deviceView,
+    );
   }
 
   revokeDevice(id: string): Device {
@@ -190,7 +202,7 @@ export class AccountStore {
       const row = this.deviceRow(id);
       if (!row) throw new AccountStoreError('device_not_found');
       if (row.revoked_at === null)
-        this.db.prepare('UPDATE devices SET revoked_at=? WHERE id=?').run(this.deps.now(), id);
+        this.db.run('UPDATE devices SET revoked_at=? WHERE id=?', this.deps.now(), id);
       return deviceView(this.deviceRow(id)!);
     });
   }
@@ -198,16 +210,12 @@ export class AccountStore {
   // ----------------------------------------------------------- destinations
 
   private destinationRow(id: string): DestinationRow | undefined {
-    return this.db.prepare('SELECT * FROM destinations WHERE id=?').get(id) as
-      | DestinationRow
-      | undefined;
+    return this.db.get('SELECT * FROM destinations WHERE id=?', id) as DestinationRow | undefined;
   }
 
   listDestinations(): Destination[] {
     return (
-      this.db
-        .prepare('SELECT * FROM destinations ORDER BY created_at, rowid')
-        .all() as DestinationRow[]
+      this.db.all('SELECT * FROM destinations ORDER BY created_at, rowid') as DestinationRow[]
     ).map(destinationView);
   }
 
@@ -218,7 +226,7 @@ export class AccountStore {
 
   /** The destination new matches use when they name none. */
   defaultDestinationId(): string | null {
-    const row = this.db.prepare('SELECT id FROM destinations WHERE is_default=1').get() as
+    const row = this.db.get('SELECT id FROM destinations WHERE is_default=1') as
       | { id: string }
       | undefined;
     return row?.id ?? null;
@@ -228,17 +236,22 @@ export class AccountStore {
     return this.deps.transaction(() => {
       const now = this.deps.now();
       const id = randomUUID();
-      const { count } = this.db.prepare('SELECT COUNT(*) AS count FROM destinations').get() as {
+      const { count } = this.db.get('SELECT COUNT(*) AS count FROM destinations') as {
         count: number;
       };
       if (count >= 32) throw new AccountStoreError('destination_limit');
       const isDefault = input.isDefault === true || this.defaultDestinationId() === null;
       if (isDefault) this.db.exec('UPDATE destinations SET is_default=0');
-      this.db
-        .prepare(
-          'INSERT INTO destinations(id,name,rtmp_url,stream_key,is_default,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
-        )
-        .run(id, input.name, input.rtmpUrl, input.streamKey, isDefault ? 1 : 0, now, now);
+      this.db.run(
+        'INSERT INTO destinations(id,name,rtmp_url,stream_key,is_default,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
+        id,
+        input.name,
+        input.rtmpUrl,
+        input.streamKey,
+        isDefault ? 1 : 0,
+        now,
+        now,
+      );
       return destinationView(this.destinationRow(id)!);
     });
   }
@@ -248,18 +261,15 @@ export class AccountStore {
       const row = this.destinationRow(id);
       if (!row) throw new AccountStoreError('destination_not_found');
       if (patch.isDefault === true) this.db.exec('UPDATE destinations SET is_default=0');
-      this.db
-        .prepare(
-          'UPDATE destinations SET name=?,rtmp_url=?,stream_key=?,is_default=?,updated_at=? WHERE id=?',
-        )
-        .run(
-          patch.name ?? row.name,
-          patch.rtmpUrl ?? row.rtmp_url,
-          patch.streamKey ?? row.stream_key,
-          patch.isDefault === undefined ? row.is_default : patch.isDefault ? 1 : 0,
-          this.deps.now(),
-          id,
-        );
+      this.db.run(
+        'UPDATE destinations SET name=?,rtmp_url=?,stream_key=?,is_default=?,updated_at=? WHERE id=?',
+        patch.name ?? row.name,
+        patch.rtmpUrl ?? row.rtmp_url,
+        patch.streamKey ?? row.stream_key,
+        patch.isDefault === undefined ? row.is_default : patch.isDefault ? 1 : 0,
+        this.deps.now(),
+        id,
+      );
       return destinationView(this.destinationRow(id)!);
     });
   }
@@ -268,7 +278,7 @@ export class AccountStore {
     this.deps.transaction(() => {
       if (!this.destinationRow(id)) throw new AccountStoreError('destination_not_found');
       if (this.deps.destinationInUse(id)) throw new AccountStoreError('destination_in_use');
-      this.db.prepare('DELETE FROM destinations WHERE id=?').run(id);
+      this.db.run('DELETE FROM destinations WHERE id=?', id);
     });
   }
 

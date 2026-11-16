@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "node"]
+  },
+  "include": ["src/worker/**/*.ts", "test-worker/**/*.ts", "vitest.worker.config.ts"]
+}

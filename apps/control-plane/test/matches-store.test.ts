@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { MatchCommand } from '@scorebug/protocol';
 import { MatchStore } from '../src/matches-store.js';
+import { openNodeSqlite } from '../src/sql-node.js';
 
 const teams = {
   home: { name: 'Home', shortName: 'H', color: '#112233' },
@@ -25,7 +26,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 function store(path = ':memory:') {
-  const value = new MatchStore(path, 'qa-credential-key-not-production', () => now);
+  const value = new MatchStore(openNodeSqlite(path), 'qa-credential-key-not-production', () => now);
   stores.push(value);
   return value;
 }
@@ -148,7 +149,11 @@ it('rolls back score and receipt together if the transaction cannot persist the 
 });
 it('preserves a receipt after expiry and a later scorer takeover', () => {
   let clock = now;
-  const db = new MatchStore(':memory:', 'qa-credential-key-not-production', () => clock);
+  const db = new MatchStore(
+    openNodeSqlite(':memory:'),
+    'qa-credential-key-not-production',
+    () => clock,
+  );
   stores.push(db);
   created(db);
   const first = db.execute(command());

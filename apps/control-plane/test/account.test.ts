@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { MatchStore } from '../src/matches-store.js';
+import { openNodeSqlite } from '../src/sql-node.js';
 import { RedeemGuard } from '../src/rate-limit.js';
 import { ownerToken, testConfig } from './helpers.js';
 
@@ -34,7 +35,7 @@ function setup(
     path = join(dir, 'db.sqlite');
   }
   const config = testConfig({ PUBLIC_URL: 'https://scorebug.example.com', DATABASE_PATH: path });
-  const matches = new MatchStore(path, config.SERVER_SECRET, () => clock.now);
+  const matches = new MatchStore(openNodeSqlite(path), config.SERVER_SECRET, () => clock.now);
   const value = createApp(config, {
     matches,
     ...(options.setupGuard ? { setupGuard: options.setupGuard } : {}),

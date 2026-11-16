@@ -1,18 +1,12 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { joinLink, setupLink, formatInviteCode, type MatchCredential } from '@scorebug/protocol';
+import { setupLink, formatInviteCode, type MatchCredential } from '@scorebug/protocol';
 import { AccountStoreError } from '../account-store.js';
-import {
-  bearerToken,
-  clientKey,
-  ownerAuth,
-  resolveOwner,
-  type Owner,
-  type OwnerEnv,
-} from '../auth.js';
+import { bearerToken, clientKey, ownerAuth, type OwnerEnv } from '../auth.js';
 import type { Config } from '../config.js';
 import { MatchStoreError, type MatchStore } from '../matches-store.js';
 import type { RedeemGuard } from '../rate-limit.js';
+import type { MatchAccess } from './matches.js';
 
 const now = () => new Date().toISOString();
 const deviceId = z
@@ -244,16 +238,15 @@ export function destinationRoutes(config: Config, store: MatchStore) {
 
 type InviteEnv = { Variables: { issuer: string } };
 
-/** Mounted at /v1/matches/:id/invites. Owner devices or the match's capture device. */
-export function inviteRoutes(config: Config, store: MatchStore) {
+/** Mounted at /v1/matches/:id/invites. Owner-level callers (see MatchAccess) or the match's
+ * capture device. */
+export function inviteRoutes(store: MatchStore, access: MatchAccess) {
   const app = new Hono<InviteEnv>();
   app.use('*', async (c, next) => {
     const token = bearerToken(c);
     const gameId = c.req.param('id') ?? '';
-    const owner: Owner | undefined = resolveOwner(token, store.account);
-    let issuer: string | undefined;
-    if (owner) issuer = `device:${owner.deviceId}`;
-    else {
+    let issuer = access.issuer(c);
+    if (!issuer) {
       const credential: Omit<MatchCredential, 'token'> | undefined = store.authenticate(
         gameId,
         token,
@@ -272,17 +265,29 @@ export function inviteRoutes(config: Config, store: MatchStore) {
       true,
     );
     if (!input) return invalid(c);
-    if (!config.PUBLIC_URL) return publicUrlMissing(c);
+    if (access.joinLink('') === null) return publicUrlMissing(c);
     const { invite, code } = store.issueInvite(
       c.req.param('id')!,
       c.get('issuer'),
       input.expiresInMinutes === undefined ? undefined : input.expiresInMinutes * 60_000,
     );
+    try {
+      await access.onInvite?.issued({
+        inviteId: invite.id,
+        code,
+        gameId: invite.gameId,
+        expiresAt: invite.expiresAt,
+      });
+    } catch (error) {
+      // A code nobody can route to must not linger or count toward the invite limit.
+      store.revokeInvite(invite.gameId, invite.id);
+      throw error;
+    }
     return c.json(
       {
         invite,
         code: formatInviteCode(code),
-        link: joinLink(config.PUBLIC_URL, code),
+        link: access.joinLink(code),
         expiresAt: invite.expiresAt,
       },
       201,
@@ -291,12 +296,11 @@ export function inviteRoutes(config: Config, store: MatchStore) {
   app.get('/', (c) =>
     c.json({ invites: store.listInvites(c.req.param('id')!), serverTime: now() }),
   );
-  app.delete('/:inviteId', (c) =>
-    c.json({
-      invite: store.revokeInvite(c.req.param('id')!, c.req.param('inviteId')),
-      serverTime: now(),
-    }),
-  );
+  app.delete('/:inviteId', async (c) => {
+    const invite = store.revokeInvite(c.req.param('id')!, c.req.param('inviteId'));
+    await access.onInvite?.revoked({ inviteId: invite.id, gameId: invite.gameId });
+    return c.json({ invite, serverTime: now() });
+  });
   app.onError(storeError);
   return app;
 }

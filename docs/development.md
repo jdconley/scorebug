@@ -46,6 +46,23 @@ starts a broadcast, the API picks the one connected worker and the `OUTPUT_ID` i
 registered (or `WORKER_ID`/`OUTPUT_ID` if the API has them set). See
 [the worker README](../apps/home-daemon/README.md) for settings and deployment.
 
+## Run the hosted Worker locally
+
+The hosted API (`apps/control-plane/src/worker`) runs on Cloudflare Workers with
+D1 and a Durable Object per team. `wrangler dev` runs all of it locally:
+
+```sh
+cp apps/control-plane/.dev.vars.example apps/control-plane/.dev.vars   # fill in the secrets
+pnpm --filter @scorebug/control-plane exec wrangler d1 migrations apply scorebug --local
+pnpm --filter @scorebug/control-plane dev:worker
+```
+
+Google sign-in needs the real `GOOGLE_CLIENT_SECRET`; the OAuth client allows
+`http://localhost:8787/v1/auth/google/callback`. `/admin` signs in the emails in
+`ADMIN_EMAILS`. Production secrets are set once with `wrangler secret put`:
+`GOOGLE_CLIENT_SECRET`, `SERVER_SECRET` and `ADMIN_EMAILS`. Every push to `main`
+that touches the API applies D1 migrations and deploys (`.github/workflows/deploy.yml`).
+
 ## iPhone and Watch apps
 
 ```sh
@@ -59,16 +76,17 @@ connects to `http://localhost:18787` by default. See [ios/README.md](../ios/READ
 
 ## Tests
 
-| Command                      | What it checks                                                    | Needs             |
-| ---------------------------- | ----------------------------------------------------------------- | ----------------- |
-| `pnpm test`                  | Unit tests for every package, plus `scripts/test` node tests      | FFmpeg            |
-| `pnpm test:scoring`          | Real API process: scoring and media state survive forced restarts | —                 |
-| `pnpm test:relay`            | Real relay: SRT media, credentials and revocation                 | Docker, FFmpeg    |
-| `pnpm test:local`            | The dev Compose stack starts with the expected relay config       | Docker            |
-| `pnpm test:container`        | The control-plane image starts and serves HTTP                    | Docker            |
-| `pnpm test:worker-container` | The worker image encodes and overlays real media                  | Docker, image tag |
-| `pnpm -r typecheck`          | TypeScript                                                        | —                 |
-| `pnpm format:check`          | Prettier                                                          | —                 |
+| Command                                             | What it checks                                                    | Needs             |
+| --------------------------------------------------- | ----------------------------------------------------------------- | ----------------- |
+| `pnpm test`                                         | Unit tests for every package, plus `scripts/test` node tests      | FFmpeg            |
+| `pnpm --filter @scorebug/control-plane test:worker` | The hosted Worker in workerd: sign-in, teams, team objects, admin | —                 |
+| `pnpm test:scoring`                                 | Real API process: scoring and media state survive forced restarts | —                 |
+| `pnpm test:relay`                                   | Real relay: SRT media, credentials and revocation                 | Docker, FFmpeg    |
+| `pnpm test:local`                                   | The dev Compose stack starts with the expected relay config       | Docker            |
+| `pnpm test:container`                               | The control-plane image starts and serves HTTP                    | Docker            |
+| `pnpm test:worker-container`                        | The worker image encodes and overlays real media                  | Docker, image tag |
+| `pnpm -r typecheck`                                 | TypeScript                                                        | —                 |
+| `pnpm format:check`                                 | Prettier                                                          | —                 |
 
 `pnpm test:relay` expects the relay image `scorebug/ingest:drain-v1` (built by the
 `docker compose ... build ingest` step above). `node scripts/test-vps-stack.mjs`

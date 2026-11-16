@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { MatchStore } from '../src/matches-store.js';
+import { openNodeSqlite } from '../src/sql-node.js';
 
 const now = Date.parse('2026-09-14T03:00:00Z');
 const issuedAt = new Date(now).toISOString();
@@ -33,7 +34,7 @@ afterEach(() => {
   directories.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
 });
 function open(path = ':memory:', clock = () => now) {
-  const value = new MatchStore(path, 'qa-media-key-not-production', clock);
+  const value = new MatchStore(openNodeSqlite(path), 'qa-media-key-not-production', clock);
   stores.push(value);
   return value;
 }

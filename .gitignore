@@ -50,3 +50,8 @@ artifacts/
 data/
 .nyc_output/
 scorebug-samples/
+
+# Wrangler local state and local Worker secrets
+.wrangler/
+.dev.vars*
+!.dev.vars.example
