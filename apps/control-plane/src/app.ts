@@ -5,7 +5,7 @@ import type { Config } from './config.js';
 import { createLogger, type Logger } from './logger.js';
 import { MatchStore } from './matches-store.js';
 import { openNodeSqlite } from './sql-node.js';
-import { matchesRoutes } from './routes/matches.js';
+import { matchesRoutes, ownerAccess } from './routes/matches.js';
 import { workerRoutes } from './routes/media.js';
 import { IngestRelay } from './ingest.js';
 import { RelayLifecycle, type RelayAdapter } from './relay-lifecycle.js';
@@ -104,7 +104,10 @@ export function createApp(
 
   app.get('/healthz', (c) => c.json({ ok: true }));
 
-  app.route('/v1/matches', matchesRoutes(config, matches, relayLifecycle, observations));
+  app.route(
+    '/v1/matches',
+    matchesRoutes(config, matches, ownerAccess(config, matches), relayLifecycle, observations),
+  );
   app.route('/v1/worker', workerRoutes(config, matches, relayLifecycle, observations));
   app.route('/v1/setup', setupRoutes(config, matches, setupGuard));
   app.route('/v1/devices', deviceRoutes(config, matches));

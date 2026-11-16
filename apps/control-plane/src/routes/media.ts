@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
@@ -49,11 +49,11 @@ type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 export function mediaRoutes(
   config: Config,
   matches: MatchStore,
+  installation: MiddlewareHandler = ownerAuth(matches.account),
   relayLifecycle?: RelayLifecycle,
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono<Env>();
-  const installation = ownerAuth(matches.account);
   const scoped = createMiddleware<Env>(async (c, next) => {
     const token = c.req.header('authorization')?.match(/^Bearer (.+)$/i)?.[1] ?? '';
     const credential = matches.authenticate(c.req.param('id') ?? '', token);
