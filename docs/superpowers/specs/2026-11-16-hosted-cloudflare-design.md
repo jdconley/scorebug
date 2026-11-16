@@ -6,31 +6,44 @@ Status: draft for JD's approval, 2026-11-16.
 
 Self-hosting is too much work to set up: you run an install script on a VPS,
 print a QR code or link, and pair the phone with it. JD wants Scorebug to be a
-hosted service instead. You sign in on the phone once, connect YouTube once,
-and from then on you open the app and go live. Nothing should run, or cost
-money, between matches. Later, other people can pay to stream so the service
-covers its own costs. For now it is JD-only.
+hosted service instead. You sign in on the phone, and from then on you open
+the app and go live. Nothing should run, or cost money, between matches.
+
+JD wants to invite other volleyball teams soon. Scorebug opens as a free
+private beta: JD adds each person by email before they can get in. Later,
+teams can pay to stream so the service covers its own costs.
 
 ## Goals
 
-- First run on a new phone: install from TestFlight, tap **Sign in with
-  Google**, grant YouTube access, done. No server address, QR code, link or
-  stream key, ever.
-- Every match after that: create the match, film, tap **Go Live**. The backend
-  is ready without the user doing anything.
+- First run on a new phone: install, tap **Sign in with Google**, done. No
+  server address, QR code, link or stream key, ever.
+- Teams: a team has members who can see its active matches and score them
+  from their own phones. A scorer can also join one match with a code and no
+  account.
+- Each team streams to the YouTube channel its owner picks: the owner's own
+  channel or the team's channel. JD streams all his kids' teams to his own
+  channel. Other teams have channels of their own.
+- Every match: create it, film, tap **Go Live**. The backend is ready without
+  the user doing anything.
 - Pay only while a match is streaming, apart from small fixed platform plans.
-- Keep what works today: local recording on the phone that never depends on
-  the network; scoring on the filming phone, the Watch or a second phone; the
-  score burned into the video; YouTube as the destination.
+- A verified Google app, so other teams see no "unverified app" warning and
+  there's no 100-user cap.
+- Keep what works today:
+    - local recording on the phone, which never depends on the network;
+    - scoring on the filming phone, the Watch or a second phone;
+    - the score burned into the video;
+    - YouTube as the destination.
 
 ## Non-goals (for now)
 
-- Payments, plans and billing. The design must not block them later.
+- Payments, plans and billing. The beta is free. The design must not block
+  payments later: teams are the natural thing to bill.
+- Public sign-up. Every person is added by JD (or, for members, invited by
+  a team owner JD has added).
 - Self-hosting. The install script, the VPS deployment and the home worker go
   away. The repo stays open source.
 - Multiple cameras, sub-second latency, destinations other than YouTube, an
   in-app viewer.
-- Opening sign-up to the public. Only allowlisted Google accounts get in.
 
 ## Anti-goals
 
@@ -40,6 +53,7 @@ covers its own costs. For now it is JD-only.
   container or Stream input).
 - A YouTube connection that silently expires and fails at the gym.
 - Losing the local recording, or making it depend on the cloud.
+- One team seeing or changing another team's matches.
 
 ## Constraints
 
@@ -50,10 +64,12 @@ covers its own costs. For now it is JD-only.
   (RTMPS) on any port.
 - Containers top out at 4 vCPU and 12 GiB, with no GPU, so encoding is x264 on
   CPU.
-- Google OAuth apps left in "Testing" status issue refresh tokens that expire
-  after 7 days.
+- Google verification of the YouTube scope (a "sensitive" scope) needs a
+  public home page, a privacy policy and terms on a verified domain, a demo
+  video and a written justification. Review takes days to weeks.
 - YouTube Data API default quota is 10,000 units a day. Each broadcast call
-  costs about 50.
+  costs about 50, so roughly 50 matches a day before we need YouTube's
+  compliance audit for more.
 - A YouTube channel that has never streamed must enable live streaming first,
   and YouTube makes it wait 24 hours.
 
@@ -106,66 +122,106 @@ timing, and that overlay is the part of the product that's tested.
 iPhone ──SRT──▶ Cloudflare Stream live input (one per match)
                          │ RTMPS playback (pull)
                          ▼
-             Match container (FFmpeg + scorebug) ──RTMPS──▶ YouTube
+             Match container (FFmpeg + scorebug) ──RTMPS──▶ team's YouTube channel
                          ▲ score + control (HTTP via outbound handler)
-iPhone / 2nd phone ──HTTPS──▶ Worker (Hono) ──▶ Account Durable Object
-Watch ◀──WatchConnectivity──▶ iPhone                │ starts/stops the container
-                                                    ▼ creates/deletes Stream inputs,
-                                                      YouTube broadcasts
+Phones ──HTTPS──▶ Worker (Hono) ──▶ Team Durable Object
+Watch ◀──WatchConnectivity──▶ iPhone          │ starts/stops the container,
+                                              ▼ Stream inputs, YouTube broadcasts
+                     D1: people, teams, members, YouTube connections, invites
 ```
 
-### Accounts and sign-in
+### People, access and teams
 
-- **Signing in:** the app signs in with Google through
-  `ASWebAuthenticationSession` (OAuth 2.0 authorization code with PKCE), with
-  no Google SDK. The same consent grants `openid email profile` and YouTube
-  (`youtube` scope), so signing in also connects YouTube. It happens once per
-  account.
-- **Server side:** the Worker exchanges the code, keeps the Google refresh
-  token encrypted, and gives the app its own long-lived, revocable Scorebug
-  session token, stored in the Keychain. The Google token never reaches the
-  phone.
-- **Who gets in:** an `ALLOWED_EMAILS` Worker secret. Anyone else is turned
-  away with a short "Scorebug isn't open yet" message.
-- **Google app status (my call):** publish the Google app as "In production"
-  but unverified, so refresh tokens don't expire every 7 days. Sign-in then
-  shows Google's "unverified app" warning, and there's a 100-user cap until we
-  go through verification. That review is needed before the public launch.
-- **A later phone:** signing in on another phone with the same Google account
-  goes straight in, with no YouTube step if the stored token still works.
-- **Second-phone scorers:** they keep the existing join code or link, with no
-  account needed. Join links no longer carry a server address because it's
-  always `scorebug.live`.
+- **Signing in:** Sign in with Google through `ASWebAuthenticationSession`
+  (OAuth 2.0 authorization code with PKCE), with no Google SDK. Scopes are
+  `openid email profile` only, so a scorer never sees a YouTube prompt. The
+  Worker gives the app a long-lived, revocable Scorebug session token, stored
+  in the Keychain.
+- **Private beta access (JD):** JD adds a person by email before they can get
+  in. Anyone else who signs in sees "Scorebug is in private beta" with a way
+  to ask JD for access.
+    - **How JD adds people (my call):** an admin page at
+      `scorebug.live/admin`, visible only to JD's account, with an email list
+      and a "can create teams" flag. A Wrangler/D1 command does the same thing
+      as a fallback.
+    - **Team invites let members in (my call):** a team owner can invite people
+      to their team by email or link. Accepting a team invite grants access to
+      that team without JD adding the person. It doesn't let them create teams.
+      So JD adds team owners, and owners bring their own parents and scorers.
+- **Teams:**
+    - Anyone JD has flagged can create a team: a name, and optionally colors and
+      a short name for the scorebug.
+    - One person can be on several teams, like a parent with two kids playing.
+    - **Roles (my call):**
+        - **Owner:** manages members, picks the team's YouTube channel, and can
+          do everything a member can.
+        - **Member:** sees the team's matches, creates matches, films and goes
+          live to the team's channel, and scores.
+    - A team has at most one active match at a time, the same rule as today's
+      one active match per installation.
+- **Scoring a team's match:** members see the team's active match in the app
+  and tap to score it, with the usual take-over rules.
+- **Scoring without an account:** match join codes and links still work for
+  one match, as today, with no account needed. Links no longer carry a server
+  address because it's always `scorebug.live`.
 
-### YouTube
+### YouTube channels
 
-- **Whose channel (JD):** each account streams to the personal channel of
-  the Google account that signed in. One person, one channel. Brand Account
-  channels and several people streaming to one channel are out of scope. If
-  consent comes back for a Brand Account, or with no email, sign-in fails
-  with "Choose your personal channel" and nothing is stored.
-- **At connect:** the Worker reads the user's channel and checks that live
-  streaming is enabled. If it isn't, the app says so plainly, including the
-  24-hour wait, at sign-in rather than at the gym.
-- **The stream:** at connect the Worker also creates one reusable YouTube
-  `liveStream` per account and stores its ingest URL and key. The key never
-  leaves the server.
+- **Connecting a channel:** a separate one-time step, only for people who set
+  up a team's streaming. The app asks Google for the `youtube` scope with
+  incremental authorization. If the Google account has several channels
+  (personal plus Brand Accounts), Google's own consent screen asks which one.
+  Each grant is one channel connection.
+- **Connections belong to the person who connected them.** JD connects his
+  personal channel once and points all his kids' teams at it. A club owner
+  connects the club's channel and points their team at it. A person can hold
+  several connections.
+- **Per team setting:** the team owner picks one of their connections as the
+  team's channel, and can change it. The Worker shows the channel name and
+  picture so it's clear where streams go.
+- **At connect:** the Worker checks that live streaming is enabled on the
+  channel. If it isn't, the app says so plainly, including the 24-hour wait,
+  at setup rather than at the gym. It also creates one reusable YouTube
+  `liveStream` per connection and stores its ingest URL and key. The key
+  never leaves the server.
+- **Going live:** any member can film a team match, and it goes to the team's
+  channel using the owner's connection. The filmer needs no YouTube setup.
 - **At the first Go Live of a match:** the Worker creates a `liveBroadcast`
-  bound to the account's stream. The title is "Team A vs Team B · Nov 16".
-  Auto-start is on and auto-stop is off. The app shows the watch link to share.
+  on the team's channel, bound to that connection's stream. The title is
+  "Team A vs Team B · Nov 16". Auto-start is on and auto-stop is off. The app
+  shows the watch link to share.
 - **One link per match (my call):** stopping and going live again, an app
   crash, or a long network drop all reuse the same broadcast, so the link
-  never changes mid-match. The account object ends the broadcast explicitly
-  when the match ends, or when the 4-hour cap or the daily sweep fires.
+  never changes mid-match. The team object ends the broadcast explicitly when
+  the match ends, or when the 4-hour cap or the daily sweep fires.
 - **Defaults (my call):**
     - **Privacy:** unlisted, because these are kids' matches, and the app shares
-      the link.
+      the link. A per-team privacy setting can come later.
     - **Made for kids:** set to "no". The video shows kids but isn't aimed at
       them.
-    - **Per-account setting:** privacy can come later.
-- **If the YouTube grant was revoked:** the API returns `invalid_grant`. The
-  app shows a **Reconnect YouTube** button that re-runs the same sign-in. It
-  never fails silently at Go Live.
+- **If a connection stops working** (revoked grant, channel removed): the
+  team shows "YouTube needs reconnecting" to its owner, and members see
+  "Ask your team owner to reconnect YouTube" before Go Live. It never fails
+  silently at the gym.
+- **No team channel set:** Go Live is disabled with a clear reason. Filming
+  and local recording still work.
+
+### Google app verification
+
+Done in parallel with the build, starting as soon as sign-in and channel
+connection work end to end, because Google's review is the long pole:
+
+- `scorebug.live` home page: what Scorebug is, "Private beta", a contact
+  link, and links to the privacy policy and terms.
+- Privacy policy and terms of service pages, covering YouTube API use and
+  linking Google's privacy policy, as YouTube's API terms require.
+- Domain verified in Google Search Console, under the OAuth app's project.
+- A demo video of signing in, connecting a channel and going live, and a
+  justification for the `youtube` scope.
+- The Google Cloud project and OAuth client are set up under Conley Chaos
+  LLC.
+- Until Google approves, JD's own testing uses the app in Testing mode with
+  test users, and its 7-day token expiry is accepted for that period.
 
 ### Control plane on Workers
 
@@ -174,40 +230,41 @@ Watch ◀──WatchConnectivity──▶ iPhone                │ starts/stops
   matches, scoring commands with IDs and revisions, take-over, media state,
   and worker status.
 - **Storage:** today it's `node:sqlite`. It becomes:
-    - **One Durable Object per account,** holding that account's matches,
-      scoring, devices and media state, using the Durable Object's synchronous
-      SQLite API. The existing stores port almost line for line. The
-      one-active-match rule becomes one active match per account.
-    - **D1** holds what needs a global lookup: accounts by Google `sub`, the
-      session-token index, and join codes. The Worker uses these to route a
-      request to the right account object.
+    - **One Durable Object per team,** holding that team's matches, scoring and
+      media state, using the Durable Object's synchronous SQLite API. The
+      existing stores port almost line for line.
+    - **D1** for everything that crosses teams: people (by Google `sub`),
+      session tokens, the beta allowlist, teams, memberships and roles, YouTube
+      connections (refresh tokens encrypted), team invites and match join
+      codes. The Worker checks membership in D1, then routes to the team
+      object.
 - **Removed:** setup links, owner-device enrollment, destinations configured
   by the install script, and the MediaMTX management calls.
 
 ### Match lifecycle and media
 
-1. **Open the film screen.** The account object creates a Stream live input
+1. **Open the film screen.** The team object creates a Stream live input
    for the match, with Stream recording off, and returns its SRT publish URL
    and passphrase. Starting this before Go Live hides the API round trips.
 2. **Go Live:**
     - the phone starts sending SRT to Stream, which is always ready to receive;
-    - the account object creates the YouTube broadcast;
+    - the team object creates the YouTube broadcast if the match has none yet;
     - it starts the match container with the YouTube ingest URL and key, the
       Stream input's RTMPS playback URL, and the match ID.
 3. **The container:**
     - **Input:** it pulls RTMPS from Stream, retrying until the feed exists.
     - **Score:** it fetches the score from `http://api.internal/...`, which an
-      outbound handler sends straight to the account object. No token sits in
-      the container.
+      outbound handler sends straight to the team object. No token sits in the
+      container.
     - **Output:** it runs today's pipeline and pushes RTMPS to YouTube directly.
-    - **Status:** it reports to the account object about once a second, the
-      same way the worker does today, so the app shows `starting`, `live`,
+    - **Status:** it reports to the team object about once a second, the same
+      way the worker does today, so the app shows `starting`, `live`,
       `reconnecting` and `error` with resolution and bitrate.
-4. **Stop streaming mid-match:** the account object drains and destroys the
+4. **Stop streaming mid-match:** the team object drains and destroys the
    container. The Stream input and the YouTube broadcast stay, so the next
    Go Live in the same match reuses both. YouTube shows the stream as
    offline in the meantime.
-5. **End of match:** the account object destroys the container, deletes the
+5. **End of match:** the team object destroys the container, deletes the
    Stream live input, and ends the YouTube broadcast.
 6. **Phone drops:** the container keeps reading and holds YouTube on the last
    frame or a short slate, depending on what the spike shows works. It
@@ -219,13 +276,17 @@ Watch ◀──WatchConnectivity──▶ iPhone                │ starts/stops
 - **While live:** the container's activity timeout is renewed, Streamline
   style.
 - **Hard cap:** 4 hours per match.
-- **Idle:** if no video has reached Stream for 10 minutes, the account object
+- **Idle:** if no video has reached Stream for 10 minutes, the team object
   destroys the container. The match, the Stream input and the YouTube
   broadcast stay. When video reaches Stream again (a Stream webhook, or the
   phone's own reconnect calling Go Live), the container starts again on its
   own, so a long gym network outage recovers without a tap.
 - **Daily sweep:** a scheduled Worker deletes any Stream input or container
   older than its match, and alerts.
+- **Beta cost guard (my call):** a cap on concurrent live matches across all
+  teams (start at 5), so a busy weekend can't run up JD's bill. Over the cap,
+  Go Live says "Scorebug is busy, try again shortly" and local recording
+  carries on.
 
 ### The match container image
 
@@ -244,8 +305,14 @@ Watch ◀──WatchConnectivity──▶ iPhone                │ starts/stops
 ### iPhone app
 
 - **First screen:** `ConnectView`, with QR scanning, server address entry and
-  code entry, is replaced by a **Sign in with Google** screen. After that the
-  app opens on Home.
+  code entry, is replaced by a **Sign in with Google** screen. If the person
+  isn't in the beta, it says so. After sign-in the app opens on Home.
+- **Home:** the person's teams, each with its active match (if any) to score
+  or film, and **New match** for that team. A person with one team sees that
+  team straight away. "Join with a code" stays for scoring without an
+  account.
+- **Team screen (owner):** members and invites, and the YouTube channel
+  setting with **Connect a channel**.
 - **Fixed address:** the API base URL is fixed (`https://scorebug.live`), with
   an override in the debug menu for local development.
 - **Go Live:** the phone gets the Stream SRT URL from the API, the same
@@ -255,6 +322,16 @@ Watch ◀──WatchConnectivity──▶ iPhone                │ starts/stops
       Stream's `streamid` and `passphrase`);
     - local recording, scoring and the Watch.
 - **Sign out:** a Settings row, which also revokes the session token.
+
+### Web pages on scorebug.live
+
+Served by the same Worker:
+
+- the home page ("Private beta"), the privacy policy and the terms, needed
+  for Google verification;
+- team invite links (`scorebug.live/invite/...`), which open the app if it's
+  installed and otherwise point to TestFlight while in beta;
+- JD's admin page for the beta list.
 
 ### What gets removed
 
@@ -287,8 +364,9 @@ Watch ◀──WatchConnectivity──▶ iPhone                │ starts/stops
 | Container egress to YouTube (~3 GB/hour)     | cents             |
 | **Typical 2-hour match**                     | **~$1**           |
 
-That's about $10 a month fixed, up from about $5 for the VPS, plus about $1
-per match. These numbers feed pricing later.
+That's about $10 a month fixed, plus about $1 per match for every team in
+the beta, all on JD's bill while the beta is free. These numbers feed
+pricing later.
 
 ## Phase 0: spike before building
 
@@ -323,14 +401,18 @@ option 1 or 3 before building.
 
 ## Build order after the spike
 
-1. **Worker control plane:** accounts, Google sign-in, the allowlist, and the
-   account Durable Object with ported matches and scoring, plus tests.
-2. **YouTube and Stream adapters,** plus the match lifecycle and teardown
-   guards.
-3. **Match container image** and the Durable Object container lifecycle.
-4. **iPhone onboarding:** sign in, the fixed server, Reconnect YouTube, and
-   deleting the QR and setup flows.
-5. **Remove self-hosting:** the infra, docs and CI changes. Deploy to
+1. **Worker control plane:** people, Google sign-in, the beta allowlist and
+   admin page, teams, memberships, invites, and the team Durable Object with
+   ported matches and scoring, plus tests.
+2. **YouTube channel connections,** Stream adapter, and the match lifecycle
+   with teardown guards and the beta cost guard.
+3. **Web pages and Google verification:** home, privacy, terms, domain
+   verification, demo video, submit for review. Review runs in parallel with
+   the steps below.
+4. **Match container image** and the Durable Object container lifecycle.
+5. **iPhone app:** sign in, teams on Home, the team screen, connecting a
+   channel, the fixed server, and deleting the QR and setup flows.
+6. **Remove self-hosting:** the infra, docs and CI changes. Deploy to
    `scorebug.live` and rewrite `docs/field-test.md` for the hosted service.
 
 **Cutover (my call):** nothing self-hosted is deployed or in use, so there's
@@ -353,24 +435,30 @@ there are other users, and Wrangler's version rollback is the undo.
 - How the container fetches the score: poll or WebSocket through the outbound
   handler.
 - The slate or last-frame behavior during a phone drop.
+- The look of the web pages and the admin page, following the app's style.
 - Wrangler and project layout. The `apps/` directory names can change, for
   example `apps/home-daemon` to `apps/match-worker`.
 
 ## Calls I made (JD: check these)
 
-- The Google app is published unverified, with an email allowlist in the
-  Worker, rather than staying in Testing mode with its 7-day token expiry.
+- Team invites let people into the beta for that team only. JD adds team
+  owners (people who can create teams) by email, on an admin page.
+- Two roles: owner and member. Any member can film and go live to the team's
+  channel.
+- YouTube connections belong to the person who connected them. A team owner
+  picks one of their own connections as the team's channel.
+- Google sign-in asks only for identity. YouTube is a separate, later
+  consent, so scorers never see it.
 - YouTube broadcasts default to unlisted and not made for kids, titled with
   the team names and date. There's one broadcast and one link per match, with
   auto-stop off and an explicit end.
+- A cap of 5 concurrent live matches across the beta, to bound JD's bill.
+- One Stream live input per match, deleted afterward.
 - An idle container is torn down after 10 minutes and restarts by itself when
   video comes back.
-- Spike pass bars: latency under 30 seconds, score lead within 1 second, cold
-  start under 30 seconds (or an early start up to 90).
-- No cutover flag. Auto-deploy to production on merge, with no staging yet.
-- One Stream live input per match, deleted afterward, rather than one
-  permanent input per account.
-- Second-phone scorers still join with a code and need no account.
 - MediaMTX stays only as the local and CI stand-in for Stream.
 - 1080p30 is the target and 720p30 the fallback. The spike decides the
   default.
+- Spike pass bars: latency under 30 seconds, score lead within 1 second, cold
+  start under 30 seconds (or an early start up to 90).
+- No cutover flag. Auto-deploy to production on merge, with no staging yet.
