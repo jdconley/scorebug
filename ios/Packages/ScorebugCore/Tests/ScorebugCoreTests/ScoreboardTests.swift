@@ -106,6 +106,17 @@ final class ScoreboardTests: XCTestCase {
         XCTAssertEqual(MatchSummary.setScores(makeSnapshot(completed: sets)), "25–21, 19–25")
     }
 
+    func testMatchOverHeadlineShowsTheSetAMatchEndedEarlyIn() {
+        let early = makeSnapshot(home: 3, away: 3, set: 1)
+        let headline = MatchSummary.headline(early)
+        XCTAssertEqual(headline.team1, 3)
+        XCTAssertEqual(headline.team2, 3)
+        XCTAssertEqual(headline.caption, "Set 1")
+        let later = MatchSummary.headline(makeSnapshot(home: 10, away: 12, set: 2, homeSets: 1))
+        XCTAssertEqual(later.team1, 10)
+        XCTAssertEqual(later.caption, "Set 2 · sets 1–0")
+    }
+
     func testWatchStateFollowsCourtSides() throws {
         var layout = CourtLayout()
         layout.swap()

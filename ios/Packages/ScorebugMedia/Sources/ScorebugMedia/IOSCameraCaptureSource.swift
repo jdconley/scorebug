@@ -26,6 +26,10 @@ public final class IOSCameraCaptureSource: CaptureSource, Sendable {
     }
     public func start() async throws { try await core.start() }
     public func stop() async { await core.stop() }
+    /// Rotates recorded and streamed frames to match how the phone is held: 0 (landscape right,
+    /// the sensor's own orientation) or 180 (landscape left). Frames stay landscape either way, so
+    /// it can change mid-recording without changing the encoded dimensions.
+    public func setVideoRotationAngle(_ angle: CGFloat) { core.setVideoRotationAngle(angle) }
 }
 
 /// Session configuration belongs to controlQueue. Delegate delivery belongs to
@@ -50,7 +54,18 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
     private var origin = CMTime.invalid
     private var diagnostics = CaptureSourceDiagnostics()
     private var pressureObservation: NSKeyValueObservation?
+    private var rotationAngle: CGFloat = 0
     var diagnosticSnapshot: CaptureSourceDiagnostics { gate.withLock { diagnostics } }
+
+    func setVideoRotationAngle(_ angle: CGFloat) {
+        guard angle == 0 || angle == 180 else { return }
+        controlQueue.async {
+            self.rotationAngle = angle
+            guard let connection = self.video.connection(with: .video), connection.isVideoRotationAngleSupported(angle),
+                  connection.videoRotationAngle != angle else { return }
+            connection.videoRotationAngle = angle
+        }
+    }
 
     func prepare(callbacks: CaptureSourceCallbacks) async throws -> CMTime {
         try await withCheckedThrowingContinuation { continuation in
@@ -151,7 +166,8 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
         guard let connection = video.connection(with: .video), connection.isVideoRotationAngleSupported(0) else {
             throw CameraCaptureError.unsupportedOutput
         }
-        connection.videoRotationAngle = 0 // Sensor landscape at the selected capture dimensions.
+        // Sensor landscape (0) or upside down (180) at the selected capture dimensions.
+        connection.videoRotationAngle = connection.isVideoRotationAngleSupported(rotationAngle) ? rotationAngle : 0
         if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .off }
     }
 

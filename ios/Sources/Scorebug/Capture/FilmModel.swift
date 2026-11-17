@@ -53,6 +53,17 @@ struct CurrentCapture: Sendable {
     @Published private(set) var isScanning = false
     #if os(iOS)
     @Published private(set) var captureSession: AVCaptureSession?
+    #if os(iOS)
+    /// 0 when the phone is held landscape right, 180 landscape left (see CameraPreviewView).
+    private(set) var captureRotationAngle: CGFloat = 0
+    private weak var liveCameraSource: IOSCameraCaptureSource?
+    /// Records and streams the way the screen shows it, including a turn mid-recording.
+    func setCaptureRotation(_ angle: CGFloat) {
+        guard angle == 0 || angle == 180, angle != captureRotationAngle else { return }
+        captureRotationAngle = angle
+        liveCameraSource?.setVideoRotationAngle(angle)
+    }
+    #endif
     #endif
 
     var canStart: Bool { (state == .idle || state == .failed) && exportingID == nil && !isScanning }
@@ -156,6 +167,8 @@ struct CurrentCapture: Sendable {
             }
             #if os(iOS)
             captureSession = (source as? IOSCameraCaptureSource)?.previewSession
+            (source as? IOSCameraCaptureSource)?.setVideoRotationAngle(captureRotationAngle)
+            liveCameraSource = source as? IOSCameraCaptureSource
             #endif
             let tap = PublishingTap()
             let session = try RecordingSession(sink: created.sink, maxBytes: 24 * 1024 * 1024 * profile.captureQueueScale)

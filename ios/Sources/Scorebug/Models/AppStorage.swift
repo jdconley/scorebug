@@ -104,27 +104,44 @@ final class MemorySecureStore: SecureStore {
 
 /// The last finished match, for the Home card.
 struct MatchRecap: Codable, Equatable {
-    struct Team: Codable, Equatable { var name: String; var shortName: String; var color: String; var sets: Int }
+    struct Team: Codable, Equatable {
+        var name: String; var shortName: String; var color: String; var sets: Int
+        /// The big number: sets won, or the set's points when the match ended early. Nil in recaps
+        /// saved before it existed.
+        var score: Int?
+        var shown: Int { score ?? sets }
+    }
     var team1: Team
     var team2: Team
     var setScores: String
     var final: Bool
     var date: Date
+    /// "Set 2" when the match ended early, so the points have a set to belong to.
+    var endedInSet: Int?
 
     init(snapshot: MatchSnapshot, date: Date) {
-        func team(_ slot: TeamSlot) -> Team {
+        let headline = MatchSummary.headline(snapshot)
+        func team(_ slot: TeamSlot, score: Int) -> Team {
             let info = snapshot.teams[slot]
-            return Team(name: info.name, shortName: info.shortName, color: info.color, sets: snapshot.score.sets(slot))
+            return Team(name: info.name, shortName: info.shortName, color: info.color,
+                        sets: snapshot.score.sets(slot), score: score)
         }
-        team1 = team(.team1); team2 = team(.team2)
+        team1 = team(.team1, score: headline.team1); team2 = team(.team2, score: headline.team2)
         setScores = MatchSummary.setScores(snapshot)
         // "Final" only when a team actually won; the End button can stop a match early.
         final = SetPointFlow.isDecided(snapshot)
+        endedInSet = final ? nil : snapshot.score.set
         self.date = date
     }
 
-    /// "CASCADE 2–1 SUMMIT"
-    var title: String { "\(team1.shortName) \(team1.sets)–\(team2.sets) \(team2.shortName)" }
+    /// "CASCADE 2–1 SUMMIT", or the set's points for a match ended early.
+    var title: String { "\(team1.shortName) \(team1.shown)–\(team2.shown) \(team2.shortName)" }
+
+    /// "Final · 25–20, 25–18" or "Ended early in set 2 · 25–20".
+    var status: String {
+        let state = final ? "Final" : endedInSet.map { "Ended early in set \($0)" } ?? "Ended early"
+        return setScores.isEmpty ? state : "\(state) · \(setScores)"
+    }
 }
 
 /// Non-secret preferences: the last New match sheet, the last match card and (Debug) the server.
