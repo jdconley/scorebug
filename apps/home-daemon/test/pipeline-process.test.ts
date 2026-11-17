@@ -18,7 +18,6 @@ it('executes the configured media binary instead of the one on PATH', async () =
         pullUrl: 'unused',
         publishUrl: 'unused',
         scoreFile: join(dir, 'score.txt'),
-        nvenc: false,
         ffmpegPath: binary,
       },
       createLogger('error'),
@@ -35,7 +34,6 @@ it('needs no system font: the scorebug is rasterized by the worker', () => {
     pullUrl: 'unused',
     publishUrl: 'unused',
     scoreFile: '/tmp/score.txt',
-    nvenc: false,
   });
   expect(args.join(' ')).not.toMatch(/fontfile|drawtext|\/usr\/share\/fonts/);
 });
@@ -47,7 +45,6 @@ it('settles a missing binary without an unhandled error or a pending exit', asyn
       pullUrl: 'unused',
       publishUrl: 'unused',
       scoreFile: '/tmp/score.txt',
-      nvenc: false,
       ffmpegPath: '/definitely-not-an-installed-scorebug-encoder',
     },
     createLogger('error'),
@@ -73,10 +70,9 @@ async function childFixture(body: string) {
     dir,
     spec: {
       gameId: 'fixture',
-      pullUrl: 'srt://user:PULL_PASSWORD@host:8890?passphrase=QUERY_SECRET',
+      pullUrl: 'rtmps://user:PULL_PASSWORD@host:443/live/QUERY_SECRET',
       publishUrl: 'rtmps://host/live/STREAM_KEY',
       scoreFile: join(dir, 'score.txt'),
-      nvenc: false,
       ffmpegPath: binary,
     },
     log,

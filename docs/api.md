@@ -1,9 +1,7 @@
 # Scorebug API
 
 This is the HTTP API of the hosted Worker at `https://scorebug.live`
-(`apps/control-plane/src/worker`). The self-hosted Node server shares the match,
-scoring, media and worker routes and adds its own account routes; see
-[Self-hosted server](#self-hosted-server) at the end.
+(`apps/control-plane/src/worker`).
 
 Requests and responses are JSON. JSON responses carry `Cache-Control: no-store`.
 Authenticated requests send `Authorization: Bearer <token>`. Most responses include
@@ -217,7 +215,9 @@ Each team's matches live in its team object. There are two ways in:
 - `bestOf` is 3 or 5. `pointCap` is `null` or at least both set targets.
 - `scorebugStyle` is `bar` (default), `lowerThird` or `setCard`.
 - `recordOnly: true` makes a match with no broadcast; a later start command is
-  refused. `destinationId` applies only to the self-hosted server.
+  refused. `destinationId` is accepted for compatibility: absent or `null`
+  streams to the team's YouTube channel; any other value gets
+  `409 destination_not_found`.
 - The response's `credential` is a `score` credential for `deviceId`.
 
 Errors: `409 match_id_taken` (another team holds the ID), `409 match_in_flight`
@@ -273,7 +273,7 @@ up after a lost response. Only the current scorer can score; another device send
   allowed and recompute it.
 - `output: { destinationId, recordOnly }`.
 
-On the hosted Worker, `GET /v1/matches/:id`, `GET /v1/matches/:id/media/status`
+`GET /v1/matches/:id`, `GET /v1/matches/:id/media/status`
 and media command responses add `youtube`: the match's broadcast,
 `{ broadcastId, watchUrl, channelTitle, channelThumbnail, privacy: "unlisted" }`,
 or `null` before the first Go Live. The link does not change for the life of the
@@ -343,7 +343,7 @@ or `"operation": { "type": "stop" }`. The server fills in the worker and output.
 `expectedGeneration` must be the current `broadcast.generation`. A retry of the
 same `commandId` replays its first outcome.
 
-Before a hosted start is accepted, the team object prepares YouTube, Stream and a
+Before a start is accepted, the team object prepares YouTube, Stream and a
 live slot. If it cannot, it answers `409` with
 `{ commandId, accepted: false, error, snapshot, youtube }` and records nothing, so
 a retry can succeed. `error` is one of:
@@ -361,7 +361,7 @@ a retry can succeed. `error` is one of:
 
 **Publish URL.** `POST .../media/publish`
 `{ recordingId, generation, publishingAttemptId? }` returns the SRT URL to publish
-to. Hosted, it is the match's Stream live input, with its stream ID and passphrase.
+to. It is the match's Stream live input, with its stream ID and passphrase.
 It answers `403 capture_not_selected` if this device and recording are not the
 selected capture, and `409 broadcast_changed` if the broadcast stopped or moved to
 another generation.
@@ -404,10 +404,10 @@ so it reads `starting` after a restart until the next report.
 
 ## Worker endpoints
 
-The broadcast worker uses these. On the hosted Worker they are not public: the
+The broadcast worker uses these. They are not public: the
 match container reaches them only at `http://api.internal/v1/worker/...`, an
 outbound intercept that forwards to its own team object. The container's bearer is
-a fixed placeholder; the intercept is the authentication. Hosted, the worker ID is
+a fixed placeholder; the intercept is the authentication. The worker ID is
 `match` and the output ID is `youtube`.
 
 | Method | Path                              | Body or query                                    | Response                         |
@@ -424,76 +424,5 @@ a fixed placeholder; the intercept is the authentication. Hosted, the worker ID 
   `{ gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision, output? }`,
   with `output` as `{ width, height, fps, bitrateKbps }`.
 - `assignment` is the match, its media state and `output: { destinationId, publishUrl }`.
-  Hosted, `publishUrl` is the YouTube RTMPS ingest with its stream key.
-- `connection` is `{ gameId, generation, readUrl, source }` or `null`. Hosted,
-  `readUrl` is the Stream input's RTMPS playback URL.
-
-## Self-hosted server
-
-The Node server (`apps/control-plane/src/app.ts`) serves the match, scoring, media,
-match join code and worker routes above, with these differences:
-
-- There are no `/v1/auth`, `/v1/me`, `/v1/teams`, `/v1/team-invites`, `/v1/youtube`
-  or `/admin` routes, and no public pages.
-- The member routes are replaced by owner-device routes on `/v1/matches` itself:
-  `POST /v1/matches`, `GET /v1/matches/active`, `POST /v1/matches/:id/join`, and
-  `POST`/`GET /v1/matches/:id/media/commands...`, all with an owner device token.
-- `/v1/worker/*` is public and needs the `HOME_TOKEN` bearer.
-- Match join links are `scorebug://join?server=<PUBLIC_URL>&code=<code>`. Without
-  `PUBLIC_URL`, minting a code gets `503 public_url_not_configured`.
-- There is no Worker in front of match join code redemption, so an unknown code
-  gets `401 invite_invalid` instead of `404`.
-- Setup and join code redemption are rate-limited in memory: 10 attempts per
-  client address per minute, and 100 failed attempts per 10 minutes across all
-  clients.
-
-The iPhone app in this repo uses the hosted routes and does not call the
-self-hosted account routes below.
-
-### Owner devices and setup links
-
-| Method | Path               | Auth         | Response                          |
-| ------ | ------------------ | ------------ | --------------------------------- |
-| POST   | `/v1/setup/redeem` | none         | `{ device, token, serverTime }`   |
-| POST   | `/v1/setup/links`  | owner device | `201 { code, link, expiresAt }`   |
-| GET    | `/v1/devices`      | owner device | `{ devices }`                     |
-| GET    | `/v1/devices/me`   | owner device | `{ role: "owner", device }`       |
-| DELETE | `/v1/devices/:id`  | owner device | `{ device }` with `revokedAt` set |
-
-- A setup link is `scorebug://connect?server=<PUBLIC_URL>&code=<code>`. Mint one with
-  `node apps/control-plane/dist/cli.js setup-link`, or from an owner phone with
-  `POST /v1/setup/links` and optional `{ "expiresInHours": 1-720 }` (default 24).
-- Redeem with `{ code, deviceId: <uuid>, deviceName? }`. Codes are single use. A
-  repeat of the same request from the same `deviceId` within 10 minutes returns the
-  same token. Errors: `401 setup_code_invalid`, `409 setup_code_used`,
-  `409 device_id_taken`, `410 setup_code_expired`.
-- The server stores SHA-256 hashes of device tokens and keyed hashes of setup and
-  match join codes.
-
-### Destinations
-
-Named RTMP(S) targets. Owner device only. The stream key is write-only: responses
-carry only `streamKeyLast4` (empty for keys shorter than 8).
-
-| Method | Path                   | Body                                       | Response                                      |
-| ------ | ---------------------- | ------------------------------------------ | --------------------------------------------- |
-| GET    | `/v1/destinations`     |                                            | `{ destinations }`                            |
-| POST   | `/v1/destinations`     | `{ name, rtmpUrl, streamKey, isDefault? }` | `201 { destination }`                         |
-| GET    | `/v1/destinations/:id` |                                            | `{ destination }`                             |
-| PATCH  | `/v1/destinations/:id` | any of the create fields                   | `{ destination }`                             |
-| DELETE | `/v1/destinations/:id` |                                            | `{ deleted: true }`; `409 destination_in_use` |
-
-`destination` is
-`{ id, name, rtmpUrl, streamKeyLast4, isDefault, createdAt, updatedAt }`. `rtmpUrl`
-is `rtmp://` or `rtmps://` without credentials, query or fragment. The worker
-publishes to `<rtmpUrl>/<streamKey>`. A create with `destinationId` streams to that
-destination; without one, the match uses the default destination, or the worker's
-own `OUTPUT_URL` if there is none.
-
-### Worker selection
-
-A start command may name `workerId` and `outputId`. When it leaves them out, the
-server uses `WORKER_ID`/`OUTPUT_ID` from its environment, or else the one worker
-that polled in the last 15 seconds with the output it registered. Otherwise the
-outcome is `accepted: false` with `no_worker`, `worker_ambiguous` or
-`output_unknown`.
+  `publishUrl` is the YouTube RTMPS ingest with its stream key.
+- `connection` is `{ gameId, generation, readUrl, source }` or `null`. `readUrl` is the Stream input's RTMPS playback URL.

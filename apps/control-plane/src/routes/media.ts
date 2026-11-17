@@ -4,14 +4,15 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { WORKER_STATES, WORKER_REASONS, type MatchCredential } from '@scorebug/protocol';
 import { WorkerObservations, WorkerObservationError } from '../worker-observations.js';
-import { bearer, ownerAuth } from '../auth.js';
-import type { Config } from '../config.js';
+import { bearer } from '../auth.js';
+import type { RouteConfig } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
 import { MediaStoreError } from '../media-store.js';
 import { MediaStateError } from '../media-state.js';
-import { RelayLifecycleError, type IngestLifecycle } from '../relay-lifecycle.js';
-import { PUBLISHING_ATTEMPT_ID_PATTERN } from '../publishing-attempt.js';
+import { RelayLifecycleError, type IngestLifecycle } from '../media-lifecycle.js';
 
+/** The phone's publishing attempt: a lowercase UUID it echoes back to match its publish URL. */
+const PUBLISHING_ATTEMPT_ID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const report = z
@@ -22,7 +23,7 @@ const report = z
     startedAt: z.iso.datetime({ offset: true }),
   })
   .strict();
-// The app may leave workerId/outputId out; the server then picks its worker.
+// The app may leave workerId/outputId out; the configured worker then takes the broadcast.
 const selection = z
   .object({
     workerId: id.optional(),
@@ -45,12 +46,13 @@ const command = z
   .strict();
 type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 
-/** Mounted under /v1/matches/:id/media. Recording telemetry never changes scoring authority. */
+/** Mounted under /v1/matches/:id/media. Recording telemetry never changes scoring authority.
+ * `member` guards broadcast commands and their receipts. */
 export function mediaRoutes(
-  config: Config,
+  config: RouteConfig,
   matches: MatchStore,
-  installation: MiddlewareHandler = ownerAuth(matches.account),
-  relayLifecycle?: IngestLifecycle,
+  member: MiddlewareHandler,
+  ingest: IngestLifecycle,
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono<Env>();
@@ -98,9 +100,8 @@ export function mediaRoutes(
     async (c) => {
       const credential = c.get('credential');
       if (credential.role !== 'capture') return c.json({ error: 'forbidden' }, 403);
-      if (!relayLifecycle) return c.json({ error: 'relay_not_configured' }, 503);
       const { publishingAttemptId, ...request } = c.req.valid('json');
-      const result = await relayLifecycle.publish({
+      const result = await ingest.publish({
         ...request,
         ...(publishingAttemptId !== undefined ? { publishingAttemptId } : {}),
         gameId: credential.gameId,
@@ -117,19 +118,16 @@ export function mediaRoutes(
       return c.json({ ...result, serverTime: new Date().toISOString() });
     },
   );
-  app.post('/commands', installation, zValidator('json', command), (c) => {
+  app.post('/commands', member, zValidator('json', command), (c) => {
     const command = c.req.valid('json');
     if (command.gameId !== c.req.param('id')) return c.json({ error: 'forbidden' }, 403);
-    const configured =
-      config.WORKER_ID && config.OUTPUT_ID
-        ? { workerId: config.WORKER_ID, outputId: config.OUTPUT_ID }
-        : undefined;
+    const configured = { workerId: config.workerId, outputId: config.outputId };
     const outcome = matches.media.execute(command, (requested) =>
       observations.selectWorker(requested, configured),
     );
     return c.json(outcome, outcome.accepted ? 200 : 409);
   });
-  app.get('/commands/:commandId', installation, (c) => {
+  app.get('/commands/:commandId', member, (c) => {
     const outcome = matches.media.receipt(c.req.param('id') ?? '', c.req.param('commandId'));
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
@@ -151,9 +149,9 @@ export function mediaRoutes(
   return app;
 }
 export function workerRoutes(
-  config: Config,
+  config: RouteConfig,
   matches: MatchStore,
-  relayLifecycle?: IngestLifecycle,
+  ingest: IngestLifecycle,
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono();
@@ -161,7 +159,7 @@ export function workerRoutes(
     c.header('Cache-Control', 'no-store');
     await next();
   });
-  app.use('*', bearer(config.HOME_TOKEN, 'worker'));
+  app.use('*', bearer(config.workerToken, 'worker'));
   app.post(
     '/sessions',
     zValidator('json', z.object({ workerId: id, runId: id, outputId: id.optional() }).strict()),
@@ -218,15 +216,13 @@ export function workerRoutes(
   );
   app.get('/snapshot', zValidator('query', z.object({ workerId: id }).strict()), (c) => {
     const { workerId } = c.req.valid('query');
-    observations.seen(workerId);
     return c.json({
       assignment: matches.media.workerAssignment(workerId),
       serverTime: new Date().toISOString(),
     });
   });
   app.get('/connection', zValidator('query', z.object({ workerId: id }).strict()), async (c) => {
-    if (!relayLifecycle) return c.json({ error: 'relay_not_configured' }, 503);
-    const connection = await relayLifecycle.worker(c.req.valid('query').workerId);
+    const connection = await ingest.worker(c.req.valid('query').workerId);
     if (connection) {
       const current = matches.media.workerAssignment(c.req.valid('query').workerId);
       if (

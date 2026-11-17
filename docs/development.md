@@ -1,14 +1,13 @@
 # Development
 
-Scorebug has two servers. The hosted Worker (`apps/control-plane/src/worker`) runs on Cloudflare
-and serves the iPhone app at `https://scorebug.live`. The self-hosted server is a Node API with
-SQLite (`apps/control-plane/src`), a MediaMTX relay and the worker in `apps/home-daemon`. This page
-covers running each locally, the iPhone apps, and the tests.
+The server is a Cloudflare Worker (`apps/control-plane/src/worker`) that serves the iPhone app at
+`https://scorebug.live`. Each live match runs the broadcast worker (`apps/home-daemon`) in a
+Cloudflare Container. This page covers running the Worker locally, the iPhone apps, and the tests.
 
 ## Install
 
 - Node 22.13 or later and pnpm 9.15.0 (`corepack enable` picks up the pinned version).
-- Docker with Compose v2, for the relay, the stand-in YouTube and the container tests.
+- Docker, for local match containers and the container test.
 - FFmpeg with SRT, H.264 and AAC. On macOS use Homebrew's `ffmpeg-full`; the test scripts look for
   it in `/opt/homebrew/opt/ffmpeg-full/bin` before `PATH`.
 - For the iPhone and Watch apps: Xcode 26.2 and XcodeGen (`brew install xcodegen`).
@@ -17,7 +16,7 @@ covers running each locally, the iPhone apps, and the tests.
 pnpm install --frozen-lockfile
 ```
 
-## Run the hosted Worker locally
+## Run the Worker locally
 
 `wrangler dev` runs the Worker with local D1 and Durable Objects:
 
@@ -46,34 +45,6 @@ Production secrets are set once with `wrangler secret put`: `GOOGLE_CLIENT_SECRE
 control plane, the home-daemon image, the protocol package or the lockfile applies the D1
 migrations and deploys (`.github/workflows/deploy.yml`).
 
-## Run the self-hosted API locally
-
-The dev stack runs the MediaMTX relay and a stock MediaMTX that stands in for YouTube. All
-credentials in `infra/local` are public test values.
-
-```sh
-docker compose -f docker-compose.dev.yml build ingest   # first time only
-pnpm local:up
-pnpm dev:api
-```
-
-The API listens on `http://127.0.0.1:18787` with the settings in `infra/local/.env.example`. The
-relay takes SRT on `127.0.0.1:18890/udp`. The stand-in YouTube takes RTMP on `127.0.0.1:11935`.
-Stop the stack with `pnpm local:down`.
-
-The iPhone app signs in with Google and uses teams, which only the hosted Worker serves, so it does
-not connect to this API.
-
-### Run the worker
-
-```sh
-cp apps/home-daemon/.env.example apps/home-daemon/.env   # set FFMPEG_PATH if needed
-node --env-file=apps/home-daemon/.env apps/home-daemon/node_modules/tsx/dist/cli.mjs apps/home-daemon/src/index.ts
-```
-
-The example points at the local API and sends to the stand-in YouTube. See
-[the worker README](../apps/home-daemon/README.md) for its settings.
-
 ## iPhone and Watch apps
 
 ```sh
@@ -95,17 +66,9 @@ runs the Apple tests.
 | --------------------------------------------------- | -------------------------------------------------------------------- | ----------------- |
 | `pnpm test`                                         | Unit tests for every package, plus the `scripts/test` Node tests     | FFmpeg            |
 | `pnpm --filter @scorebug/control-plane test:worker` | The hosted Worker in workerd: sign-in, teams, matches, Go live, site | —                 |
-| `pnpm test:scoring`                                 | A real API process: scoring and media state survive forced restarts  | —                 |
-| `pnpm test:relay`                                   | The real relay: SRT media, credentials and revocation                | Docker, FFmpeg    |
-| `pnpm test:local`                                   | The dev Compose stack starts with the expected relay config          | Docker            |
-| `pnpm test:container`                               | The control-plane image starts and serves HTTP                       | Docker            |
 | `pnpm test:worker-container <image>`                | The worker image encodes and overlays real media                     | Docker, image tag |
-| `node scripts/test-vps-stack.mjs`                   | The `infra/vps` Compose stack                                        | Docker            |
 | `pnpm -r typecheck`                                 | TypeScript                                                           | —                 |
 | `pnpm format:check`                                 | Prettier                                                             | —                 |
-
-`pnpm test:relay` uses the relay image `scorebug/ingest:drain-v1`, built by the
-`docker compose ... build ingest` step above.
 
 The Apple tests:
 

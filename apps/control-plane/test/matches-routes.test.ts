@@ -1,7 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
-import { createApp } from '../src/app.js';
-import { ownerToken, testConfig, phoneAuth } from './helpers.js';
-const apps: ReturnType<typeof createApp>[] = [];
+import { createTestApp, MEMBER_TOKEN, phoneAuth } from './helpers.js';
+const apps: ReturnType<typeof createTestApp>[] = [];
 afterEach(() => {
   for (const item of apps.splice(0)) item.matches?.close();
 });
@@ -15,13 +14,12 @@ const input = {
   rules: { bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
 };
 function setup() {
-  const config = testConfig();
-  const value = createApp(config);
+  const value = createTestApp();
   apps.push(value);
-  return { ...value, token: ownerToken(value.matches) };
+  return { ...value, token: MEMBER_TOKEN };
 }
 async function post(
-  app: ReturnType<typeof createApp>['app'],
+  app: ReturnType<typeof createTestApp>['app'],
   path: string,
   body: unknown,
   token: string,
@@ -182,4 +180,36 @@ it('accepts an explicit scorebug style on create and rejects unknown styles', as
     await post(app, '/v1/matches', { ...input, scorebugStyle: 'lowerThird' }, token)
   ).json();
   expect(created.snapshot.scorebugStyle).toBe('lowerThird');
+});
+it('accepts the retired destinationId only when it is absent or null', async () => {
+  const { app, token } = setup();
+  const destination = '6f1c0f43-5a8e-4a3e-9a51-0d1c2b3a4f5e';
+  const refused = await post(app, '/v1/matches', { ...input, destinationId: destination }, token);
+  expect(refused.status).toBe(409);
+  expect((await refused.json()).error).toBe('destination_not_found');
+  expect(
+    (
+      await post(
+        app,
+        '/v1/matches',
+        { ...input, recordOnly: true, destinationId: destination },
+        token,
+      )
+    ).status,
+  ).toBe(400);
+  const created = await post(app, '/v1/matches', { ...input, destinationId: null }, token);
+  expect(created.status).toBe(201);
+  expect((await created.json()).snapshot.output).toEqual({
+    destinationId: null,
+    recordOnly: false,
+  });
+  const retried = await post(app, '/v1/matches', input, token);
+  expect(retried.status).toBe(201);
+});
+it('marks a record-only match in its output', async () => {
+  const { app, token } = setup();
+  const created = await (
+    await post(app, '/v1/matches', { ...input, recordOnly: true }, token)
+  ).json();
+  expect(created.snapshot.output).toEqual({ destinationId: null, recordOnly: true });
 });

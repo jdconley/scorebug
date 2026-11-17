@@ -255,7 +255,6 @@ it('goes live: Stream input, one unlisted broadcast, the container, and the watc
     CONTROL_PLANE_URL: 'http://api.internal/',
     WORKER_ID: 'match',
     OUTPUT_ID: 'youtube',
-    ENCODER: 'software',
     VIDEO_PROFILE: '1080p30',
     SCORE_DELAY_MS: '1100',
     INPUT_PROBE: 'fast',
@@ -317,6 +316,40 @@ it('goes live: Stream input, one unlisted broadcast, the container, and the watc
     '',
   );
   expect(refused.status).toBe(401);
+});
+
+it('publishes only to the selected capture and generation, and connects only the match worker', async () => {
+  const owner = await liveReadyTeam();
+  const { scorer, capture } = await filming(owner);
+  const joined = await h.json(
+    `/v1/teams/${owner.teamId}/matches/game-1/join`,
+    { deviceId: 'other-camera', role: 'capture' },
+    { headers: h.auth(owner.token) },
+  );
+  const other = (await body(joined)).credential as Credential;
+  const publish = (token: string, payload: Json) =>
+    h.json('/v1/matches/game-1/media/publish', payload, { headers: h.auth(token) });
+  const request = { recordingId: 'rec-1', generation: 1 };
+  // Before Go Live there is no running generation.
+  const early = await publish(capture.token, request);
+  expect(early.status).toBe(409);
+  expect(await body(early)).toEqual({ error: 'broadcast_changed' });
+  expect((await body(await start(owner))).accepted).toBe(true);
+  expect((await publish(scorer.token, request)).status).toBe(403);
+  const unselected = await publish(other.token, request);
+  expect(unselected.status).toBe(403);
+  expect(await body(unselected)).toEqual({ error: 'capture_not_selected' });
+  const stale = await publish(capture.token, { ...request, generation: 2 });
+  expect(stale.status).toBe(409);
+  expect(await body(stale)).toEqual({ error: 'broadcast_changed' });
+  expect((await publish(capture.token, { ...request, publishingAttemptId: 'nope' })).status).toBe(
+    400,
+  );
+  expect((await publish(capture.token, request)).status).toBe(200);
+  const elsewhere = JSON.parse(
+    (await workerApi(owner.teamId, '/v1/worker/connection?workerId=other')).body,
+  );
+  expect(elsewhere.connection).toBeNull();
 });
 
 it('stop keeps the input and broadcast; going live again reuses the same link', async () => {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { MatchStore } from '../src/matches-store.js';
-import { openNodeSqlite } from '../src/sql-node.js';
+import { openNodeSqlite } from './sqlite.js';
 
 const now = Date.parse('2026-09-14T03:00:00Z');
 const issuedAt = new Date(now).toISOString();

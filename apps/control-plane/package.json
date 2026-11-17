@@ -3,20 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "pnpm --filter @scorebug/protocol build && tsx watch src/index.ts",
-    "start": "node dist/index.js",
     "lint": "echo 'lint: noop'",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
     "test": "pnpm --filter @scorebug/protocol build && vitest run",
     "test:watch": "pnpm --filter @scorebug/protocol build && vitest",
     "test:worker": "pnpm --filter @scorebug/protocol build && vitest run --config vitest.worker.config.ts",
     "dev:worker": "pnpm --filter @scorebug/protocol build && wrangler dev"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.4",
     "@hono/zod-validator": "^0.8.0",
     "@scorebug/protocol": "workspace:*",
     "hono": "^4.6.10",
@@ -26,7 +21,6 @@
     "@cloudflare/vitest-plugin": "^1.8.3",
     "@cloudflare/workers-types": "^5.20261116.1",
     "@types/node": "^22.9.0",
-    "tsx": "^4.19.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
     "wrangler": "^4.163.0"

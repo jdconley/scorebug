@@ -1,36 +1,77 @@
-import { randomUUID } from 'node:crypto';
-import { publishAttemptQuery } from '../src/publishing-attempt.js';
-import type { Config } from '../src/config.js';
-import type { MatchStore } from '../src/matches-store.js';
+import { Hono, type Context } from 'hono';
+import { createMiddleware } from 'hono/factory';
+import { bearerToken } from '../src/auth.js';
+import type { RouteConfig } from '../src/config.js';
+import type { IngestLifecycle } from '../src/media-lifecycle.js';
+import { MatchStore } from '../src/matches-store.js';
+import { RedeemGuard } from '../src/rate-limit.js';
+import { inviteRedeemRoutes } from '../src/routes/invites.js';
+import { matchesRoutes, type MatchAccess } from '../src/routes/matches.js';
+import { workerRoutes } from '../src/routes/media.js';
+import { WorkerObservations } from '../src/worker-observations.js';
+import { openNodeSqlite } from './sqlite.js';
 
-export function testConfig(overrides: Partial<Config> = {}): Config {
+export const SERVER_SECRET = 'server-secret-1234567890abcdef';
+/** The bearer token the test access treats as a signed-in team member. */
+export const MEMBER_TOKEN = 'member-token-1234567890abcdef';
+
+export function testConfig(overrides: Partial<RouteConfig> = {}): RouteConfig {
   return {
-    SERVER_SECRET: 'server-secret-1234567890abcdef',
-    HOME_TOKEN: 'home-token-1234567890abcdef',
-    PORT: 0,
-    HOST: '127.0.0.1',
-    INGEST_HOST: 'ingest.test',
-    INGEST_PORT: 8890,
-    LOG_LEVEL: 'error',
-    CORS_ORIGINS: '*',
-    DATABASE_PATH: ':memory:',
+    workerToken: 'worker-token-1234567890abcdef',
+    workerId: 'match',
+    outputId: 'youtube',
     ...overrides,
   };
 }
 
-/** Enroll an owner phone the way a setup link does and return its device token. */
-export function ownerToken(matches: MatchStore): string {
-  const { code } = matches.account.mintSetupCode();
-  return matches.account.redeemSetupCode({ code, deviceId: randomUUID(), deviceName: 'Test phone' })
-    .token;
+/** Team-member access the way the TeamObject grants it, keyed on MEMBER_TOKEN. */
+export function memberAccess(onInvite?: MatchAccess['onInvite']): MatchAccess {
+  const member = (c: Context) => (bearerToken(c) === MEMBER_TOKEN ? 'member:test' : undefined);
+  return {
+    bootstrap: createMiddleware(async (c, next) => {
+      if (!member(c)) return c.json({ error: 'unauthorized', role: 'member' }, 401);
+      await next();
+    }),
+    issuer: member,
+    joinLink: (code) => `https://scorebug.test/join/${code}`,
+    ...(onInvite ? { onInvite } : {}),
+  };
+}
+
+/** An ingest with nothing behind it. The Worker tests cover the hosted one (HostedMedia). */
+export const fakeIngest: IngestLifecycle = {
+  publish: async (request) => ({
+    gameId: request.gameId,
+    generation: request.generation,
+    recordingId: request.recordingId,
+    publishUrl: 'srt://ingest.test:778?passphrase=test&streamid=test',
+  }),
+  worker: async () => null,
+};
+
+/** The match, invite and worker routes, composed as the TeamObject composes them. */
+export function createTestApp(
+  options: {
+    config?: Partial<RouteConfig>;
+    matches?: MatchStore;
+    observations?: WorkerObservations;
+    inviteGuard?: RedeemGuard;
+  } = {},
+) {
+  const config = testConfig(options.config);
+  const matches = options.matches ?? new MatchStore(openNodeSqlite(':memory:'), SERVER_SECRET);
+  const observations = options.observations ?? new WorkerObservations(matches.media);
+  const inviteGuard = options.inviteGuard ?? new RedeemGuard();
+  const app = new Hono();
+  app.route(
+    '/v1/matches',
+    matchesRoutes(config, matches, memberAccess(), fakeIngest, observations),
+  );
+  app.route('/v1/invites', inviteRedeemRoutes(matches, inviteGuard));
+  app.route('/v1/worker', workerRoutes(config, matches, fakeIngest, observations));
+  return { app, config, matches, observations, inviteGuard };
 }
 
 export function phoneAuth(token: string) {
   return { authorization: `Bearer ${token}` };
-}
-
-/** The attempt a `sbp1=` publish tag names, if the tag is genuine for this path. */
-export function attemptOf(secret: string, path: string, query: string | undefined) {
-  const attempt = query?.slice(5, 41);
-  return attempt && query === publishAttemptQuery(secret, path, attempt) ? attempt : undefined;
 }

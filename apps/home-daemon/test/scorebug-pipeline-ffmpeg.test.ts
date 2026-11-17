@@ -42,15 +42,14 @@ it(
           }),
         ),
       );
-      const recordingPath = join(directory, 'final.mp4');
+      // The FLV FFmpeg would publish over RTMP, written to a file to inspect.
+      const output = join(directory, 'published.flv');
       const pipeline = startPipeline(
         {
           gameId: 'overlay',
           pullUrl: source,
-          recordingPath,
+          publishUrl: output,
           scoreFile,
-          nvenc: false,
-          encoder: 'software',
           ffmpegPath: ffmpeg,
           profile: { width: 640, height: 360, fps: 30, bitrateKbps: 800 },
         },
@@ -61,7 +60,7 @@ it(
         (
           await run(ffprobe, [
             ...['-v', 'error', '-select_streams', 'v:0', '-count_frames'],
-            ...['-show_entries', 'stream=nb_read_frames', '-of', 'json', recordingPath],
+            ...['-show_entries', 'stream=nb_read_frames', '-of', 'json', output],
           ])
         ).stdout,
       );
@@ -70,7 +69,7 @@ it(
       const box = await run(
         ffmpeg,
         [
-          ...['-v', 'error', '-i', recordingPath, '-vf', 'crop=24:20:148:30,format=gray'],
+          ...['-v', 'error', '-i', output, '-vf', 'crop=24:20:148:30,format=gray'],
           ...['-fps_mode', 'passthrough', '-f', 'rawvideo', '-'],
         ],
         { encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 },
@@ -85,7 +84,7 @@ it(
       const corner = await run(
         ffmpeg,
         [
-          ...['-v', 'error', '-i', recordingPath, '-vf', 'crop=40:40:600:320,format=gray'],
+          ...['-v', 'error', '-i', output, '-vf', 'crop=40:40:600:320,format=gray'],
           ...['-frames:v', '1', '-f', 'rawvideo', '-'],
         ],
         { encoding: 'buffer' },
@@ -111,7 +110,6 @@ it(
         pullUrl: 'unused',
         publishUrl: 'unused',
         scoreFile: 'unused',
-        nvenc: false,
         profile: { ...size, fps: 30, bitrateKbps: 800 },
       });
       const graph = args[args.indexOf('-filter_complex') + 1]!;

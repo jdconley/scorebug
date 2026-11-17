@@ -1,4 +1,0 @@
-# Secret-bearing files written by install.sh.
-worker.env
-*.env.tmp.*
-.smoke-broadcast.json

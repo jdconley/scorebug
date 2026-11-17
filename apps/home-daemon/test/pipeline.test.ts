@@ -3,26 +3,26 @@ import { buildFfmpegArgs } from '../src/pipeline.js';
 
 const baseSpec = {
   gameId: 'g1',
-  pullUrl: 'srt://ingest.example:8890?streamid=read:game_g1&passphrase=xx&latency=1000000',
+  pullUrl: 'rtmps://live.cloudflare.com:443/live/PLAYKEY',
   publishUrl: 'rtmps://a.rtmps.youtube.com/live2/STREAMKEY',
   scoreFile: '/tmp/scorebug/score.txt',
 };
 
 describe('buildFfmpegArgs', () => {
-  it('uses h264_nvenc when nvenc enabled', () => {
-    const args = buildFfmpegArgs({ ...baseSpec, nvenc: true });
-    expect(args).toContain('h264_nvenc');
-    expect(args).not.toContain('libx264');
-  });
-
-  it('falls back to libx264 when nvenc disabled', () => {
-    const args = buildFfmpegArgs({ ...baseSpec, nvenc: false });
-    expect(args).toContain('libx264');
-    expect(args).not.toContain('h264_nvenc');
+  it('encodes with software x264', () => {
+    const args = buildFfmpegArgs(baseSpec);
+    expect(args.slice(args.indexOf('-c:v'), args.indexOf('-c:v') + 6)).toEqual([
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-tune',
+      'zerolatency',
+    ]);
   });
 
   it('outputs flv to the publishUrl', () => {
-    const args = buildFfmpegArgs({ ...baseSpec, nvenc: true });
+    const args = buildFfmpegArgs(baseSpec);
     const lastTwo = args.slice(-2);
     expect(lastTwo[0]).toBe('flv');
     expect(lastTwo[1]).toBe(baseSpec.publishUrl);
@@ -30,7 +30,7 @@ describe('buildFfmpegArgs', () => {
   });
 
   it('composites the worker scorebug feed (stdin, Matroska) over the live video', () => {
-    const args = buildFfmpegArgs({ ...baseSpec, nvenc: true });
+    const args = buildFfmpegArgs(baseSpec);
     const inputs = args.flatMap((arg, index) => (arg === '-i' ? [args[index + 1]] : []));
     expect(inputs).toEqual([baseSpec.pullUrl, 'pipe:0']);
     expect(args[args.lastIndexOf('-i') - 1]).toBe('matroska');
@@ -64,19 +64,15 @@ describe('buildFfmpegArgs', () => {
 });
 
 it('requests machine-readable output progress with terminal stats disabled', () => {
-  const args = buildFfmpegArgs({ ...baseSpec, nvenc: false });
+  const args = buildFfmpegArgs(baseSpec);
   expect(args[args.indexOf('-progress') + 1]).toBe('pipe:1');
   expect(args).toContain('-nostats');
 });
-it('selects real VideoToolbox without silent software fallback and applies the output canvas', () => {
+it('applies the output canvas and bitrate of the video profile', () => {
   const args = buildFfmpegArgs({
     ...baseSpec,
-    nvenc: false,
-    encoder: 'videotoolbox',
     profile: { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 },
   });
-  expect(args).toContain('h264_videotoolbox');
-  expect(args[args.indexOf('-allow_sw') + 1]).toBe('0');
   expect(args[args.indexOf('-b:v') + 1]).toBe('3000k');
   expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
   expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('demux');
@@ -86,16 +82,10 @@ it('selects real VideoToolbox without silent software fallback and applies the o
   expect(args[args.indexOf('-filter_complex') + 1]).toContain('scale=1280:720');
   expect(args[args.indexOf('-filter_complex') + 1]).toContain('crop=348:164:0:0,');
 });
-it('lets explicit software selection override the legacy NVENC flag', () => {
-  expect(buildFfmpegArgs({ ...baseSpec, nvenc: true, encoder: 'software' })).toContain('libx264');
-});
-
-describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timestamps', (encoder) => {
+describe('source timestamps', () => {
   it.each([false, true])('preserves the common A/V timeline with profile=%s', (withProfile) => {
     const args = buildFfmpegArgs({
       ...baseSpec,
-      nvenc: false,
-      encoder,
       ...(withProfile ? { profile: { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 } } : {}),
     });
     const inputIndex = args.indexOf('-i');
@@ -137,7 +127,6 @@ it('rejects invalid output profiles before spawning FFmpeg', () => {
     expect(() =>
       buildFfmpegArgs({
         ...baseSpec,
-        nvenc: false,
         profile: { width, height: 720, fps: 30, bitrateKbps: 3000 },
       }),
     ).toThrow('invalid_video_profile');
@@ -146,7 +135,6 @@ it('rejects invalid output profiles before spawning FFmpeg', () => {
 it('observes fixed-timebase decoder ingress before cap and strips an exact fixed marker', () => {
   const args = buildFfmpegArgs({
     ...baseSpec,
-    nvenc: false,
     profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
   });
   const vf = args[args.indexOf('-filter_complex') + 1]!;
@@ -158,70 +146,12 @@ it('observes fixed-timebase decoder ingress before cap and strips an exact fixed
   );
 });
 
-it('applies slice threading to input video only without altering output encoder options', () => {
-  const spec = { ...baseSpec, nvenc: false };
-  const normal = buildFfmpegArgs(spec);
-  expect(buildFfmpegArgs({ ...spec, decoderThreading: 'automatic' })).toEqual(normal);
-  const slice = buildFfmpegArgs({ ...spec, decoderThreading: 'slice' });
-  const at = slice.indexOf('-thread_type:v:0');
-  expect(at).toBeGreaterThan(-1);
-  expect(at).toBeLessThan(slice.indexOf('-i'));
-  expect(slice[at + 1]).toBe('slice');
-  slice.splice(at, 2);
-  expect(slice).toEqual(normal);
-  expect(() => buildFfmpegArgs({ ...spec, decoderThreading: 'invalid' as 'slice' })).toThrow();
-});
-
-it('records the final overlay as fragmented MP4 without an RTMP output', () => {
-  const args = buildFfmpegArgs({
-    ...baseSpec,
-    nvenc: false,
-    publishUrl: undefined,
-    recordingPath: '/tmp/final overlay.mp4',
-  });
-  expect(args.slice(-5)).toEqual([
-    '-movflags',
-    '+frag_keyframe+delay_moov+default_base_moof',
-    '-f',
-    'mp4',
-    '/tmp/final overlay.mp4',
-  ]);
-  expect(args).toContain('-n');
-  expect(args).not.toContain('-y');
-  expect(args).not.toContain('flv');
-  expect(args).toContain('-copyts');
-  expect(args[args.indexOf('-filter_complex') + 1]).toContain('[scorebug_bar_done]');
-});
-
-it('shares one A/V encode between RTMP and fragmented MP4 with safe tee escaping', () => {
-  const args = buildFfmpegArgs({
-    ...baseSpec,
-    nvenc: false,
-    recordingPath: "/tmp/final video's | archive\\copy.mp4",
-  });
-  expect(args.filter((arg) => arg === '-c:v')).toHaveLength(1);
-  expect(args.filter((arg) => arg === '-c:a')).toHaveLength(1);
-  expect(args.filter((arg) => arg === '-map')).toHaveLength(2);
-  expect(args[args.indexOf('-flags') + 1]).toBe('+global_header');
-  expect(args.slice(-3, -1)).toEqual(['-f', 'tee']);
-  expect(args.at(-1)).toBe(
-    '[f=flv]' +
-      baseSpec.publishUrl +
-      "|[f=mp4:movflags=+frag_keyframe+delay_moov+default_base_moof]/tmp/final video\\'s \\| archive\\\\copy.mp4",
-  );
-  expect(args.at(-1)).not.toContain('onfail=ignore');
-  expect(args).toContain('-copyts');
-  expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
-});
-
 it('rejects pipelines with no output', () => {
-  expect(() => buildFfmpegArgs({ ...baseSpec, nvenc: false, publishUrl: undefined })).toThrow(
-    'missing_pipeline_output',
-  );
+  expect(() => buildFfmpegArgs({ ...baseSpec, publishUrl: '' })).toThrow('missing_pipeline_output');
 });
 
-it('bounds input probing and read waits for the hosted SRT source, before the input', () => {
-  const spec = { ...baseSpec, nvenc: false };
+it('bounds input probing and read waits for the Stream source, before the input', () => {
+  const spec = baseSpec;
   const normal = buildFfmpegArgs(spec);
   expect(buildFfmpegArgs({ ...spec, inputProbe: 'default' })).toEqual(normal);
   expect(normal).not.toContain('-rw_timeout');

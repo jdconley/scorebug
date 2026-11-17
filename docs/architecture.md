@@ -4,12 +4,9 @@ Scorebug streams a youth volleyball match to YouTube from one iPhone, with the l
 score burned onto the video. The phone films and publishes; a server-side worker
 draws the score and sends the result to YouTube.
 
-There are two deployments in this repo. The hosted service at
-[scorebug.live](https://scorebug.live) runs on Cloudflare and is the primary one.
-The self-hosted variant runs the same control plane on Node with its own relay and
-worker; it is described at the end.
+It runs as a hosted service at [scorebug.live](https://scorebug.live), on Cloudflare.
 
-## Hosted (scorebug.live)
+## Hosted service
 
 ```mermaid
 flowchart LR
@@ -77,9 +74,8 @@ and `live_slots`. Each team's matches do not live in D1.
 
 Each team has one `TeamObject` Durable Object, named by the team ID
 (`team-object.ts`). Its SQLite storage holds the team's matches, scores, command
-receipts, match credentials, match join codes and media state. It runs the same
-match and scoring code as the self-hosted server (`src/matches-store.ts`,
-`src/routes/matches.ts`, `src/routes/media.ts`). A team has at most one active match
+receipts, match credentials, match join codes and media state. The match and scoring logic
+lives in `src/matches-store.ts`, `src/routes/matches.ts` and `src/routes/media.ts`. A team has at most one active match
 at a time.
 
 The object also owns a Cloudflare Container (`containers` in `wrangler.jsonc`,
@@ -169,45 +165,13 @@ FFmpeg as a second input, stamped from the decoded video's timestamps, so score
 changes never restart the encoder. It only makes outbound connections.
 
 The hosted match container runs it with the software (x264) encoder and
-`VIDEO_PROFILE` from `wrangler.jsonc` (`1080p30`). Self-hosted, it can also use
-VideoToolbox (macOS) or NVENC, and save the overlaid output as an MP4. See
+`VIDEO_PROFILE` from `wrangler.jsonc` (`1080p30`). See
 [its README](../apps/home-daemon/README.md).
 
 ## Shared contracts (`packages/protocol`)
 
 TypeScript types for matches, media state, worker status, invites and links, plus
 JSON fixtures that the Swift tests also read so both sides stay in sync.
-
-## Self-hosted variant
-
-```mermaid
-flowchart LR
-    Phone[iPhone] -->|SRT publish| Relay[MediaMTX relay]
-    Relay -->|SRT read| Worker[Broadcast worker]
-    Worker -->|RTMPS| Dest[RTMP destination]
-    Phone -->|HTTPS| API[Control plane: Node + SQLite]
-    Worker -->|HTTPS poll + status| API
-    API -->|paths + credentials| Relay
-```
-
-- **Control plane.** The same package runs on Node 22 with SQLite
-  (`apps/control-plane/src/index.ts`, `src/app.ts`, `src/routes/`). It serves one
-  installation with one active match. Owner phones authenticate with device tokens
-  from one-time setup links, and broadcasts go to RTMP(S) destinations stored with
-  their stream keys. It has no Google sign-in, teams or YouTube OAuth.
-- **Relay (`vendor/MediaMTX`).** MediaMTX 1.21.0 with two patches: H.264 reader
-  recovery after packet loss, and bounded draining so a stopped broadcast's last
-  seconds still reach the worker. For each broadcast generation the control plane
-  creates relay paths and per-match SRT publish and read credentials through the
-  MediaMTX management API, and removes them when the broadcast ends.
-- **Worker.** `apps/home-daemon` polls the API outbound-only, so it can run on a
-  home machine behind NAT. It authenticates with the `HOME_TOKEN` bearer.
-- **Deployment.** `infra/vps` runs the control plane, relay and a Caddy HTTPS
-  gateway with Docker Compose. `infra/worker` runs the worker with Docker.
-
-The iPhone app in this repo signs in with Google and uses the team routes, which
-only the hosted Worker serves. The self-hosted API is in [api.md](api.md); setup is
-in [self-hosting.md](self-hosting.md).
 
 ## Scope
 

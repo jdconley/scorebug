@@ -1,66 +1,37 @@
 import { z } from 'zod';
 
-const schema = z
-  .object({
-    CONTROL_PLANE_URL: z.string().url(),
-    HOME_TOKEN: z.string().min(16),
-    WORKER_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-    OUTPUT_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-    OUTPUT_MODE: z.enum(['rtmp', 'record', 'rtmp+record']).default('rtmp'),
-    OUTPUT_RECORDING_DIR: z
-      .string()
-      .refine((value) => value.trim().length > 0)
-      .optional(),
-    /**
-     * Fallback RTMP(S) destination for matches the control plane assigns no
-     * destination; optional because destinations normally come from the server.
-     */
-    OUTPUT_URL: z
-      .string()
-      .url()
-      .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol))
-      .optional(),
-    ENCODER: z.enum(['software', 'videotoolbox', 'nvenc']),
-    DECODER_THREADING: z.enum(['automatic', 'slice']).default('automatic'),
-    WORKER_REPORT_INTERVAL_MS: z.coerce.number().int().min(100).max(4000).default(1000),
-    VIDEO_PROFILE: z
-      .enum(['240p30', '360p30', '540p30', '720p30', '1080p30', '2160p30'])
-      .default('1080p30'),
-    /** Hold score changes this long so they line up with delayed video (hosted: 1100). */
-    SCORE_DELAY_MS: z.coerce.number().int().min(0).max(5000).default(0),
-    /** `fast` bounds FFmpeg's input analysis for the known Stream RTMPS source (hosted). */
-    INPUT_PROBE: z.enum(['default', 'fast']).default('default'),
-    /** Fail an attempt when the source sends nothing for this long; unset waits. */
-    INPUT_READ_TIMEOUT_MS: z.coerce.number().int().min(500).max(120_000).optional(),
-    /** No new output for this long restarts FFmpeg. */
-    OUTPUT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120_000).default(10_000),
-    /** Attempts per minute before the worker waits; see RETRY_FREE_AFTER_MS. */
-    RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(60).default(3),
-    /** An attempt that ran this long gives its retry back (source absent, not a crash). */
-    RETRY_FREE_AFTER_MS: z.coerce.number().int().min(100).max(120_000).optional(),
-    FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
-    SCORE_DIR: z.string().default('/tmp/scorebug'),
-    LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-  })
-  .superRefine((config, context) => {
-    if (config.OUTPUT_MODE !== 'rtmp' && !config.OUTPUT_RECORDING_DIR)
-      context.addIssue({
-        code: 'custom',
-        path: ['OUTPUT_RECORDING_DIR'],
-        message: 'Recording output requires OUTPUT_RECORDING_DIR',
-      });
-  });
+const schema = z.object({
+  CONTROL_PLANE_URL: z.string().url(),
+  HOME_TOKEN: z.string().min(16),
+  WORKER_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  OUTPUT_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  VIDEO_PROFILE: z
+    .enum(['240p30', '360p30', '540p30', '720p30', '1080p30', '2160p30'])
+    .default('1080p30'),
+  /** Hold score changes this long so they line up with delayed video (hosted: 1100). */
+  SCORE_DELAY_MS: z.coerce.number().int().min(0).max(5000).default(0),
+  /** `fast` bounds FFmpeg's input analysis for the known Stream RTMPS source (hosted). */
+  INPUT_PROBE: z.enum(['default', 'fast']).default('default'),
+  /** Fail an attempt when the source sends nothing for this long; unset waits. */
+  INPUT_READ_TIMEOUT_MS: z.coerce.number().int().min(500).max(120_000).optional(),
+  /** No new output for this long restarts FFmpeg. */
+  OUTPUT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120_000).default(10_000),
+  /** Attempts per minute before the worker waits; see RETRY_FREE_AFTER_MS. */
+  RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(60).default(3),
+  /** An attempt that ran this long gives its retry back (source absent, not a crash). */
+  RETRY_FREE_AFTER_MS: z.coerce.number().int().min(100).max(120_000).optional(),
+  FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
+  SCORE_DIR: z.string().default('/tmp/scorebug'),
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+});
 
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return schema.parse({
     ...env,
-    // Compose passes `${OUTPUT_URL:-}`: empty means "no fallback".
-    OUTPUT_URL: env.OUTPUT_URL || undefined,
     INPUT_READ_TIMEOUT_MS: env.INPUT_READ_TIMEOUT_MS || undefined,
     RETRY_FREE_AFTER_MS: env.RETRY_FREE_AFTER_MS || undefined,
-    ENCODER: env.ENCODER ?? (env.NVENC_ENABLED?.toLowerCase() === 'true' ? 'nvenc' : 'software'),
   });
 }
 
