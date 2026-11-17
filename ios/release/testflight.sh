@@ -6,6 +6,9 @@
 #
 #   TEAM_ID=… ASC_KEY_ID=… ASC_ISSUER_ID=… ios/release/testflight.sh   # build number = UTC timestamp
 #   BUILD_NUMBER=42 ios/release/testflight.sh
+#
+# CI runs this on every push to main that changes the app (.github/workflows/native.yml, job
+# "TestFlight upload"), with the key from the ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 secrets.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
