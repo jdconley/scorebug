@@ -1,112 +1,133 @@
 # Scorebug iOS
 
-One iPhone app (with an embedded Apple Watch app) for a parent who films and
-scores alone. `Project.yml` (XcodeGen) builds:
+The iPhone app films a volleyball match, keeps score and streams it live to YouTube with the score
+burned onto the video. It embeds an Apple Watch app for scoring from the wrist. `Project.yml`
+(XcodeGen) defines these targets:
 
-- **Scorebug** — iPhone app. Dark, camera-first, no tabs.
-- **ScorebugWatch** — Watch app. Mirrors the paired iPhone's open match.
-- **ScorebugModelTests** — macOS unit tests for the view models, capture,
-  streaming and recording (no simulator needed).
-- **ScorebugAppUITests** — a screenshot tour of every screen (manual, below).
+- **Scorebug**: the iPhone app, bundle `live.scorebug.app`. iOS 17 or later.
+- **ScorebugWatch**: the Watch app, embedded in the iPhone app. watchOS 10 or later.
+- **ScorebugModelTests**: macOS unit tests for the app's view models, capture, streaming and
+  recording (`AppModelTests` and `FilmModelTests`). No simulator needed.
+- **ScorebugAppUITests**: a screenshot tour of the screens against a local Worker (see below).
 
-Swift packages: `ScorebugCore` (HTTP client, sign-in (PKCE, callback), teams, invite links, scoring outbox,
-short names, court sides, set point, Watch protocol, quality ladder),
-`ScorebugMedia` (capture, segmented archive, MP4 export), `ScorebugStreaming`
-(SRT publisher). The iPhone baseline is iOS 17, the Watch watchOS 10.
+Swift packages in `Packages/`:
 
-## Flow
+- `ScorebugCore`: the API client (Google sign-in, teams, invites, matches, YouTube), links and
+  codes, the scoring outbox, team names and colors, court sides, set point, the Watch protocol and
+  the stream quality ladder.
+- `ScorebugMedia`: camera capture, the segmented local recording, MP4 export and the publishing
+  session that feeds the stream.
+- `ScorebugStreaming`: the SRT publisher ([README](Packages/ScorebugStreaming/README.md)).
 
-The app talks to the hosted service at `https://scorebug.live` (the Worker in
-`apps/control-plane/src/worker`). Debug builds can point at another server from the
-sign-in screen or Settings → Developer, or with `SCOREBUG_TEST_API_URL`.
+## What the app does
 
-1. **Sign in (first launch).** **Sign in with Google** opens
-   `/v1/auth/google/start?challenge=…` in `ASWebAuthenticationSession` (PKCE: only the
-   S256 challenge goes through the browser). The Worker sends the browser back to
-   `scorebug://auth?status=ok&ticket=…`; the app trades the ticket and its verifier at
-   `POST /v1/auth/session` for a session token kept in the Keychain. `not_in_beta` shows
-   "Scorebug is in private beta". **Join with a code** works without an account.
-2. **Home.** The person's teams from `/v1/me`, each with its open match (Film or Score)
-   and **New match**. One team shows directly; several stack. **Join with a code**
-   (K7P-4QX scores one match, ABCD-EFGH joins a team), the last match, Recordings.
-   People JD lets create teams see **Create team**.
-3. **Team.** The team's YouTube channel, members and invites. Owners **Connect a YouTube
-   channel** (`POST /v1/youtube/connect` in `ASWebAuthenticationSession`, landing on
-   `scorebug://auth?purpose=youtube&status=…&ticket=…`, claimed at
-   `POST /v1/youtube/connections`), pick one of their connections (`PUT /v1/teams/:id/youtube`),
-   **Reconnect** one that needs it, or **Check again** after YouTube's 24-hour wait. Members
-   see the channel, or "Ask your team owner to reconnect YouTube". Owners also rename, invite
-   by email or with a link (share sheet), revoke invites and remove members. Anyone can leave.
-4. **Links.** Universal links `https://scorebug.live/invite/<code>` (team invite: signs in
-   with the invite if needed) and `https://scorebug.live/join/<code>` (score one match),
-   always confirmed with a tap. The app has the `applinks:scorebug.live` entitlement; the
-   Worker serves `/.well-known/apple-app-site-association`.
-5. **New match.** Team 1 starts as the team (names, short names ≤ 8 characters
-   prefilled from the name, colors), format, scorebug style, the team's YouTube channel
-   or record only, Record in 4K. **Go live** starts recording and the stream together; it's
-   off, with the reason, when the team has no channel or the channel needs attention.
-   The sheet remembers the last opponent. The app never says home or away: Team 1 is the
-   API's `home`, Team 2 `away`. Member routes go through `/v1/teams/:teamId/matches`
-   with the session token; match-token routes stay `/v1/matches/:id`.
-6. **Live (landscape).** Tap the left or right half of the picture to give the
-   team on that side a point; Undo; **Swap sides**. LIVE, elapsed time,
-   `REC 1080p · 720p out · good`. **Watch link** shares the match's YouTube link (one per
-   match, from the Go Live reply or `GET /v1/matches/:id`). **Invite scorer** shows a QR
-   (for the Camera app), a 6-character code and a share link. Stream problems, including a
-   refused Go Live (`busy`, `time_limit`, no channel…), are a small banner with **Go live
-   again**; the recording never stops because of the stream.
-7. **Set point.** When the server reports `pendingSetEnd` the scorer confirms
-   ("Cascade wins set 3?"): End set / End match, Undo last point, or Keep playing.
-   After a set ends: "Teams switching sides?".
-8. **Recordings.** Thumbnail, teams and result, date, duration, resolution, size;
-   Play, Save to Photos, Share (each checks an MP4 export first).
-9. **Second phone as scorer.** A team member taps **Score** on Home; anyone else joins
-   with the code or link. Portrait, two big team-colored halves, undo, swap sides, the
-   same set-point sheet.
-10. **Settings.** Name and email, **Sign out** (revokes the session token), and the
-    Debug server.
+The app talks to the hosted service at `https://scorebug.live`, the Worker in
+`apps/control-plane/src/worker`. The app never says home or away: the New match sheet and the
+scoring screens use Team 1, Team 2 and the team names.
+
+1. **Sign in.** **Sign in with Google** opens Google in a system sign-in sheet. Scorebug is in
+   private beta: an account that is not on the beta list and has no team invite sees "Scorebug is
+   in private beta". **Join with a code** scores one match without an account.
+2. **Home.** Each of your teams, with its open match (**Film** or **Score**) and **New match**. Below
+   them: **Join with a code**, the last match and **Recordings**. Accounts allowed to create teams
+   see **Create team** (or **New team** once they have one). The gear opens Settings.
+3. **Team.** Tap a team on Home. The owner connects the team's YouTube channel once with **Connect a
+   YouTube channel**, and can switch channels, **Reconnect YouTube**, or **Check again** while a new
+   channel waits out YouTube's 24 hours before it can stream. Members go live on that channel with no
+   YouTube setup of their own. The owner also renames the team, invites people (**Invite people**, by
+   email or with a link and an eight-character code), revokes invites and removes members. Anyone can
+   **Leave team**.
+4. **Links.** `https://scorebug.live/invite/<code>` opens a team invite and
+   `https://scorebug.live/join/<code>` joins one match as a scorer. The app always asks before it
+   joins. The Worker serves the `apple-app-site-association` file for these universal links.
+5. **New match.** Team 1 starts as your team. Set each team's name, short name (up to 8 characters,
+   filled in from the name) and color, the format (best of 3 or best of 5), the scorebug style on the
+   stream (Bar, Lower third or Set card), **Stream to** (the team's channel or Record only) and
+   **Record in 4K**. The sheet remembers the last opponent. **Go live** starts recording and the
+   stream together. **Record only, don't stream** records without a stream. Go live is off, with the
+   reason, when the team has no channel or the channel needs attention.
+6. **Live (landscape).** The phone records 1080p, or 4K when Record in 4K is on. When live, it also
+   publishes SRT to the match's own Cloudflare Stream input; the server burns in the score and sends
+   it to YouTube. Tap the left or right half of the picture to give the team on that side a point.
+   **Undo**, **Swap sides**, **Invite scorer** (a QR code, a six-character code and a share link),
+   **Watch link** (the match's YouTube link) and **End**. The status line reads like
+   `REC 1080p · 720p out · good`. A stream problem shows as a banner, sometimes with **Go live
+   again**. The recording never stops because of the stream.
+7. **Set point.** The scorer confirms the set ("Cascade wins set 3?"): **End set** or **End match**,
+   **Undo last point**, or **Keep playing**. After a set ends: "Teams switching sides?" with **Yes,
+   switch** or **Keep sides**.
+8. **Second phone.** A team member taps **Score** on Home. Anyone else joins with the code or the
+   link. The scorer screen is portrait, with two large team-colored halves, **Undo**, **Swap sides**
+   and the same set-point prompts. Scoring moves to the phone that last took it; the other phone
+   shows **Take over**.
+9. **Recordings.** Each recording with its teams and result, date, length, resolution and size.
+   **Play**, **Save to Photos** and **Share**. Recordings stay on the phone.
+10. **Settings.** Name and email, and **Sign out**.
+
+Debug builds can use another server: the **Server** button on the sign-in screen, Settings →
+Developer, or the `SCOREBUG_TEST_API_URL` environment variable. Changing the server signs you out.
 
 ### Watch
 
-No Watch setup. When its paired iPhone has a match open (filming or scoring), the
-Watch shows two team-colored halves ordered by court side: tap to score,
-long-press or the undo button to undo, swap sides, the set-point confirm and a
-LIVE indicator. Taps go to the iPhone over WatchConnectivity and run through the
-iPhone's own scoring outbox, so the Watch never holds a server credential. The
-iPhone keeps the latest state in the application context, so the Watch shows the
-match as soon as it opens. The iPhone must be in Bluetooth/Wi-Fi range.
+The Watch needs no setup. While the paired iPhone has a match open, filming or scoring, the Watch
+shows two team-colored halves in court-side order: tap to score, long-press or the undo button to
+undo, swap sides, the set-point prompt and a LIVE indicator. Taps go to the iPhone over
+WatchConnectivity and run through the iPhone's own scoring outbox, so the Watch holds no server
+credential. With no match open the Watch shows "No match yet". It needs the iPhone in range.
 
 ## Build and test
 
+Install XcodeGen and use Xcode 26.2, the version CI uses. If you have several Xcodes, point
+`DEVELOPER_DIR` at 26.2. Run these from the repository root; they are the steps in
+`.github/workflows/native.yml`.
+
 ```sh
 brew install xcodegen
-export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer   # match CI
 xcodegen generate --spec ios/Project.yml
+
 swift test --package-path ios/Packages/ScorebugCore --scratch-path ios/.build/core
 swift test --package-path ios/Packages/ScorebugMedia --scratch-path ios/.build/media
 swift test --package-path ios/Packages/ScorebugStreaming --scratch-path ios/.build/streaming
+
 xcodebuild test -project ios/Scorebug.xcodeproj -scheme ScorebugModelTests \
   -destination 'platform=macOS' -derivedDataPath ios/DerivedData/Model \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+
 xcodebuild build -project ios/Scorebug.xcodeproj -scheme Scorebug \
-  -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/DerivedData/NativeCI \
+  -configuration Debug -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath ios/DerivedData/NativeCI \
   ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
 ```
 
-Simulator builds that touch the Keychain need ad hoc signing
-(`CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-`); unsigned builds fail with -34018.
-Debug Simulator builds record a generated test picture and tone through the same
-recorder as the camera, and show a drawn court in place of the camera preview.
+The last command builds the iPhone app with the embedded Watch app. To run it, open
+`ios/Scorebug.xcodeproj` and run the **Scorebug** scheme. Simulator builds that use the Keychain
+need ad hoc signing (`CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-`).
 
-### Screenshot tour against a local server
+Debug Simulator builds record a generated test picture and tone through the same recorder as the
+camera, and show a drawn court in place of the camera preview.
 
-`ios/AppUITests/ScreenTourTests.swift` signs in, hits the private beta screen, creates a
-team, invites, joins a second team by code and scores its match. It runs against the
-real Worker app in `ios/AppUITests/LocalWorker`, with a stand-in Google that signs in as
-whoever `POST /dev/identity` (`{"email": …, "name": …}`) names, and the Worker tests'
-in-memory YouTube, Stream and match container (so Go Live returns a watch link, while the
-SRT publish goes nowhere). Use `127.0.0.1`, not
-`localhost`: the web sign-in sheet tries IPv6 first and the Worker listens on IPv4.
+Debug builds read these environment variables. Release builds ignore them.
+
+| Variable                | What it does                                      | Where                  |
+| ----------------------- | ------------------------------------------------- | ---------------------- |
+| `SCOREBUG_TEST_API_URL` | The server to use                                 | Debug builds           |
+| `SCOREBUG_TEST_LINK`    | A team invite or match join link to open on start | Debug builds           |
+| `SCOREBUG_TEST_RESET`   | `1` starts signed out, with no open match         | Debug Simulator builds |
+
+To try the Watch on simulators, run the **Scorebug** scheme on an iPhone simulator that has a paired
+Watch simulator, then run the **ScorebugWatch** scheme on that Watch from Xcode, and open a match on
+the phone.
+
+### Screenshot tour against a local Worker
+
+`AppUITests/ScreenTourTests.swift` signs in, hits the private beta screen, creates a team, connects
+YouTube, invites a member, joins a second team by code, scores its match and goes live. It saves a
+screenshot of each screen. It runs against `AppUITests/LocalWorker`: the real Worker app with a
+stand-in Google that signs in as whoever `POST /dev/identity` (`{"email": …, "name": …}`) names, and
+the Worker tests' in-memory YouTube, Stream and match container. Go live returns a watch link, but
+the SRT stream goes nowhere. Use `127.0.0.1`, not `localhost`.
+
+Start the local Worker:
 
 ```sh
 pnpm --filter @scorebug/protocol build
@@ -128,29 +149,33 @@ xcodebuild test -project ios/Scorebug.xcodeproj -scheme Scorebug \
   SCOREBUG_TEST_TOUR=/tmp/scorebug-shots SCOREBUG_TEST_API_URL=http://127.0.0.1:8787
 ```
 
-Debug Simulator builds honor `SCOREBUG_TEST_RESET=1` (signed out, no open match),
-`SCOREBUG_TEST_API_URL` (server) and `SCOREBUG_TEST_LINK` (open a link on launch);
-Release builds ignore all three.
+`SCOREBUG_TEST_TOUR` is the folder for the PNGs. Without it the test is skipped.
 
-To try the Watch on simulators, run the **Scorebug** scheme on an iPhone simulator
-that has a paired Watch, then run the **ScorebugWatch** scheme on that Watch from
-Xcode, and start a match on the phone. What was seen while building this with
-`simctl` only (no Xcode Run): one simctl-created pair's phone had a broken IDS
-service (`WCSession` never finished activating); on a fresh pair activation
-worked, but a Watch app installed with `simctl install` is "not installed" to the
-phone and neither side reports the other reachable, and installing the phone app
-did not push the embedded Watch app through pairing. The Watch then shows "Keep
-your iPhone nearby with Scorebug open." The mirror itself (state, intents,
-court-side order, set point) is covered by unit tests in ScorebugCore and the
-model tests.
+## Release
 
-### Needs a real device
+Every push to `main` that changes `ios/**`, `vendor/HaishinKit/**` or `native.yml` runs the
+**TestFlight upload** job in `.github/workflows/native.yml` after the tests and build pass. It runs
+`release/testflight.sh` with an App Store Connect API key from the `ASC_KEY_ID`, `ASC_ISSUER_ID` and
+`ASC_KEY_P8` secrets; without them the upload is skipped with a notice. Afterwards it revokes the
+development certificate the archive created on the runner (`release/certs.swift`). The internal
+TestFlight group gets every build once Apple has processed it.
 
-- Camera capture and preview orientation in landscape, thermal behavior in 4K.
-- Universal links from Messages or Safari (needs the AASA file live on scorebug.live).
-- SRT streaming over a real network, and the stream banner on weak networks.
-- WatchConnectivity between a physical iPhone and Watch: open Scorebug on the
-  iPhone, start a match, raise the Watch and open Scorebug. Check that taps score
-  within a second, the haptic plays, long-press undoes, and the set-point screen
-  appears. Then walk away until the Watch says "iPhone out of reach" and come back.
-- Save to Photos (permission prompt) and the share sheet.
+`release/testflight.sh` does the same by hand. It needs an Admin App Store Connect API key at
+`~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8` (or `ASC_KEY_PATH`):
+
+```sh
+TEAM_ID=… ASC_KEY_ID=… ASC_ISSUER_ID=… ios/release/testflight.sh
+```
+
+The build number is the UTC time (`YYYYMMDDHHMM`) unless `BUILD_NUMBER` is set. The version users
+see is `MARKETING_VERSION` in `Project.yml`.
+
+## Needs a real device
+
+- Camera capture, the landscape preview and heat over a full match in 4K.
+- Universal links from Messages or Safari.
+- SRT streaming over a real network, and the stream banner on a weak network.
+- WatchConnectivity between a physical iPhone and Watch: taps score within a second, the haptic
+  plays, long-press undoes and the set-point prompt appears. Walk away until the Watch says "iPhone
+  out of reach", then come back.
+- Save to Photos (the permission prompt) and the share sheet.

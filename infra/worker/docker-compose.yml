@@ -21,7 +21,6 @@ services:
     env_file: ./worker.env
     environment:
       FFMPEG_PATH: /usr/bin/ffmpeg
-      FFPROBE_PATH: /usr/bin/ffprobe
       SCORE_DIR: /tmp/scorebug-worker
     healthcheck:
       # Healthy = the worker process is up and the control plane accepts its URL,

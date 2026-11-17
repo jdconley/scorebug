@@ -14,12 +14,8 @@ describe('media tool configuration', () => {
     const config = loadConfig({
       ...base,
       FFMPEG_PATH: '/opt/media/ffmpeg',
-      FFPROBE_PATH: '/opt/media/ffprobe',
     });
-    expect(config).toMatchObject({
-      FFMPEG_PATH: '/opt/media/ffmpeg',
-      FFPROBE_PATH: '/opt/media/ffprobe',
-    });
+    expect(config).toMatchObject({ FFMPEG_PATH: '/opt/media/ffmpeg' });
   });
   it('rejects empty explicit binary paths', () => {
     expect(() => loadConfig({ ...base, FFMPEG_PATH: '' })).toThrow();

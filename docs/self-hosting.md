@@ -1,64 +1,62 @@
 # Self-hosting Scorebug
 
-This guide sets up your own Scorebug server with one command. You need a Linux
-machine with Docker, a domain name, and a YouTube stream key. No Scorebug account
-or paid service is involved.
+[scorebug.live](https://scorebug.live) is the hosted Scorebug: sign in from the app
+and there is nothing to install. This guide is for running your own server instead.
+
+> **The current iPhone app does not work with a self-hosted server.** The app signs
+> in with Google and uses team routes that only the hosted service serves; it no
+> longer opens the setup links this server prints. The server, relay and worker
+> below still build and pass CI, and you can test them without a phone
+> ([Test without a phone](#test-without-a-phone)), but no phone can film to them.
+
+You need a Linux machine with Docker, a domain name, and a YouTube stream key. No
+Scorebug account or paid service is involved. One installer script sets everything
+up.
 
 ## How it fits together
 
 ```
 iPhone ──SRT (UDP 8890)──▶ relay ──SRT──▶ worker ──RTMPS──▶ YouTube
-   │                         ▲               │
-   └──HTTPS (TCP 443)──▶ Caddy ─▶ API ◀───────┘ (HTTPS, worker polls)
+   │                                         │
+   └──HTTPS (TCP 443)──▶ Caddy ─▶ API ◀──────┘ (HTTPS, worker polls)
 ```
 
 - **API** (control plane): keeps matches and scores in a SQLite file and hands
   out short-lived SRT credentials.
-- **Relay** (MediaMTX): receives the phone's video over SRT. The API manages it
-  through a private management port that is never exposed.
+- **Relay** (MediaMTX, built from `vendor/MediaMTX`): receives the phone's video
+  over SRT. The API manages it through a management port that is never exposed.
 - **Caddy**: HTTPS in front of the API, with an automatic Let's Encrypt
   certificate.
-- **Worker**: pulls the video from the relay, burns in the scorebug with FFmpeg
-  and pushes it to YouTube. It only makes outbound connections.
+- **Worker** (the broadcast worker, `apps/home-daemon`): pulls the video from the
+  relay, burns in the scorebug with FFmpeg and pushes it to YouTube. It only makes
+  outbound connections. See [its README](../apps/home-daemon/README.md).
 
 The phone has to reach the relay from any gym, so the API and relay need a public
 address. The worker can run next to them or at home.
 
 ## Pick a topology
 
-|                       | All-in-one                             | Split                                          |
-| --------------------- | -------------------------------------- | ---------------------------------------------- |
-| Where the worker runs | Same server                            | A machine at home (Linux Docker or macOS)      |
-| Server size           | Enough CPU to encode video (see below) | Smallest VPS is fine                           |
-| Home network          | Not involved                           | Outbound connections only; open no ports       |
-| Good for              | One box, simplest setup                | ~$5/month VPS plus a home machine that encodes |
+|                       | All-in-one                 | Split                                        |
+| --------------------- | -------------------------- | -------------------------------------------- |
+| Where the worker runs | Same server                | A machine at home (Linux Docker or macOS)    |
+| Server size           | Enough CPU to encode video | The smallest VPS is fine                     |
+| Home network          | Not involved               | Outbound connections only; open no ports     |
+| Good for              | One box, simplest setup    | A small VPS plus a home machine that encodes |
 
 You can switch later by re-running the installer with the other `--topology`.
 
-### CPU needs for the worker
+### CPU for the worker
 
-The worker decodes the phone's stream, scales it, draws the scorebug and
-re-encodes it with x264 `veryfast`. Measured with `docker stats` on an Apple
-Silicon Mac running Docker Desktop (arm64), feeding a synthetic test pattern for
-about a minute per profile:
+The self-hosted worker encodes in software with x264 (`veryfast`). It decodes the
+phone's stream, scales it, draws the scorebug and re-encodes it, all in real time.
+As a starting point for all-in-one, plan on at least 2 vCPU for `720p30` (the
+installer's default) and 4 vCPU, preferably dedicated, for `1080p30`. If the stream
+stutters or the worker falls behind, use a smaller profile, a bigger server, or the
+split topology.
 
-| Profile            | Worker CPU measured | Suggested server for all-in-one    |
-| ------------------ | ------------------- | ---------------------------------- |
-| `720p30` (3 Mbps)  | ~0.4 of one core    | 2 vCPU minimum, 4 vCPU comfortable |
-| `1080p30` (6 Mbps) | ~0.6 of one core    | 4 vCPU                             |
-
-Treat these as a floor. Cloud vCPUs are usually one hyperthread of a slower
-x86 core (roughly half an Apple core), and real gym footage with motion is
-harder to encode than a test pattern. Plan on 2 vCPU for `720p30` and 4 vCPU
-(preferably dedicated) for `1080p30`; these x86 figures are estimates, not
-measurements. If the stream stutters or the
-worker log shows it falling behind, drop to `720p30` or move to the split
-topology. The API, relay and Caddy together idle at about 120 MB of RAM and
-almost no CPU.
-
-Bandwidth on the server is roughly twice the stream bitrate while live (phone in,
-worker out): about 3 GB per hour at `1080p30` in split mode, much less for
-all-in-one because the worker reads the relay locally.
+While live, the server receives the phone's stream and sends a stream out: to
+YouTube (all-in-one) or to the home worker (split). Budget roughly twice the
+stream bitrate.
 
 ## Prerequisites
 
@@ -72,8 +70,8 @@ all-in-one because the worker reads the relay locally.
    need a trusted HTTPS certificate.
 4. **A YouTube stream key.** In YouTube Studio choose _Go live → Stream_. Copy
    the _Stream URL_ and _Stream key_.
-5. **A checkout of this repository** on the server (`git clone`), plus `curl`
-   (used for health checks; usually already installed).
+5. **A Git checkout of this repository** on the server (`git clone`), plus `curl`
+   for the health checks.
 
 ## DNS
 
@@ -96,8 +94,9 @@ before installing; Caddy needs it to get a certificate.
 | 8890 | UDP      | Phones, home worker | SRT video in (phone) and out (home worker)          |
 | 22   | TCP      | You                 | SSH; restrict to your own addresses if you can      |
 
-Nothing else needs to be open. The API (8787) and relay management (9997) ports
-stay on Docker's private network. A home worker needs **no** inbound ports.
+Nothing else needs to be open. Caddy also listens on UDP 443 for HTTP/3; opening it
+is optional. The API (8787) and relay management (9997) ports stay on Docker's
+private network. A home worker needs no inbound ports.
 
 With `ufw`, for example:
 
@@ -119,14 +118,15 @@ It asks three things: the topology (choose 1), your domain, and the YouTube
 Stream URL and key (the key is not echoed). Then it:
 
 1. checks Docker and Compose,
-2. generates four independent 256-bit secrets from `/dev/urandom` into
-   `infra/vps/.env` with mode `0600`,
+2. writes `infra/vps/.env` with mode `0600`, including three independent 256-bit
+   secrets from `/dev/urandom` (`SERVER_SECRET`, `HOME_TOKEN`,
+   `RELAY_API_PASSWORD`),
 3. builds the images from this checkout (several minutes the first time),
 4. starts Caddy, the API, the relay and the worker,
 5. waits until `https://your-domain/healthz` answers through Caddy and the worker
    reports healthy,
 6. saves the YouTube URL and key as the default streaming destination
-   ("YouTube") the first time,
+   ("YouTube"),
 7. prints a one-time phone setup link (with a QR code) and next steps.
 
 For scripts or automation, pass everything as flags (or `SCOREBUG_*`
@@ -137,8 +137,9 @@ infra/install.sh --yes --topology all-in-one --domain scorebug.example.com \
   --rtmp-url rtmps://a.rtmp.youtube.com/live2 --stream-key "$YOUTUBE_STREAM_KEY"
 ```
 
-`--video-profile 1080p30` changes the output resolution (default `720p30`).
-Run `infra/install.sh --help` for every option.
+`--video-profile` sets the output resolution: `240p30`, `360p30`, `540p30`,
+`720p30` (default), `1080p30` or `2160p30`. Run `infra/install.sh --help` for every
+option.
 
 ## Install: split
 
@@ -151,7 +152,7 @@ infra/install.sh --topology split
 This runs Caddy, the API and the relay only. It also writes
 `infra/vps/worker.env` (mode `0600`) with everything the home worker needs, and
 prints the commands below. That file contains the worker token and your stream
-key; copy it privately, for example with `scp`, and delete stray copies.
+key. Copy it privately, for example with `scp`, and delete stray copies.
 
 ### At home: Linux with Docker
 
@@ -168,10 +169,23 @@ HTTPS and SRT and out to YouTube over RTMPS. Nothing listens at home.
 
 ### At home: macOS
 
-Use the launchd service described in [macOS worker service](macos-worker-service.md).
-The server install prints a ready-made `worker.env` for macOS (VideoToolbox
-encoder, Homebrew `ffmpeg-full` paths). Replace `YOUR_USER` in `SCORE_DIR`, then
-follow that guide's "Check, run, install and stop" section.
+On a Mac the worker runs as a plain Node process and can use the VideoToolbox
+hardware encoder. You need Node 22.13 or later, pnpm 9.15.0
+(`corepack enable`), and Homebrew's `ffmpeg-full` (`brew install ffmpeg-full`).
+
+The split install prints a `worker.env (macOS)` block: the same settings with
+`ENCODER=videotoolbox` and the Homebrew FFmpeg path. Save it as `worker.env`
+(mode `0600`) and replace `YOUR_USER` in `SCORE_DIR`. Then, from a checkout of the
+same revision as the server:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter @scorebug/home-daemon... -r build
+node --env-file=worker.env apps/home-daemon/dist/index.js
+```
+
+The worker logs one JSON line per event to the terminal and stops on Ctrl-C. Keep it
+running for the whole match.
 
 ## Phone setup
 
@@ -191,7 +205,7 @@ hours. For another phone, or if the link expired, print a new one:
 infra/install.sh phone
 ```
 
-That runs the setup-link command inside the API container; you can also run it
+That runs the setup-link command inside the API container. You can also run it
 directly:
 
 ```bash
@@ -208,15 +222,17 @@ docker compose -f infra/vps/docker-compose.yml exec control-plane \
   node apps/control-plane/dist/cli.js revoke-device DEVICE_ID
 ```
 
-At the game you never need the server: the filming phone starts the match and
+At the game you don't touch the server. The filming phone starts the match and
 shares an invite (QR code, link or a short code like `K7P-4QX`) so other phones
 can keep score. See [the API reference](api.md).
 
 ## Test without a phone
 
-Before a real match, you can push a test pattern through the whole chain. Run
-this in the server's checkout (it reads `infra/vps/.env`); it needs Node 22 and
-an FFmpeg build that includes SRT (on macOS: `brew install ffmpeg-full`):
+Before a real match, you can push a test pattern through the whole chain. Point
+your stream key at a private or unlisted YouTube stream first.
+
+Run this in the server's checkout (it reads `infra/vps/.env`). It needs Node 22 and
+an FFmpeg build that includes SRT:
 
 ```bash
 node infra/smoke-broadcast.mjs start > publish-url.txt
@@ -227,17 +243,20 @@ node infra/smoke-broadcast.mjs stop    # also revokes the test phone
 rm publish-url.txt
 ```
 
-Without Node on the server, run the script in a container instead, and give it a
-setup link from `infra/install.sh phone` (the container cannot mint one):
-`docker run --rm -v "$PWD/infra:/infra" node:22-alpine node /infra/smoke-broadcast.mjs start 'scorebug://connect?…'`.
+`smoke-broadcast.mjs start` mints a one-time setup link with `docker compose exec`,
+sets itself up as a phone, creates a test match, and starts a broadcast the same way
+the phone does. The server picks your worker. It prints the SRT publish URL, which
+contains a one-time secret. Within a few seconds the worker log shows
+`producing_output`, and the test pattern with a Home vs Away scorebug at 0–0
+appears in your YouTube stream preview.
 
-`smoke-broadcast.mjs start` sets itself up as a phone with a one-time setup link,
-creates a test match and starts a broadcast exactly as the phone does (the server
-picks your worker), and prints the SRT publish URL
-(which contains a one-time secret). Within a few seconds the worker log shows
-`producing_output` and the test pattern with a `HOME 0-0 AWAY` scorebug appears
-on your YouTube stream preview. Point your output at a private or unlisted
-YouTube stream first.
+Without Node on the server, run the script in a container and give it a setup link
+from `infra/install.sh phone` (the container cannot mint one):
+
+```bash
+docker run --rm -v "$PWD/infra:/infra" node:22-alpine \
+  node /infra/smoke-broadcast.mjs start 'scorebug://connect?…'
+```
 
 ## Checking health
 
@@ -245,18 +264,18 @@ YouTube stream first.
 infra/install.sh status
 ```
 
-This shows the containers, checks `/healthz` through Caddy, and for all-in-one
-prints the worker's status line, for example:
+This shows the containers, checks `/healthz` through Caddy and through public DNS,
+and for all-in-one prints the worker's status line, for example:
 
 ```
 worker_health=ok worker=local-worker idle
-worker_health=ok worker=local-worker match=1c4f...   (a broadcast is assigned)
-worker_health=fail reason=http_401 worker=local-worker   (wrong HOME_TOKEN)
+worker_health=ok worker=local-worker match=1c4f...        (a broadcast is assigned)
+worker_health=fail reason=http_401 worker=local-worker    (wrong HOME_TOKEN)
 ```
 
-The same check runs as the worker container's Docker healthcheck
-(`docker compose ps` shows `healthy`). It proves the worker is running and its
-URL, token and worker ID are accepted by the API. It does not prove video is
+The same check (`infra/worker-health.mjs`) is the worker container's Docker
+healthcheck (`docker compose ps` shows `healthy`). It proves the worker is running
+and that the API accepts its URL, token and worker ID. It does not prove video is
 flowing; the phone's streaming screen shows that.
 
 Logs:
@@ -275,11 +294,12 @@ git pull
 infra/install.sh
 ```
 
-Re-running keeps your secrets and settings (they are read back from
-`infra/vps/.env`), rebuilds the images for the new revision, and restarts only
-what changed. Images are tagged with the Git revision, so the previous ones stay
-available. To roll back: `git checkout <previous-revision>`, restore the matching
-database backup if the new version changed it, and run `infra/install.sh` again.
+Re-running keeps your secrets and settings (it reads them back from
+`infra/vps/.env`), rebuilds the images for the new revision, and recreates the
+containers that changed. The API and worker images are tagged with the Git
+revision, so the previous ones stay available. To roll back: `git checkout
+<previous-revision>`, restore the matching database backup if the new version
+changed it, and run `infra/install.sh` again.
 
 For a split setup, upgrade the home worker to the same revision afterwards:
 
@@ -288,11 +308,10 @@ git pull
 infra/install.sh worker
 ```
 
-Never run two workers with the same worker ID at once.
+On macOS, `git pull`, then run the install and build commands again and restart
+the worker.
 
-If you deployed from `infra/vps` before this installer existed, your volumes are
-named `vps_*` instead of `scorebug_*`. Run the installer with
-`COMPOSE_PROJECT_NAME=vps` set to keep using them.
+Never run two workers with the same worker ID at once.
 
 ## Backups
 
@@ -300,9 +319,9 @@ Everything that matters on the server is:
 
 - `infra/vps/.env`: your secrets and settings (private).
 - The `scorebug_control_data` Docker volume: the SQLite database
-  (`scorebug.sqlite` plus its `-wal`/`-shm` files) with matches, scores and
-  credentials.
-- The `scorebug_caddy_data` volume: certificates (Caddy re-issues them if lost).
+  (`scorebug.sqlite` plus its `-wal`/`-shm` files) with matches, scores,
+  credentials and streaming destinations.
+- The `scorebug_caddy_data` volume: certificates (Caddy issues new ones if lost).
 
 Back up the database while the API is stopped so the copy is consistent:
 
@@ -323,34 +342,35 @@ docker compose -f infra/vps/docker-compose.yml start control-plane
 ```
 
 Keep `.env` and database backups somewhere private. `docker compose down` keeps
-the volumes; `docker compose down --volumes` **deletes your matches**.
+the volumes; `docker compose down --volumes` deletes your matches.
 
-The phone keeps its own clean recording of every match; the server does not back
-that up.
+The phone keeps its own recording of every match, without the scorebug. The server
+does not back that up.
 
 ## Rotating secrets
 
-Rotate if a token leaked or a phone was lost, between matches (not while live):
+Rotate if a token leaked, between matches (not while live):
 
 ```bash
 infra/install.sh --rotate-secrets
 ```
 
-This replaces the server secrets (`SERVER_SECRET`, `HOME_TOKEN`,
-`RELAY_API_PASSWORD`) and restarts the stack. Afterwards:
+This replaces `SERVER_SECRET`, `HOME_TOKEN` and `RELAY_API_PASSWORD` and restarts
+the stack. Afterwards:
 
-- phones keep working (their credentials are stored in the database; revoke a
-  lost one with `revoke-device`, see Phone setup),
-- a split home worker needs the new `infra/vps/worker.env` copied over and
-  `infra/install.sh worker --env-file ./worker.env` run again (all-in-one picks
-  it up automatically).
+- Phones keep working. Their credentials are stored in the database; revoke a
+  lost phone with `revoke-device` (see Phone setup).
+- An all-in-one worker picks up the new token automatically. A split home worker
+  needs the new `infra/vps/worker.env`: copy it over and run
+  `infra/install.sh worker --env-file ./worker.env` again (on macOS, update its
+  `HOME_TOKEN` and restart it).
 
-Matches already in the database stay, but a broadcast that was set up before the
-rotation must be started again from the phone.
+Matches in the database stay, but a broadcast that was set up before the rotation
+must be started again from the phone.
 
 To change only the YouTube stream key, re-run the installer with
 `--rtmp-url ... --stream-key ...`. It updates the default destination and the
-worker's fallback `OUTPUT_URL`; no other secret changes.
+worker's fallback `OUTPUT_URL`; no secret changes.
 
 ## Troubleshooting
 
@@ -367,15 +387,15 @@ again with a new link from `infra/install.sh phone`.
 within 24 hours. Print a new one with `infra/install.sh phone`.
 
 **The phone connects but streaming never starts.** The phone could not reach the
-relay over UDP 8890. Check the firewall rule is UDP (not TCP) and, for a home
-box, that the router forwards UDP 8890. Some guest Wi-Fi networks block
-non-web UDP; try cellular.
+relay over UDP 8890. Check that the firewall rule is UDP (not TCP) and, for a home
+box, that the router forwards UDP 8890. Some guest Wi-Fi networks block non-web
+UDP; try cellular.
 
-**Worker is `unhealthy` / `worker_health=fail`.** The status line says why:
-`http_401` means the worker's `HOME_TOKEN` does not match the server (copy the
-current `worker.env` again); `unreachable` or `timeout` means it cannot reach
-the API URL (check DNS and HTTPS from that machine with
-`curl https://your-domain/healthz`).
+**Worker is `unhealthy` / `worker_health=fail`.** The status line says why.
+`http_401` means the worker's `HOME_TOKEN` does not match the server: copy the
+current `worker.env` again. Any other reason (`timeout`, `unreachable` or a network
+error code such as `ECONNREFUSED`) means it cannot reach the API URL. Check DNS and
+HTTPS from that machine with `curl https://your-domain/healthz`.
 
 **Worker stuck in `waiting_source`.** The broadcast is assigned but no video is
 arriving at the relay yet, or (split) the home machine cannot reach UDP 8890 on
@@ -383,9 +403,9 @@ the server. Test from home with the smoke test above.
 
 **Nothing appears on YouTube.** Check the worker log for RTMP errors. A wrong or
 expired stream key fails immediately; re-run the installer with the new key.
-`worker_output_missing` in the worker log means the match has no destination
-and the worker has no fallback `OUTPUT_URL`.
-YouTube can take 10–20 seconds to show a new stream in the preview.
+`worker_output_missing` in the worker log means the match has no destination and
+the worker has no fallback `OUTPUT_URL`. YouTube can take 10–20 seconds to show a
+new stream in the preview.
 
 **Video stutters or the worker falls behind.** The server is short on CPU. Use a
 smaller profile (`--video-profile 720p30`), a bigger server, or the split
@@ -393,30 +413,33 @@ topology.
 
 ## Trying it on a laptop
 
-You can run the whole all-in-one stack locally to see it work. Use a
-`.localhost` name (Caddy then uses its own private certificate authority) and
-other ports if 80/443 are taken:
+You can run the whole all-in-one stack locally to see it work. Use a `.localhost`
+name (Caddy then uses its own private certificate authority) and other ports if
+80 and 443 are taken. Start the mock YouTube from `docker-compose.dev.yml`
+(MediaMTX with `infra/local/sink.yml`, RTMP on `127.0.0.1:11935`) and send the
+output there:
 
 ```bash
+docker compose -f docker-compose.dev.yml up -d sink
 infra/install.sh --yes --topology all-in-one --domain scorebug.localhost \
   --http-port 18080 --https-port 18443 \
   --output-url 'rtmp://host.docker.internal:11935/live/fixture?user=qa-worker&pass=qa-output-not-production'
 ```
 
-That output URL points at a local mock YouTube (`bluenviron/mediamtx:1.21.0`
-with `infra/local/sink.yml`, as in `docker-compose.dev.yml`). Run the smoke test
-with `SCOREBUG_INSECURE_TLS=1` so Node accepts the private certificate.
+Run the smoke test with `SCOREBUG_INSECURE_TLS=1` so Node accepts the private
+certificate.
 
-On **Docker Desktop for Mac**, add `--srt-bind 127.0.0.1`. Its UDP port
-forwarding on all interfaces drops reply packets, so SRT from the host only works
-when the relay port is bound to loopback. Linux Docker Engine does not have this
-problem; never use `--srt-bind` on a real server.
+On Docker Desktop for Mac, add `--srt-bind 127.0.0.1`. Its UDP port forwarding on
+all interfaces drops reply packets, so SRT from the host only works when the relay
+port is bound to loopback. Linux Docker Engine does not have this problem; never use
+`--srt-bind` on a real server.
 
 Remove a local test completely (this deletes its database):
 
 ```bash
 docker compose -f infra/vps/docker-compose.yml --profile worker down --volumes
-rm infra/vps/.env infra/vps/worker.env
+rm -f infra/vps/.env infra/vps/worker.env
+docker compose -f docker-compose.dev.yml down
 ```
 
 ## What lives where
@@ -424,9 +447,10 @@ rm infra/vps/.env infra/vps/worker.env
 | Path                              | What it is                                                     |
 | --------------------------------- | -------------------------------------------------------------- |
 | `infra/install.sh`                | The installer (`server`, `worker`, `status`, `phone`)          |
-| `infra/vps/docker-compose.yml`    | Server stack; `--profile worker` adds the all-in-one worker    |
+| `infra/vps/`                      | Server stack; see [its README](../infra/vps/README.md)         |
 | `infra/vps/.env`                  | Generated secrets and settings (private, not in Git)           |
 | `infra/vps/worker.env`            | Split topology: settings to copy to the home machine (private) |
 | `infra/worker/docker-compose.yml` | Home worker stack for the split topology                       |
 | `infra/worker-health.mjs`         | Worker health probe used by Docker and the installer           |
-| `infra/smoke-broadcast.mjs`       | Starts/stops a test broadcast like the phone does              |
+| `infra/smoke-broadcast.mjs`       | Starts and stops a test broadcast the way the phone does       |
+| `infra/local/`                    | Public test configs for the local relay and mock YouTube       |

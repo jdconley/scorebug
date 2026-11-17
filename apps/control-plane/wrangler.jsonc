@@ -41,7 +41,7 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TeamObject"] }],
   // Each team object runs at most one match container at a time (one active match per
-  // team): the home-daemon worker image, pulling Stream SRT and pushing RTMPS to YouTube.
+  // team): the home-daemon worker image, pulling Stream's RTMPS playback and pushing RTMPS to YouTube.
   "containers": [
     {
       "class_name": "TeamObject",

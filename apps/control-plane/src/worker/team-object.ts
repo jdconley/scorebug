@@ -112,7 +112,7 @@ function durableContainer(
       const exports = (ctx as unknown as { exports: Exports }).exports;
       const image = container.images.base;
       if (!image) throw new Error('container_image_missing');
-      // The only intercept: the worker's control API. Stream (SRT) and YouTube (RTMPS) are
+      // The only intercept: the worker's control API. Stream and YouTube (both RTMPS) are
       // direct, and nothing in the container holds a credential for the team object.
       await container.interceptOutboundHttp(
         'api.internal',

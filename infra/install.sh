@@ -29,7 +29,7 @@ server (default) - install or upgrade Caddy + API + SRT relay (+ worker)
   --output-url URL             full RTMP(S) URL including the stream key, or:
   --rtmp-url URL               YouTube "Stream URL" (rtmps://a.rtmp.youtube.com/live2)
   --stream-key KEY             YouTube "Stream key"
-  --video-profile NAME         240p30 360p30 540p30 720p30 1080p30 (default 720p30)
+  --video-profile NAME         240p30 360p30 540p30 720p30 1080p30 2160p30 (default 720p30)
   --http-port N --https-port N host ports for Caddy (default 80 and 443)
   --srt-bind ADDR              host address for the SRT port (default: all).
                                Use 127.0.0.1 only to test on Docker Desktop
@@ -452,13 +452,11 @@ print_split_worker() {
   say 'Linux home machine with Docker, from a Scorebug checkout:'
   say '  infra/install.sh worker --env-file ./worker.env'
   say ''
-  say 'macOS home machine: use the launchd service in docs/macos-worker-service.md.'
+  say 'macOS home machine: see "At home: macOS" in docs/self-hosting.md.'
   say 'Start from the same values, add the macOS paths, and keep the file private:'
   say '----- worker.env (macOS) -----'
   sed -e '/^#/d' -e 's/^ENCODER=software$/ENCODER=videotoolbox/' "$SPLIT_WORKER_ENV"
   say 'FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg'
-  say 'FFPROBE_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffprobe'
-  say 'FONT_PATH="/System/Library/Fonts/Supplemental/Arial.ttf"'
   say 'SCORE_DIR="/Users/YOUR_USER/Library/Application Support/ScorebugWorker/state"'
   say '------------------------------'
   say 'The worker only makes outbound connections; open no ports at home.'
