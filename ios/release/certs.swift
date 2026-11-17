@@ -69,12 +69,24 @@ func bearer() throws -> String {
   return input + "." + base64URL(try key.signature(for: Data(input.utf8)).rawRepresentation)
 }
 
+// App Store Connect answers 5xx now and then; a revoke that gives up leaks the runner's
+// certificate, so server errors and dropped connections get a few tries with backoff.
 func send(_ method: String, _ url: URL) async throws -> JSON {
   var request = URLRequest(url: url)
   request.httpMethod = method
-  request.setValue("Bearer \(try bearer())", forHTTPHeaderField: "Authorization")
-  let (data, response) = try await URLSession.shared.data(for: request)
-  let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+  var data = Data(), status = 0
+  for attempt in 1...4 {
+    request.setValue("Bearer \(try bearer())", forHTTPHeaderField: "Authorization")
+    do {
+      let (body, response) = try await URLSession.shared.data(for: request)
+      data = body
+      status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    } catch where attempt < 4 {
+      status = 0
+    }
+    if status != 0 && status < 500 { break }
+    if attempt < 4 { try await Task.sleep(for: .seconds(Double(attempt * attempt) * 2)) }
+  }
   let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
   guard (200..<300).contains(status) else {
     let details = (json["errors"] as? [JSON] ?? []).map { "\($0["title"] ?? ""): \($0["detail"] ?? "")" }
