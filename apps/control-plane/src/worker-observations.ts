@@ -12,7 +12,6 @@ import {
 } from '@scorebug/protocol';
 import { canonical } from './canonical-json.js';
 import type { MediaStore } from './media-store.js';
-import { MediaStateError } from './media-state.js';
 
 export class WorkerObservationError extends Error {
   constructor(
@@ -35,19 +34,12 @@ type Report = {
   /** Monotonic receipt time; freshness never depends on wall clocks. */
   receivedAt: number;
   observedAt: number;
-  /** This generation produced output at least once, so a later gap is a reconnect. */
-  wasLive: boolean;
 };
 type Counters = Pick<WorkerObservation, 'frame' | 'outTimeUs' | 'scoreRevision'>;
 type Session = { runId: string; sessionId: string; report?: Report };
-type Worker = {
-  current: Session;
-  retiredRuns: Set<string>;
-  retiredSessions: Set<string>;
-  outputId?: string;
-};
+type Worker = { current: Session; retiredRuns: Set<string>; retiredSessions: Set<string> };
 
-function phaseOf(state: WorkerMediaStatus['state'], wasLive: boolean): WorkerPhase {
+function phaseOf(state: WorkerMediaStatus['state']): WorkerPhase {
   switch (state) {
     case 'not_requested':
       return 'idle';
@@ -57,8 +49,6 @@ function phaseOf(state: WorkerMediaStatus['state'], wasLive: boolean): WorkerPha
     case 'idle':
     case 'starting':
       return 'starting';
-    case 'waiting_source':
-      return wasLive ? 'reconnecting' : 'starting';
     case 'retrying':
     case 'stopping':
       return 'reconnecting';
@@ -79,10 +69,9 @@ export class WorkerObservations {
     private readonly monotonic: () => number = () => performance.now(),
   ) {}
 
-  register({ workerId, runId, outputId }: WorkerSessionRequest): WorkerSessionResponse {
+  register({ workerId, runId }: WorkerSessionRequest): WorkerSessionResponse {
     const worker = this.workers.get(workerId);
     if (worker?.retiredRuns.has(runId)) throw new WorkerObservationError('worker_session_retired');
-    if (worker && outputId !== undefined) worker.outputId = outputId;
     const serverTime = new Date(this.now()).toISOString();
     if (worker?.current.runId === runId) return { sessionId: worker.current.sessionId, serverTime };
     const current: Session = { runId, sessionId: randomUUID() };
@@ -92,31 +81,9 @@ export class WorkerObservations {
       worker.retiredSessions.add(worker.current.sessionId);
       worker.current = current;
     } else {
-      this.workers.set(workerId, {
-        current,
-        retiredRuns: new Set(),
-        retiredSessions: new Set(),
-        ...(outputId === undefined ? {} : { outputId }),
-      });
+      this.workers.set(workerId, { current, retiredRuns: new Set(), retiredSessions: new Set() });
     }
     return { sessionId: current.sessionId, serverTime };
-  }
-
-  /**
-   * Fills a start selection that leaves out workerId or outputId from the configured
-   * worker. The output is the one that worker registered, else the configured one.
-   */
-  selectWorker(
-    requested: { workerId?: string | undefined; outputId?: string | undefined },
-    configured: { workerId: string; outputId: string },
-  ): { workerId: string; outputId: string } {
-    const workerId = requested.workerId ?? configured.workerId;
-    const outputId =
-      requested.outputId ??
-      this.workers.get(workerId)?.outputId ??
-      (configured.workerId === workerId ? configured.outputId : undefined);
-    if (outputId === undefined) throw new MediaStateError('output_unknown');
-    return { workerId, outputId };
   }
 
   report(body: WorkerObservationRequest): WorkerObservationResponse {
@@ -158,9 +125,6 @@ export class WorkerObservations {
           throw new WorkerObservationError('observation_conflict');
         counters[key] = after ?? before;
       }
-    const sameGeneration =
-      previous?.observation.gameId === observation.gameId &&
-      previous.observation.generation === observation.generation;
     worker.current.report = {
       sequence: body.sequence,
       request,
@@ -168,8 +132,6 @@ export class WorkerObservations {
       counters,
       receivedAt: this.monotonic(),
       observedAt: this.now(),
-      wasLive:
-        observation.state === 'producing_output' || (sameGeneration && previous.wasLive === true),
     };
     return { accepted: true, serverTime };
   }
@@ -203,7 +165,7 @@ export class WorkerObservations {
     return {
       status: {
         ...base,
-        phase: phaseOf(state, report.wasLive),
+        phase: phaseOf(state),
         output: output ?? null,
         state,
         observation,

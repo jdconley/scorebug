@@ -39,6 +39,9 @@ it(
               away: { name: 'Away', shortName: 'AWY', color: '#F97316' },
             },
             score: { home: 18, away: 15, set: 3, homeSets: 1, awaySets: 1 },
+            rules: { bestOf: 3 },
+            completedSets: [],
+            scorebugStyle: 'bar',
           }),
         ),
       );

@@ -281,26 +281,11 @@ it('attaches the configured output profile to every observation', async () => {
   expect(sample).not.toHaveProperty('output');
 });
 
-it('registers its OUTPUT_ID so the API can default a broadcast to it', async () => {
+it('registers with only its worker ID and run', async () => {
   const f = await fixture((path) => ({
     body: path.endsWith('sessions') ? { sessionId: 'session-one' } : { accepted: true },
   }));
-  const reporter = new WorkerReporter(
-    f.url,
-    'private-token',
-    'mac',
-    1000,
-    'run-one',
-    undefined,
-    'local-sink',
-  );
+  const reporter = new WorkerReporter(f.url, 'private-token', 'mac', 1000, 'run-one');
   await reporter.report(() => null);
-  expect(f.requests[0]!.body).toEqual({
-    workerId: 'mac',
-    runId: 'run-one',
-    outputId: 'local-sink',
-  });
-  expect(
-    () => new WorkerReporter(f.url, 'private-token', 'mac', 1000, 'run', undefined, 'bad id'),
-  ).toThrow('invalid_worker_report_configuration');
+  expect(f.requests[0]!.body).toEqual({ workerId: 'mac', runId: 'run-one' });
 });

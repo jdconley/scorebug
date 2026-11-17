@@ -34,7 +34,7 @@ import ScorebugCore
                 guard let access = app.access(teamId: team.id) else { continue }
                 let client = clientFactory(app.server)
                 group.addTask {
-                    async let active = try? client.team(team.id).active(installationToken: access.token)
+                    async let active = try? client.team(team.id).active(token: access.token)
                     async let detail = try? client.teamDetail(team.id, token: access.token)
                     return (team.id, await active, await detail)
                 }
@@ -61,8 +61,7 @@ import ScorebugCore
         defer { busy = false }
         do {
             let client = clientFactory(app.server).team(team.id)
-            let joined = try await client.join(gameId: snapshot.id, deviceId: access.deviceId, role: .score,
-                                               installationToken: access.token)
+            let joined = try await client.join(gameId: snapshot.id, deviceId: access.deviceId, role: .score, token: access.token)
             guard joined.credential.gameId == snapshot.id, joined.credential.role == .score,
                   joined.credential.deviceId == access.deviceId else { throw MatchClientError.invalidResponse }
             return MatchSession(kind: kind, endpoint: access.endpoint, credential: joined.credential,

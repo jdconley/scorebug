@@ -77,7 +77,7 @@ public final class ArchivePressureDiagnostics: @unchecked Sendable {
     public struct Producer: Codable, Equatable, Sendable {
         public let frameIndex: String
         public let deadline: Double?
-        /// Unadjusted source deadline; absent in older diagnostic snapshots.
+        /// Unadjusted source deadline; nil when the source has no nominal cadence.
         public let nominalDeadline: Double?
         public let generationStart: Double?
         public internal(set) var generationEnd: Double?

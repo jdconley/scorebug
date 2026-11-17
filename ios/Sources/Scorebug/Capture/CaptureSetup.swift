@@ -10,15 +10,15 @@ struct PendingCaptureReport: Codable {
 }
 struct SavedCaptureSetup: Codable {
     var endpoint: String
-    var installationToken: String
+    var sessionToken: String
     var deviceId: String
     var credential: MatchCredential?
     var reports: [PendingCaptureReport]
-    // Optional for decoding setups written before the stop-ownership ledger.
-    // At most 64 IDs, reserved before issuing broadcast intent and never evicted.
-    var stopRecordingIDs: [String]? = nil
-    /// The team whose match routes this setup uses; nil for the unscoped routes.
-    var teamId: String? = nil
+    /// The stop-ownership ledger: at most 64 IDs, reserved before issuing broadcast intent
+    /// and cleared once the owned broadcast is stopped.
+    var stopRecordingIDs: [String] = []
+    /// The team whose match routes this setup uses.
+    var teamId: String
 
     var endpointScope: String {
         var components = URLComponents(string: endpoint)!
@@ -26,8 +26,8 @@ struct SavedCaptureSetup: Codable {
         components.host = components.host?.lowercased()
         if (components.scheme == "http" && components.port == 80) || (components.scheme == "https" && components.port == 443) { components.port = nil }
         while components.path.hasSuffix("/") { components.path.removeLast() }
-        let account = SHA256.hash(data: Data(installationToken.utf8)).map { String(format: "%02x", $0) }.joined()
-        return components.string! + "#" + account + (teamId.map { "@" + $0 } ?? "")
+        let account = SHA256.hash(data: Data(sessionToken.utf8)).map { String(format: "%02x", $0) }.joined()
+        return components.string! + "#" + account + "@" + teamId
     }
 }
 
@@ -45,7 +45,8 @@ struct CaptureKeychain: CaptureSetupStorage {
         let status = SecItemCopyMatching(query.merging([kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]) { _, new in new } as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data else { throw CaptureControlError.storage }
-        return try JSONDecoder().decode(SavedCaptureSetup.self, from: data)
+        // A setup this build can't read is no setup: the next match connects from scratch.
+        return try? JSONDecoder().decode(SavedCaptureSetup.self, from: data)
     }
     func save(_ setup: SavedCaptureSetup) throws {
         let attributes: [String: Any] = [kSecValueData as String: try JSONEncoder().encode(setup),
@@ -56,17 +57,12 @@ struct CaptureKeychain: CaptureSetupStorage {
     }
 }
 
-enum CaptureControlError: Error { case workerUnavailable, storage, noSetup, noActiveMatch, invalidCredential, recordingStopped, rejected, unresolved, selectionChanged,
-    /// The server could not pick a streaming worker for the broadcast.
-    noWorker, workerAmbiguous, outputUnknown,
-    /// Hosted Go Live refusals. Nothing changed on the server, so Go Live can be tried again.
+enum CaptureControlError: Error { case storage, noSetup, noActiveMatch, invalidCredential, recordingStopped, rejected, unresolved, selectionChanged,
+    /// Go Live refusals. Nothing changed on the server, so Go Live can be tried again.
     youtubeNotSet, youtubeNeedsReconnect, youtubeLiveDisabled, youtubeUnavailable, streamUnavailable, busy, timeLimit
 
     init(rejection code: String?) {
         switch code {
-        case "no_worker": self = .noWorker
-        case "worker_ambiguous": self = .workerAmbiguous
-        case "output_unknown": self = .outputUnknown
         case "youtube_not_set": self = .youtubeNotSet
         case "youtube_needs_reconnect": self = .youtubeNeedsReconnect
         case "youtube_live_disabled": self = .youtubeLiveDisabled

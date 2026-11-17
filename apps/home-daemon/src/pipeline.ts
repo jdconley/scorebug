@@ -14,7 +14,8 @@ export type PipelineSpec = {
   publishUrl: string;
   /** Serialized ScorebugOverlay JSON; the overlay feed re-renders when it changes. */
   scoreFile: string;
-  profile?: { width: number; height: number; fps: number; bitrateKbps: number };
+  /** The output canvas and encoding: the worker's VIDEO_PROFILE. */
+  profile: { width: number; height: number; fps: number; bitrateKbps: number };
   ffmpegPath?: string;
   /**
    * Input probing. `fast` bounds FFmpeg's stream analysis for the known Stream source
@@ -34,32 +35,24 @@ export type PipelineHandle = {
   waitExit: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 };
 
-/** Overlay canvas: the output canvas, or 1080p for the legacy profile-less graph. */
-export function overlaySize(spec: PipelineSpec): { width: number; height: number } {
-  return spec.profile
-    ? { width: spec.profile.width, height: spec.profile.height }
-    : { width: 1920, height: 1080 };
-}
-
 export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   if (!spec.publishUrl) throw new Error('missing_pipeline_output');
   const profile = spec.profile;
   if (
-    profile &&
-    (!Number.isInteger(profile.width) ||
-      profile.width < 2 ||
-      profile.width > 7680 ||
-      profile.width % 2 ||
-      !Number.isInteger(profile.height) ||
-      profile.height < 2 ||
-      profile.height > 4320 ||
-      profile.height % 2 ||
-      !Number.isInteger(profile.fps) ||
-      profile.fps < 1 ||
-      profile.fps > 60 ||
-      !Number.isInteger(profile.bitrateKbps) ||
-      profile.bitrateKbps < 100 ||
-      profile.bitrateKbps > 100000)
+    !Number.isInteger(profile.width) ||
+    profile.width < 2 ||
+    profile.width > 7680 ||
+    profile.width % 2 ||
+    !Number.isInteger(profile.height) ||
+    profile.height < 2 ||
+    profile.height > 4320 ||
+    profile.height % 2 ||
+    !Number.isInteger(profile.fps) ||
+    profile.fps < 1 ||
+    profile.fps > 60 ||
+    !Number.isInteger(profile.bitrateKbps) ||
+    profile.bitrateKbps < 100 ||
+    profile.bitrateKbps > 100000
   )
     throw new Error('invalid_video_profile');
   const inputProbe = spec.inputProbe ?? 'default';
@@ -73,9 +66,9 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   const video = ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency'];
   video.push(
     '-b:v',
-    `${profile?.bitrateKbps ?? 6000}k`,
+    `${profile.bitrateKbps}k`,
     '-g',
-    String((profile?.fps ?? 30) * 2),
+    String(profile.fps * 2),
     '-pix_fmt',
     'yuv420p',
   );
@@ -88,10 +81,7 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   // never grow across an outage; duplicate/regressing PTS cannot be selected or
   // mint new credits. Keep source PTS and the shared A/V timeline unchanged.
   video.push('-fps_mode', 'passthrough', '-enc_time_base:v', 'demux');
-  const cap = profile ? `${frameRateCapFilter(profile.fps)},` : '';
-  const canvas = profile
-    ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:eval=frame`
-    : 'null';
+  const canvas = `${frameRateCapFilter(profile.fps)},scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:eval=frame`;
   // Input 1 is the worker's timestamped RGBA scorebug (see scorebug/feed.ts):
   // one packed box per style. Each box is cropped out, converted to YUVA and
   // blended at its place with straight alpha in the main format. Only the
@@ -100,7 +90,8 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   // BT.709 against an untagged source made FFmpeg 7.1 convert every output frame
   // through RGB (2x CPU). eof_action=pass: a lost feed drops the graphic, while
   // source EOF still ends the graph (an overlay frame never creates video).
-  const layout = overlayRegions(overlaySize(spec));
+  // The overlay canvas is the output canvas.
+  const layout = overlayRegions(profile);
   const yuva = 'format=yuva420p';
   const labels = layout.regions.map((region) => `scorebug_${region.style}`);
   const filter =
@@ -140,8 +131,8 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     '-copyts',
     // The fixed scale/pad canvas absorbs input dimension changes. Keep filter
     // state so decoded-frame ordinals and the source-FPS cap anchor cannot reset.
-    // The legacy profile-less graph has no canvas normalization guarantee.
-    ...(profile ? ['-reinit_filter:v:0', '0'] : []),
+    '-reinit_filter:v:0',
+    '0',
     ...(inputProbe === 'fast' ? FAST_PROBE_ARGS : []),
     // Microseconds. A read that waits this long fails the attempt, so an absent source
     // costs a short retry instead of a full output timeout.
@@ -304,7 +295,7 @@ export function startPipeline(
     overlay = overlaySink
       ? new OverlayFeed({
           scoreFile: spec.scoreFile,
-          size: overlaySize(spec),
+          size: { width: spec.profile.width, height: spec.profile.height },
           sink: overlaySink,
           ...(options.monotonicNow ? { now: options.monotonicNow } : {}),
           onEvent: (event) => {

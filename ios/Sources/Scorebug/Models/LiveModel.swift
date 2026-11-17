@@ -58,7 +58,7 @@ import ScorebugCore
         // The stream rides on the recording, never the other way round.
         guard film.state == .recording, !session.recordOnly, let access else { return }
         streaming.endpoint = access.endpoint
-        streaming.installationToken = access.token
+        streaming.sessionToken = access.token
         streaming.teamId = access.teamId
         await streaming.connect()
         streaming.requestStartStreaming()

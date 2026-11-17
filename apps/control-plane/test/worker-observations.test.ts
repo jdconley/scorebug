@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createTestApp, MEMBER_TOKEN, phoneAuth, SERVER_SECRET } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
 
+const worker = { workerId: 'mac', outputId: 'sink' };
+
 const stores: MatchStore[] = [];
 
 afterEach(() => {
@@ -33,21 +35,22 @@ async function fixture() {
     status: 'recording',
     startedAt: new Date().toISOString(),
   });
-  matches.media.execute({
-    commandId: 'start',
-    gameId: 'match',
-    expectedGeneration: 0,
-    issuedAt: new Date().toISOString(),
-    operation: {
-      type: 'start',
-      selection: {
-        workerId: 'mac',
-        outputId: 'sink',
-        captureDeviceId: 'phone',
-        recordingId: 'archive',
+  matches.media.execute(
+    {
+      commandId: 'start',
+      gameId: 'match',
+      expectedGeneration: 0,
+      issuedAt: new Date().toISOString(),
+      operation: {
+        type: 'start',
+        selection: {
+          captureDeviceId: 'phone',
+          recordingId: 'archive',
+        },
       },
     },
-  });
+    worker,
+  );
   const registration = await request('/v1/worker/sessions', config.workerToken, {
     workerId: 'mac',
     runId: 'run',
@@ -241,13 +244,16 @@ it('API restart forgets observations and a stop overrides the previous report', 
       ).json()
     ).status.state,
   ).toBe('unknown');
-  f.matches.media.execute({
-    commandId: 'stop',
-    gameId: 'match',
-    expectedGeneration: 1,
-    issuedAt: new Date().toISOString(),
-    operation: { type: 'stop' },
-  });
+  f.matches.media.execute(
+    {
+      commandId: 'stop',
+      gameId: 'match',
+      expectedGeneration: 1,
+      issuedAt: new Date().toISOString(),
+      operation: { type: 'stop' },
+    },
+    worker,
+  );
   expect((await f.status()).status).toMatchObject({
     state: 'not_requested',
     observation: null,
@@ -301,8 +307,8 @@ it('bounds sessions, sequences and required observation fields before accepting 
         ...f.body,
         observation: {
           ...f.body.observation,
-          state: 'waiting_source',
-          reason: 'source_unavailable',
+          state: 'retrying',
+          reason: 'retry_delay',
           attempt: 0,
           frame: null,
           outTimeUs: null,
@@ -346,21 +352,22 @@ it('measures receipt freshness independently of forward and backward wall-clock 
 it('hides old observations and rejects late reports after replacement of a running generation', async () => {
   const f = await fixture();
   expect((await f.report()).status).toBe(200);
-  const outcome = f.matches.media.execute({
-    commandId: 'replace',
-    gameId: 'match',
-    expectedGeneration: 1,
-    issuedAt: new Date().toISOString(),
-    operation: {
-      type: 'start',
-      selection: {
-        workerId: 'mac',
-        outputId: 'other-sink',
-        captureDeviceId: 'phone',
-        recordingId: 'archive',
+  const outcome = f.matches.media.execute(
+    {
+      commandId: 'replace',
+      gameId: 'match',
+      expectedGeneration: 1,
+      issuedAt: new Date().toISOString(),
+      operation: {
+        type: 'start',
+        selection: {
+          captureDeviceId: 'phone',
+          recordingId: 'archive',
+        },
       },
     },
-  });
+    worker,
+  );
   expect(outcome.accepted).toBe(true);
   expect((await f.status()).status).toMatchObject({
     state: 'unknown',
@@ -390,21 +397,11 @@ it('summarizes the broadcast as idle, starting, live, reconnecting or error', as
   let sequence = 0;
   const send = (patch: Record<string, unknown>) =>
     f.report({ ...f.body, sequence: ++sequence, observation: { ...f.body.observation, ...patch } });
-  const waiting = {
-    state: 'waiting_source',
-    reason: 'source_unavailable',
-    frame: null,
-    outTimeUs: null,
-  };
-  expect((await send({ ...waiting, attempt: 0 })).status).toBe(200);
-  expect(await phase()).toBe('starting');
   expect((await send({ state: 'starting', frame: null, outTimeUs: null })).status).toBe(200);
   expect(await phase()).toBe('starting');
   expect((await send({})).status).toBe(200);
   expect(await phase()).toBe('live');
-  // The phone dropped: the same generation was live, so this is a reconnect.
-  expect((await send({ ...waiting, attempt: 2 })).status).toBe(200);
-  expect(await phase()).toBe('reconnecting');
+  // The phone dropped: FFmpeg's read timed out and the worker retries.
   expect((await send({ state: 'retrying', reason: 'process_exited', attempt: 2 })).status).toBe(
     200,
   );
@@ -415,13 +412,16 @@ it('summarizes the broadcast as idle, starting, live, reconnecting or error', as
   expect(await phase()).toBe('live');
   vi.advanceTimersByTime(5000);
   expect((await f.status()).status).toMatchObject({ state: 'stale', phase: 'error' });
-  f.matches.media.execute({
-    commandId: 'stop',
-    gameId: 'match',
-    expectedGeneration: 1,
-    issuedAt: new Date().toISOString(),
-    operation: { type: 'stop' },
-  });
+  f.matches.media.execute(
+    {
+      commandId: 'stop',
+      gameId: 'match',
+      expectedGeneration: 1,
+      issuedAt: new Date().toISOString(),
+      operation: { type: 'stop' },
+    },
+    worker,
+  );
   expect((await f.status()).status).toMatchObject({ state: 'not_requested', phase: 'idle' });
 });
 

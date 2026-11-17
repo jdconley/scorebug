@@ -1,5 +1,6 @@
 import type {
   BroadcastOperation,
+  BroadcastSelection,
   MediaBroadcast,
   RecordingAssociation,
   RecordingReport,
@@ -103,6 +104,7 @@ export function applyRecordingReport(
 export function applyBroadcastOperation(
   current: MediaBroadcast,
   operation: BroadcastOperation,
+  worker: Pick<BroadcastSelection, 'workerId' | 'outputId'>,
   recordings: RecordingAssociation[],
   matchStatus: 'active' | 'ended',
 ): MediaBroadcast {
@@ -121,14 +123,9 @@ export function applyBroadcastOperation(
   const selection = operation.selection;
   if (!selection || typeof selection !== 'object')
     throw new MediaStateError('invalid_broadcast_operation');
-  validateId(selection.workerId);
-  validateId(selection.outputId);
   validateId(selection.captureDeviceId);
   validateId(selection.recordingId);
   if (matchStatus !== 'active') throw new MediaStateError('match_ended');
-  if (current.desired === 'running' && current.selection?.workerId !== selection.workerId) {
-    throw new MediaStateError('worker_move_requires_stop');
-  }
   const recording = recordings.find((candidate) => candidate.recordingId === selection.recordingId);
   if (!recording) throw new MediaStateError('recording_not_found');
   if (recording.deviceId !== selection.captureDeviceId)
@@ -138,8 +135,8 @@ export function applyBroadcastOperation(
     desired: 'running',
     generation,
     selection: {
-      workerId: selection.workerId,
-      outputId: selection.outputId,
+      workerId: worker.workerId,
+      outputId: worker.outputId,
       captureDeviceId: selection.captureDeviceId,
       recordingId: selection.recordingId,
     },

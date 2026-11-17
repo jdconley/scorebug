@@ -79,7 +79,6 @@
     "scorebugStyle": "bar",
     "pendingSetEnd": null,
     "output": {
-      "destinationId": null,
       "recordOnly": false
     }
   },
@@ -132,7 +131,6 @@
       "scorebugStyle": "bar",
       "pendingSetEnd": null,
       "output": {
-        "destinationId": null,
         "recordOnly": false
       }
     }

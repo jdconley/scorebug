@@ -6,6 +6,8 @@ import { expect, it } from 'vitest';
 import { buildFfmpegArgs, startPipeline } from '../src/pipeline.js';
 import { createLogger, type Logger } from '../src/logger.js';
 
+const profile = { width: 640, height: 360, fps: 30, bitrateKbps: 1000 };
+
 it('executes the configured media binary instead of the one on PATH', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'scorebug-tool-'));
   try {
@@ -18,6 +20,7 @@ it('executes the configured media binary instead of the one on PATH', async () =
         pullUrl: 'unused',
         publishUrl: 'unused',
         scoreFile: join(dir, 'score.txt'),
+        profile,
         ffmpegPath: binary,
       },
       createLogger('error'),
@@ -34,6 +37,7 @@ it('needs no system font: the scorebug is rasterized by the worker', () => {
     pullUrl: 'unused',
     publishUrl: 'unused',
     scoreFile: '/tmp/score.txt',
+    profile,
   });
   expect(args.join(' ')).not.toMatch(/fontfile|drawtext|\/usr\/share\/fonts/);
 });
@@ -45,6 +49,7 @@ it('settles a missing binary without an unhandled error or a pending exit', asyn
       pullUrl: 'unused',
       publishUrl: 'unused',
       scoreFile: '/tmp/score.txt',
+      profile,
       ffmpegPath: '/definitely-not-an-installed-scorebug-encoder',
     },
     createLogger('error'),
@@ -73,6 +78,7 @@ async function childFixture(body: string) {
       pullUrl: 'rtmps://user:PULL_PASSWORD@host:443/live/QUERY_SECRET',
       publishUrl: 'rtmps://host/live/STREAM_KEY',
       scoreFile: join(dir, 'score.txt'),
+      profile,
       ffmpegPath: binary,
     },
     log,

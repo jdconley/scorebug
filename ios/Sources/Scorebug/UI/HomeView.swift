@@ -303,8 +303,8 @@ struct LastMatchCard: View {
     let recap: MatchRecap
     var body: some View {
         VStack(spacing: 0) {
-            row(recap.team1, winner: recap.team1.shown >= recap.team2.shown).padding(.top, 16).padding(.bottom, 8)
-            row(recap.team2, winner: recap.team2.shown > recap.team1.shown).padding(.bottom, 12)
+            row(recap.team1, winner: recap.team1.score >= recap.team2.score).padding(.top, 16).padding(.bottom, 8)
+            row(recap.team2, winner: recap.team2.score > recap.team1.score).padding(.bottom, 12)
             Divider().overlay(Theme.line)
             HStack {
                 Text(recap.status)
@@ -323,7 +323,7 @@ struct LastMatchCard: View {
             RoundedRectangle(cornerRadius: 3).fill(Theme.teamColor(team.color)).frame(width: 6, height: 36)
             Text(team.shortName).font(Theme.score(26)).foregroundStyle(winner ? Theme.text : Theme.secondary)
             Spacer()
-            Text("\(team.shown)").font(Theme.score(40)).monospacedDigit().foregroundStyle(winner ? Theme.text : Theme.secondary)
+            Text("\(team.score)").font(Theme.score(40)).monospacedDigit().foregroundStyle(winner ? Theme.text : Theme.secondary)
         }
         .padding(.horizontal, 16)
     }

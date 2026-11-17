@@ -31,14 +31,8 @@ export type MediaSnapshot = {
   recordings: RecordingAssociation[];
   broadcast: MediaBroadcast;
 };
-/** A start command may omit workerId/outputId: the server then picks its worker
- * (WORKER_ID/OUTPUT_ID when configured, else the one connected worker). */
-export type BroadcastSelectionRequest = {
-  workerId?: string | undefined;
-  outputId?: string | undefined;
-  captureDeviceId: string;
-  recordingId: string;
-};
+/** What a start command selects; the server fills in its worker and output. */
+export type BroadcastSelectionRequest = Pick<BroadcastSelection, 'captureDeviceId' | 'recordingId'>;
 export type BroadcastOperation =
   | { type: 'start'; selection: BroadcastSelectionRequest }
   | { type: 'stop' };

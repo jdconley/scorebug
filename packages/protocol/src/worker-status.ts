@@ -1,7 +1,6 @@
 /** Worker process states, as the worker supervisor reports them. */
 export const WORKER_STATES = [
   'idle',
-  'waiting_source',
   'starting',
   'producing_output',
   'stopping',
@@ -11,7 +10,6 @@ export const WORKER_STATES = [
 ] as const;
 export const WORKER_REASONS = [
   'assignment_changed',
-  'source_unavailable',
   'output_mismatch',
   'control_unavailable',
   'control_timeout',
@@ -27,7 +25,7 @@ export const WORKER_REASONS = [
 export const WORKER_OBSERVATION_TTL_MS = 5000;
 export type WorkerState = (typeof WORKER_STATES)[number];
 export type WorkerReason = (typeof WORKER_REASONS)[number];
-/** What the worker is encoding for the destination. */
+/** What the worker encodes for YouTube. */
 export type WorkerOutput = { width: number; height: number; fps: number; bitrateKbps: number };
 export type WorkerObservation = {
   gameId: string;
@@ -41,12 +39,7 @@ export type WorkerObservation = {
   scoreRevision: number | null;
   output?: WorkerOutput;
 };
-/** `outputId` is the worker's OUTPUT_ID, used when a phone starts a broadcast without one. */
-export type WorkerSessionRequest = {
-  workerId: string;
-  runId: string;
-  outputId?: string | undefined;
-};
+export type WorkerSessionRequest = { workerId: string; runId: string };
 export type WorkerSessionResponse = { sessionId: string; serverTime: string };
 export type WorkerObservationRequest = {
   workerId: string;

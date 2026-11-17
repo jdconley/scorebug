@@ -4,7 +4,7 @@ import XCTest
 
 final class BroadcastCoordinatorTests: XCTestCase {
     private let credential = MatchCredential(gameId: "match", deviceId: "camera", role: .capture, token: "capture-secret")
-    private let selection = BroadcastSelection(workerId: "mac", outputId: "local", captureDeviceId: "camera", recordingId: "recording")
+    private let selection = BroadcastSelection(captureDeviceId: "camera", recordingId: "recording")
 
     func testLostReplyRecoversDurableReceiptWithoutRepeatingStart() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("broadcast.json")
@@ -31,22 +31,6 @@ final class BroadcastCoordinatorTests: XCTestCase {
         XCTAssertEqual(requests, ["receipt"])
         let applications = await server.applications
         XCTAssertEqual(applications, 1)
-    }
-
-    func testStartWithoutWorkerAcceptsTheWorkerTheServerPicked() async throws {
-        let server = BroadcastServer()
-        let coordinator = try coordinator(server, store: BroadcastMemoryStore())
-        let request = BroadcastSelection(captureDeviceId: "camera", recordingId: "recording")
-        let result = try await coordinator.submit(.start(selection: request), activeRecordingId: "recording")
-        XCTAssertEqual(result.outcome?.accepted, true)
-        let picked = try XCTUnwrap(result.snapshot?.broadcast.selection)
-        XCTAssertEqual(picked.workerId, "home-1")
-        XCTAssertEqual(picked.outputId, "youtube")
-        XCTAssertTrue(request.isMet(by: picked))
-        XCTAssertFalse(selection.isMet(by: picked), "A named worker must match exactly")
-        XCTAssertFalse(request.isMet(by: nil))
-        var other = picked; other.recordingId = "other"
-        XCTAssertFalse(request.isMet(by: other))
     }
 
     func testMissingReceiptNeverReplaysStartAfterLocalRecordingStopped() async throws {
@@ -282,8 +266,8 @@ final class BroadcastCoordinatorTests: XCTestCase {
     private func coordinator(_ server: BroadcastServer, store: any PendingBroadcastStore,
                              scope: String = "endpoint|account", deviceId: String = "camera") throws -> BroadcastCommandCoordinator {
         let credential = MatchCredential(gameId: "match", deviceId: deviceId, role: .capture, token: "capture-secret")
-        let client = MatchHTTPClient(endpoint: try ScoringEndpoint("https://example.com"), transport: { try await server.respond($0) })
-        return BroadcastCommandCoordinator(client: client, credential: credential, installationToken: "installation-secret",
+        let client = MatchHTTPClient(endpoint: try ScoringEndpoint("https://example.com"), transport: { try await server.respond($0) }).team("t1")
+        return BroadcastCommandCoordinator(client: client, credential: credential, sessionToken: "session-secret",
                                            endpointScope: scope, store: store,
                                            now: { Date(timeIntervalSince1970: 1_789_361_200) })
     }
@@ -334,7 +318,7 @@ private actor BroadcastServer {
     func respond(_ request: URLRequest) async throws -> (Data, URLResponse) {
         let path = request.url!.path
         if request.httpMethod == "POST" {
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer installation-secret")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-secret")
             requests.append("execute")
             let command = try JSONDecoder().decode(BroadcastCommand.self, from: request.httpBody!)
             commands.append(command)
@@ -343,10 +327,7 @@ private actor BroadcastServer {
                 applications += 1
                 snapshot.broadcast.generation += 1
                 switch command.operation {
-                case .start(var selection):
-                    // Like the API: fill in a worker the phone left out.
-                    selection.workerId = selection.workerId ?? "home-1"
-                    selection.outputId = selection.outputId ?? "youtube"
+                case .start(let selection):
                     snapshot.broadcast.desired = .running; snapshot.broadcast.selection = selection
                 case .stop: snapshot.broadcast.desired = .stopped; snapshot.broadcast.selection = nil
                 }
@@ -357,7 +338,7 @@ private actor BroadcastServer {
             return try response(receipt!, request, status: mode == .reject ? 409 : 200)
         }
         if path.contains("/commands/") {
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer installation-secret")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-secret")
             requests.append("receipt")
             if var receipt {
                 if mode == .badReceipt { receipt.commandId = "wrong" }

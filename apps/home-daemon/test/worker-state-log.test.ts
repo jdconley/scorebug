@@ -15,7 +15,6 @@ describe('worker state logging', () => {
     const onState = createWorkerStateLogger({ info });
     const states: WorkerState['state'][] = [
       'idle',
-      'waiting_source',
       'starting',
       'producing_output',
       'stopping',

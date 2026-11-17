@@ -8,7 +8,7 @@ public enum MatchClientError: Error, Equatable, Sendable {
     case invalidIdentifier
 }
 
-/// Camera-independent client shared by iPhone and watch. Credentials are only sent
+/// The Scorebug API client. Credentials are only sent
 /// in Authorization headers; HTTP errors retain the server's code, never its body.
 public struct MatchHTTPClient: MatchScoringClient {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
@@ -19,10 +19,10 @@ public struct MatchHTTPClient: MatchScoringClient {
     private let transport: Transport
     /// Set by `team(_:)`: create, active, join, invites and broadcast commands go through
     /// `/v1/teams/:teamId/matches`, authorized by the person's session token. Match-token
-    /// routes (snapshot, commands, media) always use `/v1/matches/:id`.
+    /// routes (snapshot, commands, media) use `/v1/matches/:id` and need no team.
     public private(set) var teamId: String?
 
-    // Reuse one owned session across phone/watch clients. Waiting lets the first
+    // Reuse one owned session across clients. Waiting lets the first
     // LAN request survive the privacy prompt; the resource timeout also bounds
     // that connectivity wait, unlike URLRequest's inactivity timeout alone.
     static let defaultSession: URLSession = {
@@ -48,8 +48,8 @@ public struct MatchHTTPClient: MatchScoringClient {
         self.transport = transport
     }
 
-    /// The same client, with member routes scoped to one team. Nil keeps the unscoped routes.
-    public func team(_ teamId: String?) -> MatchHTTPClient {
+    /// The same client, with member routes scoped to one team.
+    public func team(_ teamId: String) -> MatchHTTPClient {
         var copy = self
         copy.teamId = teamId
         return copy
@@ -57,10 +57,9 @@ public struct MatchHTTPClient: MatchScoringClient {
 
     public var serverURL: URL { endpoint.url }
 
-    /// `["teams", teamId, "matches"]` for a team member, else `["matches"]`.
+    /// `["teams", teamId, "matches"]`. Member routes exist only under a team.
     private func memberRoot() throws -> [String] {
-        guard let teamId else { return ["matches"] }
-        guard Self.isIdentifier(teamId) else { throw MatchClientError.invalidIdentifier }
+        guard let teamId, Self.isIdentifier(teamId) else { throw MatchClientError.invalidIdentifier }
         return ["teams", teamId, "matches"]
     }
 
@@ -69,19 +68,14 @@ public struct MatchHTTPClient: MatchScoringClient {
             || (48...57).contains($0) || $0 == 45 || $0 == 95 })
     }
 
-    public func create(id: String, deviceId: String, teams: MatchTeams, rules: MatchRules,
-                       installationToken: String) async throws -> MatchSessionResponse {
-        try await create(MatchCreation(id: id, deviceId: deviceId, teams: teams, rules: rules), ownerToken: installationToken)
-    }
-
-    /// Owner only. Repeating the same creation (same ID) after a lost response is safe.
-    public func create(_ creation: MatchCreation, ownerToken: String) async throws -> MatchSessionResponse {
-        try await send(root: try memberRoot(), path: [], method: "POST", token: ownerToken, body: JSONEncoder().encode(creation))
+    /// Repeating the same creation (same ID) after a lost response is safe.
+    public func create(_ creation: MatchCreation, token: String) async throws -> MatchSessionResponse {
+        try await send(root: try memberRoot(), path: [], method: "POST", token: token, body: JSONEncoder().encode(creation))
     }
 
     // MARK: Match join codes (docs/api.md)
 
-    /// Owner token or the match's capture credential token.
+    /// The team member's session token.
     public func createInvite(gameId: String, token: String) async throws -> MatchInviteIssued {
         try await send(root: try memberRoot(), path: [gameId, "invites"], method: "POST", token: token, body: Data("{}".utf8))
     }
@@ -93,14 +87,13 @@ public struct MatchHTTPClient: MatchScoringClient {
                               body: JSONEncoder().encode(Request(code: code, deviceId: deviceId)))
     }
 
-    public func active(installationToken: String) async throws -> ActiveMatchResponse {
-        try await send(root: try memberRoot(), path: ["active"], token: installationToken)
+    public func active(token: String) async throws -> ActiveMatchResponse {
+        try await send(root: try memberRoot(), path: ["active"], token: token)
     }
 
-    public func join(gameId: String, deviceId: String, role: MatchRole,
-                     installationToken: String) async throws -> MatchSessionResponse {
+    public func join(gameId: String, deviceId: String, role: MatchRole, token: String) async throws -> MatchSessionResponse {
         struct Join: Encodable { let deviceId: String; let role: MatchRole }
-        return try await send(root: try memberRoot(), path: [gameId, "join"], method: "POST", token: installationToken,
+        return try await send(root: try memberRoot(), path: [gameId, "join"], method: "POST", token: token,
                               body: JSONEncoder().encode(Join(deviceId: deviceId, role: role)))
     }
 
@@ -126,69 +119,59 @@ public struct MatchHTTPClient: MatchScoringClient {
         try await send(path: [credential.gameId, "media"], token: credential.token)
     }
 
-    /// Summary worker state for display only.
-    public func workerStatus(credential: MatchCredential) async throws -> WorkerMediaStatusResponse {
-        try await send(path: [credential.gameId, "media", "status"], token: credential.token, requiresFreshResponse: true)
-    }
-
     public func reportRecording(_ report: RecordingReport, credential: MatchCredential) async throws -> RecordingReportResponse {
         try await send(path: [credential.gameId, "media", "recordings"], method: "POST", token: credential.token,
                        body: JSONEncoder().encode(report))
     }
 
-    /// Request access only for the current recording and broadcast generation.
+    /// Request access only for the current recording, broadcast generation and publishing attempt.
     /// The caller must still check its own lifecycle after this await: a matching
     /// response can arrive after the local recording has stopped.
-    public func publishAccess(recordingId: String, generation: Int, publishingAttemptId: UUID? = nil, credential: MatchCredential) async throws -> PublishAccess {
-        struct Request: Encodable { let recordingId: String; let generation: Int; let publishingAttemptId: String? }
+    public func publishAccess(recordingId: String, generation: Int, publishingAttemptId: UUID, credential: MatchCredential) async throws -> PublishAccess {
+        struct Request: Encodable { let recordingId: String; let generation: Int; let publishingAttemptId: String }
         struct Response: Decodable {
             let gameId: String
             let generation: Int
             let recordingId: String
             let publishUrl: String
             let serverTime: String
-            let publishingAttemptId: String?
+            let publishingAttemptId: String
         }
-        let canonicalAttempt = publishingAttemptId?.uuidString.lowercased()
+        let attempt = publishingAttemptId.uuidString.lowercased()
         let response: Response = try await send(path: [credential.gameId, "media", "publish"], method: "POST", token: credential.token,
-                                               body: JSONEncoder().encode(Request(recordingId: recordingId, generation: generation, publishingAttemptId: canonicalAttempt)))
+                                               body: JSONEncoder().encode(Request(recordingId: recordingId, generation: generation, publishingAttemptId: attempt)))
+        // The stream ID is Cloudflare Stream's own; the server authenticates it. The app needs
+        // exactly one, intact, and the grant bound to this exact publishing attempt.
         guard response.gameId == credential.gameId, response.recordingId == recordingId, response.generation == generation,
+              response.publishingAttemptId == attempt,
               let components = URLComponents(string: response.publishUrl), components.scheme == "srt",
               let host = components.host, !host.isEmpty,
               let port = components.port, (1...65535).contains(port),
               components.user == nil, components.password == nil, components.fragment == nil,
+              let streamIDs = components.queryItems?.filter({ $0.name == "streamid" }), streamIDs.count == 1,
+              let streamID = streamIDs.first?.value, !streamID.isEmpty, streamID.count <= 512,
+              streamID.unicodeScalars.allSatisfy({ $0.value > 0x20 && $0.value < 0x7F }),
               let url = components.url else { throw MatchClientError.invalidResponse }
-        if let canonicalAttempt {
-            // The stream ID is the intake's own (Cloudflare Stream's, or the self-hosted relay's
-            // signed one). The server authenticates it; the app needs exactly one, intact, and
-            // the grant bound to this exact publishing attempt.
-            let streamIDs = components.queryItems?.filter { $0.name == "streamid" } ?? []
-            guard response.publishingAttemptId == canonicalAttempt, streamIDs.count == 1,
-                  let streamID = streamIDs.first?.value, !streamID.isEmpty, streamID.count <= 512,
-                  streamID.unicodeScalars.allSatisfy({ $0.value > 0x20 && $0.value < 0x7F }) else {
-                throw MatchClientError.invalidResponse
-            }
-        }
         return PublishAccess(gameId: response.gameId, generation: response.generation, recordingId: response.recordingId,
                              publishUrl: url, serverTime: response.serverTime, publishingAttemptId: publishingAttemptId)
     }
 
-    /// Installation authorization controls publishing; a 409 is a normal domain outcome.
-    public func executeBroadcast(_ command: BroadcastCommand, installationToken: String) async throws -> BroadcastOutcome {
-        try await send(root: try memberRoot(), path: [command.gameId, "media", "commands"], method: "POST", token: installationToken,
+    /// The member's session token controls publishing; a 409 is a normal domain outcome.
+    public func executeBroadcast(_ command: BroadcastCommand, token: String) async throws -> BroadcastOutcome {
+        try await send(root: try memberRoot(), path: [command.gameId, "media", "commands"], method: "POST", token: token,
                        body: JSONEncoder().encode(command), additionalStatuses: [409])
     }
 
-    public func broadcastReceipt(gameId: String, commandId: String, installationToken: String) async throws -> BroadcastOutcome? {
+    public func broadcastReceipt(gameId: String, commandId: String, token: String) async throws -> BroadcastOutcome? {
         do {
-            return try await send(root: try memberRoot(), path: [gameId, "media", "commands", commandId], token: installationToken)
+            return try await send(root: try memberRoot(), path: [gameId, "media", "commands", commandId], token: token)
         } catch MatchClientError.http(status: 404, code: "command_not_found") {
             return nil
         }
     }
 
     func send<Response: Decodable>(root: [String] = ["matches"], path: [String], method: String = "GET", token: String?,
-                                          body: Data? = nil, additionalStatuses: Set<Int> = [], requiresFreshResponse: Bool = false, query: [URLQueryItem] = []) async throws -> Response {
+                                          body: Data? = nil, additionalStatuses: Set<Int> = []) async throws -> Response {
         var url = endpoint.url.appendingPathComponent("v1")
         for component in root { url.appendPathComponent(component) }
         // Identifiers follow the server's ASCII grammar, preventing a scoped path
@@ -197,17 +180,7 @@ public struct MatchHTTPClient: MatchScoringClient {
             guard Self.isIdentifier(component) else { throw MatchClientError.invalidIdentifier }
             url.appendPathComponent(component)
         }
-        if !query.isEmpty {
-            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw MatchClientError.invalidIdentifier }
-            components.queryItems = query
-            guard let queried = components.url else { throw MatchClientError.invalidIdentifier }
-            url = queried
-        }
         var request = URLRequest(url: url, timeoutInterval: 20)
-        if requiresFreshResponse {
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
-        }
         request.httpMethod = method
         request.httpBody = body
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }

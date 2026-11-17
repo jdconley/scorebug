@@ -215,9 +215,8 @@ Each team's matches live in its team object. There are two ways in:
 - `bestOf` is 3 or 5. `pointCap` is `null` or at least both set targets.
 - `scorebugStyle` is `bar` (default), `lowerThird` or `setCard`.
 - `recordOnly: true` makes a match with no broadcast; a later start command is
-  refused. `destinationId` is accepted for compatibility: absent or `null`
-  streams to the team's YouTube channel; any other value gets
-  `409 destination_not_found`.
+  refused. Otherwise the match streams to the team's YouTube channel.
+- Unknown fields get `400`.
 - The response's `credential` is a `score` credential for `deviceId`.
 
 Errors: `409 match_id_taken` (another team holds the ID), `409 match_in_flight`
@@ -271,7 +270,7 @@ up after a lost response. Only the current scorer can score; another device send
 - `pendingSetEnd: { winner } | null` is set when the current set is won under the
   rules. The apps prompt the scorer to confirm with `end_set`. Further points stay
   allowed and recompute it.
-- `output: { destinationId, recordOnly }`.
+- `output: { recordOnly }`.
 
 `GET /v1/matches/:id`, `GET /v1/matches/:id/media/status`
 and media command responses add `youtube`: the match's broadcast,
@@ -309,14 +308,14 @@ score without an account.
 
 ## Media and broadcast
 
-| Method | Path                                                      | Auth             | Response                                          |
-| ------ | --------------------------------------------------------- | ---------------- | ------------------------------------------------- |
-| GET    | `/v1/matches/:id/media`                                   | match credential | `{ snapshot: MediaSnapshot }`                     |
-| GET    | `/v1/matches/:id/media/status`                            | match credential | `{ status, youtube }`                             |
-| POST   | `/v1/matches/:id/media/recordings`                        | `capture`        | `{ recording }`                                   |
-| POST   | `/v1/matches/:id/media/publish`                           | `capture`        | `{ gameId, generation, recordingId, publishUrl }` |
-| POST   | `/v1/teams/:teamId/matches/:id/media/commands`            | member           | `BroadcastOutcome`, 200 if accepted, else 409     |
-| GET    | `/v1/teams/:teamId/matches/:id/media/commands/:commandId` | member           | `BroadcastOutcome`; `404 command_not_found`       |
+| Method | Path                                                      | Auth             | Response                                                               |
+| ------ | --------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------- |
+| GET    | `/v1/matches/:id/media`                                   | match credential | `{ snapshot: MediaSnapshot }`                                          |
+| GET    | `/v1/matches/:id/media/status`                            | match credential | `{ status, youtube }`                                                  |
+| POST   | `/v1/matches/:id/media/recordings`                        | `capture`        | `{ recording }`                                                        |
+| POST   | `/v1/matches/:id/media/publish`                           | `capture`        | `{ gameId, generation, recordingId, publishUrl, publishingAttemptId }` |
+| POST   | `/v1/teams/:teamId/matches/:id/media/commands`            | member           | `BroadcastOutcome`, 200 if accepted, else 409                          |
+| GET    | `/v1/teams/:teamId/matches/:id/media/commands/:commandId` | member           | `BroadcastOutcome`; `404 command_not_found`                            |
 
 `MediaSnapshot` is `{ gameId, recordings, broadcast: { desired, generation, selection } }`.
 
@@ -339,7 +338,9 @@ reports the phone's local recording. It never changes scoring.
 }
 ```
 
-or `"operation": { "type": "stop" }`. The server fills in the worker and output.
+or `"operation": { "type": "stop" }`. `selection` names only the capture device and
+its recording; the server fills in the worker (`match`) and output (`youtube`), and
+the snapshot's `selection` carries all four.
 `expectedGeneration` must be the current `broadcast.generation`. A retry of the
 same `commandId` replays its first outcome.
 
@@ -360,11 +361,15 @@ a retry can succeed. `error` is one of:
 | `time_limit`              | The match passed its 4-hour live limit                     |
 
 **Publish URL.** `POST .../media/publish`
-`{ recordingId, generation, publishingAttemptId? }` returns the SRT URL to publish
-to. It is the match's Stream live input, with its stream ID and passphrase.
+`{ recordingId, generation, publishingAttemptId }` returns
+`{ gameId, generation, recordingId, publishUrl, publishingAttemptId, serverTime }`.
+`publishingAttemptId` is required: a lowercase UUID the phone makes for each publishing
+attempt, echoed back so the phone can match the URL to its attempt. `publishUrl` is
+the SRT URL of the match's Stream live input, with its stream ID and passphrase.
 It answers `403 capture_not_selected` if this device and recording are not the
-selected capture, and `409 broadcast_changed` if the broadcast stopped or moved to
-another generation.
+selected capture, `409 broadcast_changed` if the broadcast stopped or moved to
+another generation, and `503 stream_unavailable` if the Stream input could not be
+created.
 
 **Status.** `GET .../media/status`:
 
@@ -396,8 +401,8 @@ another generation.
 ```
 
 `phase` is what the app shows: `idle` (no broadcast requested), `starting`, `live`,
-`reconnecting` (this generation was live and is waiting for video or restarting
-FFmpeg) or `error` (failed, or no report for five seconds). `state` and
+`reconnecting` (the worker is stopping or restarting FFmpeg, for example after the
+phone's video dropped) or `error` (failed, or no report for five seconds). `state` and
 `observation` are the worker's detailed state; `state` can also be
 `not_requested`, `unknown` (no report yet) or `stale`. Status is held in memory,
 so it reads `starting` after a restart until the next report.
@@ -412,7 +417,7 @@ a fixed placeholder; the intercept is the authentication. The worker ID is
 
 | Method | Path                              | Body or query                                    | Response                         |
 | ------ | --------------------------------- | ------------------------------------------------ | -------------------------------- |
-| POST   | `/v1/worker/sessions`             | `{ workerId, runId, outputId? }`                 | `{ sessionId, serverTime }`      |
+| POST   | `/v1/worker/sessions`             | `{ workerId, runId }`                            | `{ sessionId, serverTime }`      |
 | POST   | `/v1/worker/observations`         | `{ workerId, sessionId, sequence, observation }` | `{ accepted: true, serverTime }` |
 | GET    | `/v1/worker/snapshot?workerId=`   |                                                  | `{ assignment }`                 |
 | GET    | `/v1/worker/connection?workerId=` |                                                  | `{ connection }`                 |
@@ -423,6 +428,9 @@ a fixed placeholder; the intercept is the authentication. The worker ID is
 - `observation` is
   `{ gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision, output? }`,
   with `output` as `{ width, height, fps, bitrateKbps }`.
-- `assignment` is the match, its media state and `output: { destinationId, publishUrl }`.
-  `publishUrl` is the YouTube RTMPS ingest with its stream key.
-- `connection` is `{ gameId, generation, readUrl, source }` or `null`. `readUrl` is the Stream input's RTMPS playback URL.
+- `assignment` is the match, its media state and `output: { publishUrl }`, or `null`.
+  `publishUrl` is the YouTube RTMPS ingest with its stream key. There is an
+  assignment only while this worker's broadcast runs and the match has its YouTube
+  broadcast.
+- `connection` is `{ gameId, generation, readUrl }` or `null`. `readUrl` is the
+  Stream input's RTMPS playback URL.

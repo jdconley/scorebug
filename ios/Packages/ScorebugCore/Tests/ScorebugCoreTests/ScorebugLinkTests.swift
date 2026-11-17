@@ -13,7 +13,7 @@ final class ScorebugLinkTests: XCTestCase {
         XCTAssertEqual(ScorebugLink(string: "https://SCOREBUG.LIVE/join/K7P-4QX?utm=x"), .matchJoin(code: "K7P4QX"))
     }
 
-    func testRejectsOtherHostsPathsCodesAndOldLinks() {
+    func testRejectsOtherHostsPathsAndCodes() {
         let bad = [
             "https://evil.example/invite/ABCD2345",
             "https://scorebug.live.evil.example/join/K7P4QX",
@@ -25,8 +25,6 @@ final class ScorebugLinkTests: XCTestCase {
             "https://scorebug.live/invite/ABCD2345/extra",
             "https://scorebug.live/admin",
             "https://scorebug.live/",
-            "scorebug://join?server=https%3A%2F%2Fscorebug.live&code=K7P4QX",
-            "scorebug://connect?server=https%3A%2F%2Fa.example&code=abcDEF123_-xyzABC456789q",
             "scorebug://auth?status=ok",
             "not a link",
         ]

@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
-import { MatchStore } from '../src/matches-store.js';
 import { WorkerObservations } from '../src/worker-observations.js';
-import { createTestApp, SERVER_SECRET } from './helpers.js';
-import { openNodeSqlite } from './sqlite.js';
+import { createTestApp, testStore } from './helpers.js';
+
+const worker = { workerId: 'mac', outputId: 'sink' };
 
 it('serves every field of the iOS worker-status fixture, plus the simple phase', async () => {
   const fixture = JSON.parse(
@@ -12,7 +12,7 @@ it('serves every field of the iOS worker-status fixture, plus the simple phase',
       'utf8',
     ),
   );
-  const matches = new MatchStore(openNodeSqlite(':memory:'), SERVER_SECRET);
+  const matches = testStore();
   let now = Date.parse('2026-09-14T04:00:00.000Z');
   let monotonic = 0;
   const observations = new WorkerObservations(
@@ -37,21 +37,22 @@ it('serves every field of the iOS worker-status fixture, plus the simple phase',
       status: 'recording',
       startedAt: new Date().toISOString(),
     });
-    matches.media.execute({
-      commandId: 'start',
-      gameId: 'match',
-      expectedGeneration: 0,
-      issuedAt: new Date().toISOString(),
-      operation: {
-        type: 'start',
-        selection: {
-          workerId: 'mac',
-          outputId: 'sink',
-          captureDeviceId: 'phone',
-          recordingId: 'archive',
+    matches.media.execute(
+      {
+        commandId: 'start',
+        gameId: 'match',
+        expectedGeneration: 0,
+        issuedAt: new Date().toISOString(),
+        operation: {
+          type: 'start',
+          selection: {
+            captureDeviceId: 'phone',
+            recordingId: 'archive',
+          },
         },
       },
-    });
+      worker,
+    );
     const status = async () => {
       const result = await app.request('/v1/matches/match/media/status', {
         headers: { authorization: `Bearer ${scorer.token}` },
@@ -76,13 +77,16 @@ it('serves every field of the iOS worker-status fixture, plus the simple phase',
     now += 5000;
     monotonic += 5000;
     expectDecodes(await status(), fixture.stale, 'error');
-    matches.media.execute({
-      commandId: 'stop',
-      gameId: 'match',
-      expectedGeneration: 1,
-      issuedAt: new Date().toISOString(),
-      operation: { type: 'stop' },
-    });
+    matches.media.execute(
+      {
+        commandId: 'stop',
+        gameId: 'match',
+        expectedGeneration: 1,
+        issuedAt: new Date().toISOString(),
+        operation: { type: 'stop' },
+      },
+      worker,
+    );
     expectDecodes(await status(), fixture.stopped, 'idle');
   } finally {
     matches.close();

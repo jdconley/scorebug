@@ -14,6 +14,9 @@ const overlay = (home: number) =>
         away: { name: 'Away', shortName: 'A', color: '#445566' },
       },
       score: { home, away: 0, set: 1, homeSets: 0, awaySets: 0 },
+      rules: { bestOf: 3 },
+      completedSets: [],
+      scorebugStyle: 'bar',
     }),
   );
 
@@ -145,11 +148,11 @@ describe('OverlayFeed', () => {
     expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
     expect(new Set(timestamps).size).toBe(timestamps.length);
   });
-  it('draws nothing for a missing or legacy text score file', async () => {
-    const legacy = setup({ 'score.json': 'HOME 12 - 7 AWAY' });
-    await legacy.feed.start();
-    expect(legacy.render).not.toHaveBeenCalled();
-    expect(legacy.sink.frames()).toEqual([{ timestamp: 0, first: 0 }]);
+  it('draws nothing for a missing or malformed score file', async () => {
+    const malformed = setup({ 'score.json': 'HOME 12 - 7 AWAY' });
+    await malformed.feed.start();
+    expect(malformed.render).not.toHaveBeenCalled();
+    expect(malformed.sink.frames()).toEqual([{ timestamp: 0, first: 0 }]);
     const missing = setup({});
     await missing.feed.start();
     expect(missing.sink.frames()).toEqual([{ timestamp: 0, first: 0 }]);

@@ -181,35 +181,18 @@ it('accepts an explicit scorebug style on create and rejects unknown styles', as
   ).json();
   expect(created.snapshot.scorebugStyle).toBe('lowerThird');
 });
-it('accepts the retired destinationId only when it is absent or null', async () => {
+it('streams by default and refuses unknown create fields', async () => {
   const { app, token } = setup();
-  const destination = '6f1c0f43-5a8e-4a3e-9a51-0d1c2b3a4f5e';
-  const refused = await post(app, '/v1/matches', { ...input, destinationId: destination }, token);
-  expect(refused.status).toBe(409);
-  expect((await refused.json()).error).toBe('destination_not_found');
-  expect(
-    (
-      await post(
-        app,
-        '/v1/matches',
-        { ...input, recordOnly: true, destinationId: destination },
-        token,
-      )
-    ).status,
-  ).toBe(400);
-  const created = await post(app, '/v1/matches', { ...input, destinationId: null }, token);
+  const unknown = await post(app, '/v1/matches', { ...input, destinationId: null }, token);
+  expect(unknown.status).toBe(400);
+  const created = await post(app, '/v1/matches', input, token);
   expect(created.status).toBe(201);
-  expect((await created.json()).snapshot.output).toEqual({
-    destinationId: null,
-    recordOnly: false,
-  });
-  const retried = await post(app, '/v1/matches', input, token);
-  expect(retried.status).toBe(201);
+  expect((await created.json()).snapshot.output).toEqual({ recordOnly: false });
 });
 it('marks a record-only match in its output', async () => {
   const { app, token } = setup();
   const created = await (
     await post(app, '/v1/matches', { ...input, recordOnly: true }, token)
   ).json();
-  expect(created.snapshot.output).toEqual({ destinationId: null, recordOnly: true });
+  expect(created.snapshot.output).toEqual({ recordOnly: true });
 });

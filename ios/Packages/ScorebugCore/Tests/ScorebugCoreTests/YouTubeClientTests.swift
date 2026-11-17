@@ -87,7 +87,7 @@ final class YouTubeClientTests: XCTestCase {
         }
         let active = try JSONDecoder().decode(ActiveMatchResponse.self, from: Data(##"{"snapshot":null,"youtube":{"broadcastId":"abc123","watchUrl":"https://www.youtube.com/watch?v=abc123","channelTitle":"Wildcats","channelThumbnail":null,"privacy":"unlisted"},"serverTime":"t"}"##.utf8))
         XCTAssertEqual(active.youtube, youtube)
-        let older = try JSONDecoder().decode(ActiveMatchResponse.self, from: Data(##"{"snapshot":null,"serverTime":"t"}"##.utf8))
-        XCTAssertNil(older.youtube)
+        let notLiveYet = try JSONDecoder().decode(ActiveMatchResponse.self, from: Data(##"{"snapshot":null,"youtube":null,"serverTime":"t"}"##.utf8))
+        XCTAssertNil(notLiveYet.youtube)
     }
 }

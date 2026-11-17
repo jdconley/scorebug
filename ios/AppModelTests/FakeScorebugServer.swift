@@ -307,7 +307,7 @@ actor FakeScorebugServer {
                                          scorer: MatchScorer(deviceId: creation.deviceId, epoch: 1),
                                          broadcast: MatchBroadcast(desired: .stopped, generation: 0),
                                          scorebugStyle: creation.scorebugStyle ?? .bar,
-                                         output: MatchOutput(destinationId: creation.destinationId, recordOnly: creation.recordOnly ?? false))
+                                         output: MatchOutput(recordOnly: creation.recordOnly ?? false))
             matches[creation.id] = Match(snapshot: snapshot)
             matchTeams[creation.id] = teamId
             let credential = issueCredential(gameId: creation.id, deviceId: creation.deviceId, role: .score)

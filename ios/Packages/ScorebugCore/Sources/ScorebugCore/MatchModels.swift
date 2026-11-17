@@ -144,20 +144,10 @@ public struct PendingSetEnd: Codable, Equatable, Sendable {
     public init(winner: MatchSide) { self.winner = winner }
 }
 
-/// Where the match broadcast goes. Null destination without `recordOnly` uses the server default.
+/// Whether the match streams to the team's YouTube channel or only records.
 public struct MatchOutput: Codable, Equatable, Sendable {
-    public var destinationId: String?
     public var recordOnly: Bool
-    public init(destinationId: String?, recordOnly: Bool) {
-        self.destinationId = destinationId
-        self.recordOnly = recordOnly
-    }
-    private enum CodingKeys: String, CodingKey { case destinationId, recordOnly }
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(destinationId, forKey: .destinationId)
-        try container.encode(recordOnly, forKey: .recordOnly)
-    }
+    public init(recordOnly: Bool) { self.recordOnly = recordOnly }
 }
 
 public struct MatchSnapshot: Codable, Equatable, Sendable {
@@ -181,7 +171,7 @@ public struct MatchSnapshot: Codable, Equatable, Sendable {
                 completedSets: [MatchSetResult], status: MatchStatus, endReason: String?, canUndo: Bool,
                 scorer: MatchScorer, broadcast: MatchBroadcast, scorebugStyle: ScorebugStyle = .bar,
                 pendingSetEnd: PendingSetEnd? = nil,
-                output: MatchOutput = MatchOutput(destinationId: nil, recordOnly: false)) {
+                output: MatchOutput = MatchOutput(recordOnly: false)) {
         self.id = id
         self.createdAt = createdAt
         self.revision = revision
@@ -202,27 +192,6 @@ public struct MatchSnapshot: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, createdAt, revision, teams, rules, score, completedSets, status, endReason, canUndo, scorer, broadcast
         case scorebugStyle, pendingSetEnd, output
-    }
-
-    /// The three presentation fields are tolerated when absent so an older server still decodes.
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        createdAt = try container.decode(String.self, forKey: .createdAt)
-        revision = try container.decode(Int.self, forKey: .revision)
-        teams = try container.decode(MatchTeams.self, forKey: .teams)
-        rules = try container.decode(MatchRules.self, forKey: .rules)
-        score = try container.decode(MatchScore.self, forKey: .score)
-        completedSets = try container.decode([MatchSetResult].self, forKey: .completedSets)
-        status = try container.decode(MatchStatus.self, forKey: .status)
-        endReason = try container.decodeIfPresent(String.self, forKey: .endReason)
-        canUndo = try container.decode(Bool.self, forKey: .canUndo)
-        scorer = try container.decode(MatchScorer.self, forKey: .scorer)
-        broadcast = try container.decode(MatchBroadcast.self, forKey: .broadcast)
-        scorebugStyle = try container.decodeIfPresent(ScorebugStyle.self, forKey: .scorebugStyle) ?? .bar
-        pendingSetEnd = try container.decodeIfPresent(PendingSetEnd.self, forKey: .pendingSetEnd)
-        output = try container.decodeIfPresent(MatchOutput.self, forKey: .output)
-            ?? MatchOutput(destinationId: nil, recordOnly: false)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -311,22 +280,20 @@ public struct MatchCreation: Codable, Equatable, Sendable {
     public var teams: MatchTeams
     public var rules: MatchRules
     public var scorebugStyle: ScorebugStyle?
-    public var destinationId: String?
     public var recordOnly: Bool?
 
     public init(id: String, deviceId: String, teams: MatchTeams, rules: MatchRules,
-                scorebugStyle: ScorebugStyle? = nil, destinationId: String? = nil, recordOnly: Bool? = nil) {
+                scorebugStyle: ScorebugStyle? = nil, recordOnly: Bool? = nil) {
         self.id = id
         self.deviceId = deviceId
         self.teams = teams
         self.rules = rules
         self.scorebugStyle = scorebugStyle
-        self.destinationId = destinationId
         self.recordOnly = recordOnly
     }
 
     // Optional fields are omitted, never sent as null: the server schema is strict.
-    private enum CodingKeys: String, CodingKey { case id, deviceId, teams, rules, scorebugStyle, destinationId, recordOnly }
+    private enum CodingKeys: String, CodingKey { case id, deviceId, teams, rules, scorebugStyle, recordOnly }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
@@ -334,7 +301,6 @@ public struct MatchCreation: Codable, Equatable, Sendable {
         try container.encode(teams, forKey: .teams)
         try container.encode(rules, forKey: .rules)
         try container.encodeIfPresent(scorebugStyle, forKey: .scorebugStyle)
-        try container.encodeIfPresent(destinationId, forKey: .destinationId)
         try container.encodeIfPresent(recordOnly, forKey: .recordOnly)
     }
 }
@@ -353,7 +319,7 @@ public struct MatchSessionResponse: Codable, Equatable, Sendable {
 
 public struct MatchSnapshotResponse: Codable, Equatable, Sendable {
     public var snapshot: MatchSnapshot
-    /// Hosted: the match's YouTube broadcast, nil before its first Go Live.
+    /// The match's YouTube broadcast, nil before its first Go Live.
     public var youtube: MatchYouTube? = nil
     public var serverTime: String
 
@@ -365,7 +331,7 @@ public struct MatchSnapshotResponse: Codable, Equatable, Sendable {
 
 public struct ActiveMatchResponse: Codable, Equatable, Sendable {
     public var snapshot: MatchSnapshot?
-    /// Hosted: the match's YouTube broadcast, nil before its first Go Live.
+    /// The match's YouTube broadcast, nil before its first Go Live.
     public var youtube: MatchYouTube? = nil
     public var serverTime: String
 

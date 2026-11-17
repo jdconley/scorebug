@@ -51,8 +51,6 @@ enum StoreKey {
     static let session = "session"
     /// This install's device ID for match credentials, kept across sign-outs.
     static let deviceId = "device-id"
-    /// Written by the self-hosted builds; cleared on launch.
-    static let legacy = ["server", "enrollment-device"]
 }
 
 struct SecureStoreError: Error, Equatable { let status: Int32 }
@@ -106,10 +104,8 @@ final class MemorySecureStore: SecureStore {
 struct MatchRecap: Codable, Equatable {
     struct Team: Codable, Equatable {
         var name: String; var shortName: String; var color: String; var sets: Int
-        /// The big number: sets won, or the set's points when the match ended early. Nil in recaps
-        /// saved before it existed.
-        var score: Int?
-        var shown: Int { score ?? sets }
+        /// The big number: sets won, or the set's points when the match ended early.
+        var score: Int
     }
     var team1: Team
     var team2: Team
@@ -135,7 +131,7 @@ struct MatchRecap: Codable, Equatable {
     }
 
     /// "CASCADE 2–1 SUMMIT", or the set's points for a match ended early.
-    var title: String { "\(team1.shortName) \(team1.shown)–\(team2.shown) \(team2.shortName)" }
+    var title: String { "\(team1.shortName) \(team1.score)–\(team2.score) \(team2.shortName)" }
 
     /// "Final · 25–20, 25–18" or "Ended early in set 2 · 25–20".
     var status: String {

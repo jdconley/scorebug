@@ -5,7 +5,7 @@ import Foundation
 /// never invoke these methods. start() returns only when publication is ready.
 /// stop() is terminal and safe concurrently with suspended operations: it must
 /// unblock append/start/health and prevent a late startup from resurrecting
-/// publication. Destination credentials stay inside the publisher.
+/// publication. The SRT URL and its passphrase stay inside the publisher.
 public protocol MediaPublisher: Sendable {
     func start() async throws
     func append(_ sample: CapturedMediaSample) async throws

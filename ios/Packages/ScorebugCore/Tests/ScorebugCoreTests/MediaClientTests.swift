@@ -27,7 +27,22 @@ final class MediaClientTests: XCTestCase {
         XCTAssertNil(fixture.snapshotResponse.snapshot.broadcast.selection)
         XCTAssertNil(fixture.outcome.error)
         XCTAssertEqual(fixture.outcome.snapshot.broadcast.generation, 1)
-        XCTAssertEqual(try object(JSONEncoder().encode(fixture)), try object(data))
+        // The app reads every field except the container and output the server picked for a
+        // selection; those are fixed server-side, so the app does not model them.
+        XCTAssertEqual(try object(JSONEncoder().encode(fixture)), withoutServerPicks(try object(data)) as? NSDictionary)
+    }
+
+    private func withoutServerPicks(_ value: Any) -> Any {
+        if let dictionary = value as? NSDictionary {
+            let copy = NSMutableDictionary()
+            for (key, item) in dictionary {
+                if let key = key as? String, key == "workerId" || key == "outputId" { continue }
+                copy[key] = withoutServerPicks(item)
+            }
+            return copy
+        }
+        if let array = value as? NSArray { return array.map(withoutServerPicks) as NSArray }
+        return value
     }
 
     func testRecordingStatusesAndReportEncodeCanonicalFields() throws {
@@ -41,11 +56,9 @@ final class MediaClientTests: XCTestCase {
     }
 
     func testStartAndStopUseFlatDiscriminatedWireShape() throws {
-        let selection = BroadcastSelection(workerId: "mac", outputId: "local-sink", captureDeviceId: "phone", recordingId: "archive-1")
+        let selection = BroadcastSelection(captureDeviceId: "phone", recordingId: "archive-1")
         let cases: [(BroadcastOperation, String)] = [
-            (.start(selection: selection), #"{"type":"start","selection":{"workerId":"mac","outputId":"local-sink","captureDeviceId":"phone","recordingId":"archive-1"}}"#),
-            (.start(selection: BroadcastSelection(captureDeviceId: "phone", recordingId: "archive-1")),
-             #"{"type":"start","selection":{"captureDeviceId":"phone","recordingId":"archive-1"}}"#),
+            (.start(selection: selection), #"{"type":"start","selection":{"captureDeviceId":"phone","recordingId":"archive-1"}}"#),
             (.stop, #"{"type":"stop"}"#),
         ]
         for (operation, expected) in cases {
@@ -96,36 +109,36 @@ final class MediaClientTests: XCTestCase {
         XCTAssertEqual(response, fixture.recordingResponse)
     }
 
-    func testBroadcastUsesInstallationCredentialAndReturnsNormalConflictOutcome() async throws {
+    func testBroadcastUsesTheSessionTokenAndReturnsNormalConflictOutcome() async throws {
         let fixture = try fixture()
         for status in [200, 409] {
             let expected = BroadcastOutcome(commandId: fixture.command.commandId, accepted: status == 200, error: status == 409 ? "stale_generation" : nil, snapshot: fixture.outcome.snapshot)
             let client = try client(status: status, body: JSONEncoder().encode(expected)) { request in
-                XCTAssertEqual(request.url?.path, "/control/v1/matches/match/media/commands")
+                XCTAssertEqual(request.url?.path, "/control/v1/teams/t1/matches/match/media/commands")
                 XCTAssertEqual(request.httpMethod, "POST")
-                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer installation-secret")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-secret")
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
                 XCTAssertEqual(try JSONDecoder().decode(BroadcastCommand.self, from: XCTUnwrap(request.httpBody)), fixture.command)
             }
-            let outcome = try await client.executeBroadcast(fixture.command, installationToken: "installation-secret")
+            let outcome = try await client.executeBroadcast(fixture.command, token: "session-secret")
             XCTAssertEqual(outcome, expected)
         }
     }
 
-    func testBroadcastReceiptUsesInstallationCredentialAndDecodesFoundOutcome() async throws {
+    func testBroadcastReceiptUsesTheSessionTokenAndDecodesFoundOutcome() async throws {
         let fixture = try fixture()
         let client = try client(status: 200, body: JSONEncoder().encode(fixture.outcome)) { request in
-            XCTAssertEqual(request.url?.path, "/control/v1/matches/match/media/commands/start-1")
+            XCTAssertEqual(request.url?.path, "/control/v1/teams/t1/matches/match/media/commands/start-1")
             XCTAssertEqual(request.httpMethod, "GET")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer installation-secret")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-secret")
         }
-        let receipt = try await client.broadcastReceipt(gameId: "match", commandId: "start-1", installationToken: "installation-secret")
+        let receipt = try await client.broadcastReceipt(gameId: "match", commandId: "start-1", token: "session-secret")
         XCTAssertEqual(receipt, fixture.outcome)
     }
 
     func testBroadcastReceiptReturnsNilOnlyForExactCommandNotFound() async throws {
         let missing = try client(status: 404, body: Data(#"{"error":"command_not_found"}"#.utf8))
-        let receipt = try await missing.broadcastReceipt(gameId: "match", commandId: "start-1", installationToken: "installation-secret")
+        let receipt = try await missing.broadcastReceipt(gameId: "match", commandId: "start-1", token: "session-secret")
         XCTAssertNil(receipt)
         let cases: [(Int, String, MatchClientError)] = [
             (404, #"{"error":"match_not_found"}"#, .http(status: 404, code: "match_not_found")),
@@ -136,7 +149,7 @@ final class MediaClientTests: XCTestCase {
         ]
         for (status, body, expected) in cases {
             let client = try client(status: status, body: Data(body.utf8))
-            do { _ = try await client.broadcastReceipt(gameId: "match", commandId: "start-1", installationToken: "installation-secret"); XCTFail("Should throw") }
+            do { _ = try await client.broadcastReceipt(gameId: "match", commandId: "start-1", token: "session-secret"); XCTFail("Should throw") }
             catch let error as MatchClientError { XCTAssertEqual(error, expected) }
         }
     }
@@ -144,21 +157,21 @@ final class MediaClientTests: XCTestCase {
     func testMalformedConflictAndTransportFailureAreNotAcknowledgements() async throws {
         let command = try fixture().command
         let malformed = try client(status: 409, body: Data(#"{"error":"conflict"}"#.utf8))
-        do { _ = try await malformed.executeBroadcast(command, installationToken: "installation"); XCTFail("Should throw") }
+        do { _ = try await malformed.executeBroadcast(command, token: "session"); XCTFail("Should throw") }
         catch is DecodingError { }
-        let failed = MatchHTTPClient(endpoint: try ScoringEndpoint("http://localhost:3000"), transport: { _ in throw URLError(.timedOut) })
-        do { _ = try await failed.broadcastReceipt(gameId: "match", commandId: "start-1", installationToken: "installation"); XCTFail("Should throw") }
+        let failed = MatchHTTPClient(endpoint: try ScoringEndpoint("http://localhost:3000"), transport: { _ in throw URLError(.timedOut) }).team("t1")
+        do { _ = try await failed.broadcastReceipt(gameId: "match", commandId: "start-1", token: "session"); XCTFail("Should throw") }
         catch let error as URLError { XCTAssertEqual(error.code, .timedOut) }
     }
 
     func testMediaPathsRejectInvalidIdentifiersBeforeSending() async throws {
         let client = try client(status: 200, body: Data("{}".utf8)) { _ in XCTFail("Must not send") }
         for invalid in ["../other", "foo/bar", "%2f", "", String(repeating: "x", count: 129)] {
-            do { _ = try await client.broadcastReceipt(gameId: "match", commandId: invalid, installationToken: "installation"); XCTFail("Should throw") }
+            do { _ = try await client.broadcastReceipt(gameId: "match", commandId: invalid, token: "session"); XCTFail("Should throw") }
             catch let error as MatchClientError { XCTAssertEqual(error, .invalidIdentifier) }
             var command = try fixture().command
             command.gameId = invalid
-            do { _ = try await client.executeBroadcast(command, installationToken: "installation"); XCTFail("Should throw") }
+            do { _ = try await client.executeBroadcast(command, token: "session"); XCTFail("Should throw") }
             catch let error as MatchClientError { XCTAssertEqual(error, .invalidIdentifier) }
         }
     }
@@ -169,6 +182,6 @@ final class MediaClientTests: XCTestCase {
         MatchHTTPClient(endpoint: try ScoringEndpoint("https://example.com/control/"), transport: { request in
             try inspect(request)
             return (body, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
-        })
+        }).team("t1")
     }
 }

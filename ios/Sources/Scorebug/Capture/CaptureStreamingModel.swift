@@ -15,11 +15,13 @@ import ScorebugStreaming
 
     @Published var endpoint = "http://localhost:18787"
     /// The server this app talks to, known at launch. Set before the first restore so a setup
-    /// saved for any other server is dropped instead of polled.
+    /// saved for another server (Debug builds switch between hosted and local) is dropped
+    /// instead of polled.
     var server: String?
-    @Published var installationToken = ""
+    /// The signed-in person's session token.
+    @Published var sessionToken = ""
     /// Team match routes (`/v1/teams/:teamId/matches`) for the active match and broadcast commands.
-    @Published var teamId: String?
+    @Published var teamId = ""
     @Published private(set) var localState: LocalState = .idle
     @Published private(set) var message: String?
     @Published private(set) var connectedGameID: String?
@@ -34,15 +36,11 @@ import ScorebugStreaming
         willSet { if newValue != commandState { objectWillChange.send() } }
         didSet { if let link = commandState?.outcome?.youtube, link != youtube { youtube = link } }
     }
-    /// Hosted: the match's YouTube broadcast, from the Go Live reply. The link never changes within a match.
+    /// The match's YouTube broadcast, from the Go Live reply. The link never changes within a match.
     @Published private(set) var youtube: MatchYouTube?
     @Published private(set) var activeRecordingID: String?
 
     private var setup: SavedCaptureSetup?
-    var watchSetupConnection: (endpoint: String, installationToken: String)? {
-        guard !needsStorageRetry, let setup, !setup.installationToken.isEmpty else { return nil }
-        return (setup.endpoint, setup.installationToken)
-    }
     private var restored = false
     // Transient sheet state only; never changes or clears the saved connection.
     var isSetupPresented = false
@@ -114,7 +112,7 @@ import ScorebugStreaming
     var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && requestedStart == nil && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
     var canChangeSetup: Bool {
         guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, !needsStorageRetry else { return false }
-        do { return try pendingStore.load() == nil && (setup?.reports.isEmpty ?? true) && (setup?.stopRecordingIDs?.isEmpty ?? true) } catch { return false }
+        do { return try pendingStore.load() == nil && (setup?.reports.isEmpty ?? true) && (setup?.stopRecordingIDs.isEmpty ?? true) } catch { return false }
     }
     var status: Status {
         if isReconnecting { return .reconnecting }
@@ -133,21 +131,21 @@ import ScorebugStreaming
             if var saved = setup {
                 _ = try ScoringEndpoint(saved.endpoint)
                 if let server, Self.server(saved.endpoint) != Self.server(server) {
-                    // Saved for another server (the self-hosted build's, say). Its reports, credential and
+                    // Saved for another server (Debug builds switch servers). Its reports, credential and
                     // pending command can never be delivered; polling it only stalls Go Live on timeouts.
                     try pendingStore.save(nil)
-                    saved = SavedCaptureSetup(endpoint: server, installationToken: "", deviceId: saved.deviceId,
-                                              credential: nil, reports: [])
+                    saved = SavedCaptureSetup(endpoint: server, sessionToken: "", deviceId: saved.deviceId,
+                                              credential: nil, reports: [], teamId: "")
                 }
-                endpoint = saved.endpoint; installationToken = saved.installationToken; teamId = saved.teamId
+                endpoint = saved.endpoint; sessionToken = saved.sessionToken; teamId = saved.teamId
                 for index in saved.reports.indices where saved.reports[index].report.status == .recording {
                     saved.reports[index].report.sequence += 1
                     saved.reports[index].report.status = .interrupted
                     saved.reports[index].delivered = false
                 }
                 setup = saved
-                guard (saved.stopRecordingIDs?.count ?? 0) <= 64 else { throw CaptureControlError.storage }
-                ownedRecordingIDs = Set(saved.reports.map { $0.report.recordingId } + (saved.stopRecordingIDs ?? []))
+                guard saved.stopRecordingIDs.count <= 64 else { throw CaptureControlError.storage }
+                ownedRecordingIDs = Set(saved.reports.map { $0.report.recordingId } + saved.stopRecordingIDs)
                 if let pending = try pendingStore.load(), pending.endpointScope == saved.endpointScope,
                    pending.captureDeviceId == saved.deviceId, pending.command.gameId == saved.credential?.gameId,
                    case .start(let selection) = pending.command.operation { ownedRecordingIDs.insert(selection.recordingId) }
@@ -198,28 +196,28 @@ import ScorebugStreaming
         }
         guard !busy, !stopping, !publisherStopping, !controlBusy else { fail(CaptureControlError.unresolved); return }
         // The caller set the server, token and team before connecting; the first restore must not
-        // put back the ones saved by an older build (a phone that used a self-hosted server).
-        let wanted = (endpoint: endpoint, token: installationToken, teamId: teamId)
+        // put back the saved ones.
+        let wanted = (endpoint: endpoint, token: sessionToken, teamId: teamId)
         await restore()
         if !wanted.token.isEmpty {
-            endpoint = wanted.endpoint; installationToken = wanted.token; teamId = wanted.teamId
+            endpoint = wanted.endpoint; sessionToken = wanted.token; teamId = wanted.teamId
         }
         do {
             if let old = setup, publishing == nil, Self.server(old.endpoint) != Self.server(endpoint) {
-                // A different server (the self-hosted one before hosted Scorebug, say) can never
-                // take the old one's reports, pending command or stop ledger: start clean.
+                // A different server (Debug builds switch servers) can never take the old one's
+                // reports, pending command or stop ledger: start clean.
                 try pendingStore.save(nil)
-                setup = SavedCaptureSetup(endpoint: old.endpoint, installationToken: old.installationToken,
-                                          deviceId: old.deviceId, credential: nil, reports: [])
+                setup = SavedCaptureSetup(endpoint: old.endpoint, sessionToken: old.sessionToken,
+                                          deviceId: old.deviceId, credential: nil, reports: [], teamId: old.teamId)
                 ownedRecordingIDs = Set([current?.id].compactMap { $0 })
                 shouldStopOwnedBroadcast = false
                 coordinator = nil; connectedGameID = nil; commandState = nil; youtube = nil
             }
-            if setup == nil || endpoint != setup?.endpoint || installationToken != setup?.installationToken || teamId != setup?.teamId {
+            if setup == nil || endpoint != setup?.endpoint || sessionToken != setup?.sessionToken || teamId != setup?.teamId {
                 guard canChangeSetup else { throw CaptureControlError.unresolved }
                 let valid = try ScoringEndpoint(endpoint)
-                guard !installationToken.isEmpty else { throw CaptureControlError.noSetup }
-                setup = SavedCaptureSetup(endpoint: valid.url.absoluteString, installationToken: installationToken,
+                guard !sessionToken.isEmpty, !teamId.isEmpty else { throw CaptureControlError.noSetup }
+                setup = SavedCaptureSetup(endpoint: valid.url.absoluteString, sessionToken: sessionToken,
                     deviceId: setup?.deviceId ?? UUID().uuidString, credential: nil, reports: [], teamId: teamId)
                 try persist()
                 coordinator = nil; connectedGameID = nil; commandState = nil
@@ -243,7 +241,7 @@ import ScorebugStreaming
         await action?.value
         try? pendingStore.save(nil)
         if var saved = setup {
-            saved.credential = nil; saved.reports = []; saved.stopRecordingIDs = nil
+            saved.credential = nil; saved.reports = []; saved.stopRecordingIDs = []
             setup = saved
             try? persist()
         }
@@ -530,7 +528,7 @@ import ScorebugStreaming
     private func joinActiveMatch() async throws {
         guard var saved = setup else { throw CaptureControlError.noSetup }
         let client = try clientForSetup()
-        let active = try await client.active(installationToken: saved.installationToken)
+        let active = try await client.active(token: saved.sessionToken)
         try Task.checkCancellation()
         guard let match = active.snapshot, match.status == .active else { throw CaptureControlError.noActiveMatch }
         if saved.credential?.gameId != match.id {
@@ -544,7 +542,7 @@ import ScorebugStreaming
             shouldStopOwnedBroadcast = false
             coordinator = nil; connectedGameID = nil; commandState = nil
         }
-        let joined = try await client.join(gameId: match.id, deviceId: saved.deviceId, role: .capture, installationToken: saved.installationToken)
+        let joined = try await client.join(gameId: match.id, deviceId: saved.deviceId, role: .capture, token: saved.sessionToken)
         try Task.checkCancellation()
         guard joined.credential.gameId == match.id, joined.credential.deviceId == saved.deviceId, joined.credential.role == .capture else { throw CaptureControlError.invalidCredential }
         // Reload the mutable outbox after I/O: a local stop may have queued a report.
@@ -559,7 +557,7 @@ import ScorebugStreaming
     private func makeCoordinator() throws {
         guard let saved = setup, let credential = saved.credential else { return }
         guard credential.deviceId == saved.deviceId, credential.role == .capture else { throw CaptureControlError.invalidCredential }
-        coordinator = BroadcastCommandCoordinator(client: try clientForSetup(), credential: credential, installationToken: saved.installationToken, endpointScope: saved.endpointScope, store: pendingStore)
+        coordinator = BroadcastCommandCoordinator(client: try clientForSetup(), credential: credential, sessionToken: saved.sessionToken, endpointScope: saved.endpointScope, store: pendingStore)
         connectedGameID = credential.gameId
     }
     private func clientForSetup() throws -> MatchHTTPClient {
@@ -594,7 +592,7 @@ import ScorebugStreaming
     }
     private func reserveStopOwnership(_ id: String) throws {
         guard var saved = setup else { throw CaptureControlError.noSetup }
-        var ids = saved.stopRecordingIDs ?? []
+        var ids = saved.stopRecordingIDs
         if !ids.contains(id) {
             guard ids.count < 64 else { throw CaptureControlError.unresolved }
             ids.append(id)
@@ -699,13 +697,7 @@ import ScorebugStreaming
         } else if error as? CaptureControlError == .noActiveMatch {
             message = "This match isn't open on the server, so it can't stream. Recording continues."
         } else if error as? CaptureControlError == .noSetup {
-            message = "Connect this phone to your server to stream. Recording continues."
-        } else if error as? CaptureControlError == .noWorker {
-            message = "No streaming worker is connected to the server. Recording continues."
-        } else if error as? CaptureControlError == .workerAmbiguous {
-            message = "More than one streaming worker is connected, so the server can't pick one. Recording continues."
-        } else if error as? CaptureControlError == .outputUnknown {
-            message = "The streaming worker needs an update before it can stream. Recording continues."
+            message = "Sign in and open the match from your team to stream. Recording continues."
         } else if let refusal = error as? CaptureControlError, let text = refusal.goLiveMessage {
             message = text
         } else {

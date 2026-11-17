@@ -62,32 +62,11 @@ import XCTest
         XCTAssertEqual(profiles, [.hd720])
         let operations = await server.operations
         XCTAssertEqual(operations, ["start"])
-        // The app names no worker or output; the server picks them.
         let sent = await server.startSelections
         XCTAssertEqual(sent, [BroadcastSelection(captureDeviceId: "capture-1", recordingId: "recording-1")])
-        let selected = await server.broadcast.selection
-        XCTAssertEqual(selected?.workerId, "home-1")
     }
 
-    func testWorkerRejectionsExplainWhatHappened() async throws {
-        let cases = [
-            ("no_worker", "No streaming worker is connected to the server."),
-            ("worker_ambiguous", "More than one streaming worker is connected"),
-            ("output_unknown", "The streaming worker needs an update"),
-        ]
-        for (code, text) in cases {
-            server = CaptureTestServer()
-            await server.rejectStarts(with: code)
-            let model = makeModel()
-            await model.restore()
-            model.captureChanged(captureContext())
-            await model.startStreaming()
-            XCTAssertEqual(model.status, .recordingOnly, code)
-            XCTAssertTrue(model.message?.contains(text) == true, "\(code): \(String(describing: model.message))")
-        }
-    }
-
-    func testHostedGoLiveRefusalsAndWatchLink() async throws {
+    func testGoLiveRefusalsAndWatchLink() async throws {
         server = CaptureTestServer()
         await server.rejectStarts(with: "busy")
         var model = makeModel()
@@ -106,7 +85,7 @@ import XCTest
         XCTAssertEqual(model.youtube, link, "the Go Live reply carries the watch link")
     }
 
-    /// A phone that used the self-hosted build may still hold reports for a server that's gone.
+    /// Debug builds switch servers. A setup saved for the other one holds reports it can never take.
     func testANewServerStartsCleanInsteadOfWaitingOnTheOldOne() async throws {
         var old = captureSetup()
         old.endpoint = "https://old.example"
@@ -120,7 +99,7 @@ import XCTest
         await model.restore()
         model.captureChanged(captureContext())
         model.endpoint = "http://localhost:18787"
-        model.installationToken = "session"
+        model.sessionToken = "session"
         model.teamId = "t1"
         await model.connect()
         XCTAssertNil(model.message)
@@ -131,15 +110,15 @@ import XCTest
         XCTAssertEqual(model.status, .live, String(describing: model.message))
     }
 
-    /// The app sets the hosted server before the first restore. That restore must not swap the
-    /// old self-hosted server back in, or every request goes to an address that's gone.
+    /// The app sets the server before the first restore. That restore must not swap the
+    /// saved server back in, or every request goes to the other one.
     func testConnectKeepsTheServerSetBeforeTheFirstRestore() async throws {
         var old = captureSetup()
         old.endpoint = "https://old.example"
         let storage = CaptureMemoryStorage(old)
         let model = makeModel(storage: storage)
         model.endpoint = "http://localhost:18787"
-        model.installationToken = "session"
+        model.sessionToken = "session"
         model.teamId = "t1"
         await model.connect()
         XCTAssertNil(model.message)
@@ -151,8 +130,8 @@ import XCTest
         XCTAssertEqual(model.status, .live, String(describing: model.message))
     }
 
-    /// The background poll restores before any match connects. A setup saved for the old
-    /// self-hosted server must be dropped then, not polled until its requests time out.
+    /// The background poll restores before any match connects. A setup saved for another
+    /// server must be dropped then, not polled until its requests time out.
     func testRestoreDropsASetupSavedForAnotherServerBeforeAnyPoll() async throws {
         var old = captureSetup()
         old.endpoint = "https://old.example"
@@ -170,7 +149,7 @@ import XCTest
         XCTAssertEqual(storage.value?.endpoint, "http://localhost:18787")
         XCTAssertEqual(storage.value?.reports.count, 0)
         XCTAssertNil(storage.value?.credential)
-        model.installationToken = "session"
+        model.sessionToken = "session"
         model.teamId = "t1"
         model.captureChanged(captureContext())
         await model.connect()
@@ -188,7 +167,7 @@ import XCTest
         await server.setDelay(.milliseconds(80))
         let poll = Task { await model.pollControl() }
         try await Task.sleep(for: .milliseconds(10))
-        model.installationToken = "test-token"
+        model.sessionToken = "test-token"
         model.captureChanged(captureContext())
         await model.connect()
         await poll.value
@@ -213,7 +192,7 @@ import XCTest
         let after = await server.requestCount
         XCTAssertEqual(after, before, "a released match is not polled")
         await server.setActiveGame("game-2")
-        model.installationToken = "test-token"
+        model.sessionToken = "test-token"
         model.captureChanged(CurrentCapture(id: "recording-2", startedAt: "2026-09-14T01:00:00Z", tap: PublishingTap()))
         await model.connect()
         XCTAssertEqual(model.connectedGameID, "game-2")
@@ -345,7 +324,7 @@ import XCTest
         await model.startStreaming()
         XCTAssertEqual(model.status, .recordingOnly)
         XCTAssertEqual(model.localState, .failed)
-        XCTAssertTrue(model.message?.contains("Connect this phone") == true)
+        XCTAssertTrue(model.message?.contains("Sign in and open the match") == true)
     }
 
     private func eventually(_ condition: @escaping () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
@@ -359,8 +338,9 @@ import XCTest
 
 func captureContext() -> CurrentCapture { CurrentCapture(id: "recording-1", startedAt: "2026-09-14T00:00:00Z", tap: PublishingTap()) }
 func captureSetup() -> SavedCaptureSetup {
-    SavedCaptureSetup(endpoint: "http://localhost:18787", installationToken: "test-token", deviceId: "capture-1",
-                      credential: MatchCredential(gameId: "game-1", deviceId: "capture-1", role: .capture, token: "capture-token"), reports: [])
+    SavedCaptureSetup(endpoint: "http://localhost:18787", sessionToken: "test-token", deviceId: "capture-1",
+                      credential: MatchCredential(gameId: "game-1", deviceId: "capture-1", role: .capture, token: "capture-token"), reports: [],
+                      teamId: "t1")
 }
 final class CaptureMemoryStorage: CaptureSetupStorage {
     var value: SavedCaptureSetup?
@@ -448,7 +428,7 @@ actor CaptureTestServer {
         let parts = path.split(separator: "/").map(String.init)
         let game = parts.firstIndex(of: "matches").flatMap { parts.indices.contains($0 + 1) ? parts[$0 + 1] : nil }
             .flatMap { $0 == "active" ? nil : $0 } ?? activeGame
-        // The old self-hosted server is gone.
+        // The other server, unreachable here.
         if request.url!.host == "old.example" { throw URLError(.cannotFindHost) }
         let time = ISO8601DateFormatter().string(from: Date())
         let data: Data
@@ -476,10 +456,7 @@ actor CaptureTestServer {
                 return (try JSONEncoder().encode(result), HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!)
             }
             switch command.operation {
-            case .start(var selection):
-                // Like the API: fill in the worker the phone left out.
-                selection.workerId = selection.workerId ?? "home-1"
-                selection.outputId = selection.outputId ?? "youtube"
+            case .start(let selection):
                 broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: selection); operations.append("start")
             case .stop: broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil); operations.append("stop")
             }
@@ -491,11 +468,9 @@ actor CaptureTestServer {
             else { return (Data("{\"error\":\"command_not_found\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!) }
         } else if path.hasSuffix("/publish") {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-            let attempt = body["publishingAttemptId"] as? String
-            var response: [String: Any] = ["gameId": game, "recordingId": body["recordingId"]!, "generation": broadcast.generation, "serverTime": time]
-            if let attempt { response["publishingAttemptId"] = attempt }
-            let streamID = attempt.map { "publish:scorebug-0123456789abcdef-0123456789abcdef0123456789abcdef:sbp1=\($0)." + String(repeating: "a", count: 64) } ?? "test"
-            response["publishUrl"] = "srt://localhost:19000?streamid=\(streamID)"
+            let response: [String: Any] = ["gameId": game, "recordingId": body["recordingId"]!, "generation": broadcast.generation,
+                                           "serverTime": time, "publishingAttemptId": body["publishingAttemptId"]!,
+                                           "publishUrl": "srt://localhost:19000?passphrase=test&streamid=0123456789abcdef"]
             data = try JSONSerialization.data(withJSONObject: response)
         } else {
             data = try JSONEncoder().encode(MediaSnapshotResponse(snapshot: snapshot(game), serverTime: time))
@@ -506,6 +481,6 @@ actor CaptureTestServer {
 }
 
 private func matchSnapshot(id: String = "game-1") throws -> MatchSnapshot {
-    let json = ##"{"id":"GAME_ID","createdAt":"2026-09-14T00:00:00Z","revision":0,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":0,"away":0,"set":1,"homeSets":0,"awaySets":0},"completedSets":[],"status":"active","endReason":null,"canUndo":false,"scorer":{"deviceId":"scorer-1","epoch":1},"broadcast":{"desired":"stopped","generation":0}}"##
+    let json = ##"{"id":"GAME_ID","createdAt":"2026-09-14T00:00:00Z","revision":0,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":0,"away":0,"set":1,"homeSets":0,"awaySets":0},"completedSets":[],"status":"active","endReason":null,"canUndo":false,"scorer":{"deviceId":"scorer-1","epoch":1},"broadcast":{"desired":"stopped","generation":0},"scorebugStyle":"bar","pendingSetEnd":null,"output":{"recordOnly":false}}"##
     return try JSONDecoder().decode(MatchSnapshot.self, from: Data(json.replacingOccurrences(of: "GAME_ID", with: id).utf8))
 }

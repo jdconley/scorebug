@@ -1,6 +1,6 @@
 import Foundation
 
-/// Generation-scoped publishing capability. Keep in memory, separate from public media
+/// Attempt-scoped publishing capability. Keep in memory, separate from public media
 /// snapshots; diagnostic descriptions deliberately exclude the credentialed URL.
 public struct PublishAccess: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let gameId: String
@@ -8,7 +8,7 @@ public struct PublishAccess: Equatable, Sendable, CustomStringConvertible, Custo
     public let recordingId: String
     public let publishUrl: URL
     public let serverTime: String
-    public let publishingAttemptId: UUID?
+    public let publishingAttemptId: UUID
 
     public var description: String { "PublishAccess(<redacted>)" }
     public var debugDescription: String { description }
@@ -54,29 +54,20 @@ public struct RecordingReport: Codable, Equatable, Sendable {
     }
 }
 
-/// Public identifiers select server-configured publishing resources. A start
-/// command leaves `workerId`/`outputId` out (nil is not encoded) and the server
-/// picks its worker; snapshots always carry the IDs it chose.
+/// The camera and recording a broadcast streams. The server picks the match container and
+/// YouTube output itself; its snapshot carries those IDs too, which the app ignores.
 public struct BroadcastSelection: Codable, Equatable, Sendable {
-    public var workerId: String?
-    public var outputId: String?
     public var captureDeviceId: String
     public var recordingId: String
 
-    public init(workerId: String? = nil, outputId: String? = nil, captureDeviceId: String, recordingId: String) {
-        self.workerId = workerId
-        self.outputId = outputId
+    public init(captureDeviceId: String, recordingId: String) {
         self.captureDeviceId = captureDeviceId
         self.recordingId = recordingId
     }
 
-    /// Whether the server's selection is the one this request asked for. An
-    /// unset worker or output accepts whatever the server picked.
+    /// Whether the server's selection is the one this request asked for.
     public func isMet(by actual: BroadcastSelection?) -> Bool {
-        guard let actual else { return false }
-        return actual.captureDeviceId == captureDeviceId && actual.recordingId == recordingId
-            && (workerId == nil || actual.workerId == workerId)
-            && (outputId == nil || actual.outputId == outputId)
+        actual == self
     }
 }
 
@@ -161,7 +152,7 @@ public struct BroadcastOutcome: Codable, Equatable, Sendable {
     public var accepted: Bool
     public var error: String?
     public var snapshot: MediaSnapshot
-    /// Hosted: the match's YouTube broadcast once it has one.
+    /// The match's YouTube broadcast once it has one.
     public var youtube: MatchYouTube?
 
     public init(commandId: String, accepted: Bool, error: String?, snapshot: MediaSnapshot, youtube: MatchYouTube? = nil) {

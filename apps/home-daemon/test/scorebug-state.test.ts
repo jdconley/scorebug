@@ -33,15 +33,14 @@ describe('scorebug overlay state', () => {
       serving: null,
     });
   });
-  it('defaults style, best-of and sets for a pre-style control plane', () => {
-    expect(scorebugOverlay({ teams, score })).toMatchObject({
-      style: 'bar',
-      bestOf: 3,
-      completedSets: [],
-    });
-  });
   it('round-trips through the score file and rejects anything else', () => {
-    const overlay = scorebugOverlay({ teams, score, scorebugStyle: 'setCard' });
+    const overlay = scorebugOverlay({
+      teams,
+      score,
+      rules: { bestOf: 3 },
+      completedSets: [],
+      scorebugStyle: 'setCard',
+    });
     const text = serializeScorebugOverlay(overlay);
     expect(text.endsWith('\n')).toBe(true);
     expect(parseScorebugOverlay(text)).toEqual(overlay);

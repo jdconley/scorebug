@@ -20,9 +20,9 @@ final class MatchHTTPClientSessionTests: XCTestCase {
         configuration.protocolClasses = [SessionInjectionProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let client = MatchHTTPClient(endpoint: try ScoringEndpoint("https://session-injection.invalid"), session: session)
+        let client = MatchHTTPClient(endpoint: try ScoringEndpoint("https://session-injection.invalid"), session: session).team("t1")
 
-        let response = try await client.active(installationToken: "test-installation-token")
+        let response = try await client.active(token: "test-session-token")
 
         XCTAssertNil(response.snapshot)
         XCTAssertEqual(response.serverTime, "injected-session")

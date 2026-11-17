@@ -139,17 +139,19 @@ final class AccountClientTests: XCTestCase {
         ])
     }
 
-    func testTeamScopedMatchRoutesUseTheTeamPathOnlyForMemberCalls() async throws {
+    func testMemberMatchRoutesAreAlwaysTeamScoped() async throws {
         var paths: [String] = []
         let base = MatchHTTPClient(endpoint: try ScoringEndpoint("http://localhost:8787"), transport: { request in
             paths.append(request.url!.path)
             return (Data(##"{"snapshot":null,"serverTime":"t"}"##.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         })
-        _ = try await base.team("t1").active(installationToken: "s")
-        _ = try await base.active(installationToken: "s")
-        XCTAssertEqual(paths, ["/v1/teams/t1/matches/active", "/v1/matches/active"])
-        do { _ = try await base.team("../x").active(installationToken: "s"); XCTFail("Should throw") }
-        catch let error as MatchClientError { XCTAssertEqual(error, .invalidIdentifier) }
+        _ = try await base.team("t1").active(token: "s")
+        XCTAssertEqual(paths, ["/v1/teams/t1/matches/active"])
+        for client in [base, base.team("../x")] {
+            do { _ = try await client.active(token: "s"); XCTFail("Should throw") }
+            catch let error as MatchClientError { XCTAssertEqual(error, .invalidIdentifier) }
+        }
+        XCTAssertEqual(paths.count, 1, "nothing is sent without a valid team")
     }
 
     private func client(status: Int, body: String, inspect: @escaping (URLRequest) throws -> Void = { _ in }) throws -> MatchHTTPClient {

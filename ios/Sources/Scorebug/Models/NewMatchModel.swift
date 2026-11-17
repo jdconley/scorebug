@@ -4,7 +4,7 @@ import ScorebugCore
 
 /// The New match sheet for one team. Remembers the last opponent, colors, format and
 /// style so the next match is two taps; Team 1 starts as this team. The stream goes to
-/// the team's YouTube channel, so there is no destination to pick.
+/// the team's YouTube channel.
 @MainActor final class NewMatchModel: ObservableObject {
     @Published var draft: NewMatchDraft
     @Published private(set) var busy = false
@@ -34,7 +34,6 @@ import ScorebugCore
         self.clientFactory = clientFactory
         self.newID = newID
         var draft = preferences.lastDraft ?? NewMatchDraft()
-        draft.destinationId = nil
         if draft.team1.trimmedName != team.name {
             // A different team than last time: Team 1 is this team, and the old Team 1 isn't its opponent.
             if draft.team2.trimmedName == team.name { draft.team2 = TeamDraft(color: TeamPalette.swatches[1].hex) }
@@ -94,15 +93,15 @@ import ScorebugCore
         do {
             let response: MatchSessionResponse
             do {
-                response = try await client.create(creation, ownerToken: token)
+                response = try await client.create(creation, token: token)
             } catch MatchClientError.http(409, "match_in_flight") {
                 // Our own earlier attempt may have succeeded with its reply lost.
-                guard let active = try await client.active(ownerToken: token).snapshot, active.id == id else {
+                guard let active = try await client.active(token: token).snapshot, active.id == id else {
                     otherMatchOpen = true
                     error = "\(team.name) already has a match open. Close it to start this one."
                     return nil
                 }
-                response = try await client.join(gameId: id, deviceId: access.deviceId, role: .score, installationToken: token)
+                response = try await client.join(gameId: id, deviceId: access.deviceId, role: .score, token: token)
             }
             guard response.credential.gameId == id, response.credential.role == .score else { throw MatchClientError.invalidResponse }
             pendingCreationID = nil
@@ -123,8 +122,8 @@ import ScorebugCore
         busy = true; error = nil
         defer { busy = false }
         do {
-            guard let active = try await client.active(ownerToken: token).snapshot else { otherMatchOpen = false; return }
-            let joined = try await client.join(gameId: active.id, deviceId: deviceId, role: .score, installationToken: token)
+            guard let active = try await client.active(token: token).snapshot else { otherMatchOpen = false; return }
+            let joined = try await client.join(gameId: active.id, deviceId: deviceId, role: .score, token: token)
             let coordinator = MatchCommandCoordinator(client: client, credential: joined.credential,
                                                       endpointScope: "\(access.endpoint)|close", store: MemoryPendingCommandStore())
             var state = try await coordinator.refresh()
@@ -135,8 +134,4 @@ import ScorebugCore
             self.error = FriendlyError.message(error)
         }
     }
-}
-
-extension MatchHTTPClient {
-    func active(ownerToken: String) async throws -> ActiveMatchResponse { try await active(installationToken: ownerToken) }
 }

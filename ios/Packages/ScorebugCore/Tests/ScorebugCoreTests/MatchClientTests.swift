@@ -3,7 +3,7 @@ import XCTest
 @testable import ScorebugCore
 
 final class MatchClientTests: XCTestCase {
-    private let snapshotJSON = ##"{"id":"match-1","createdAt":"2026-09-14T01:00:00.123Z","revision":2,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":1,"away":0,"set":2,"homeSets":1,"awaySets":0},"completedSets":[{"set":1,"home":25,"away":23,"winner":"home","overrideReason":null}],"status":"active","endReason":null,"canUndo":true,"scorer":{"deviceId":"phone-1","epoch":1},"broadcast":{"desired":"stopped","generation":0},"scorebugStyle":"lowerThird","pendingSetEnd":null,"output":{"destinationId":null,"recordOnly":false}}"##
+    private let snapshotJSON = ##"{"id":"match-1","createdAt":"2026-09-14T01:00:00.123Z","revision":2,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":1,"away":0,"set":2,"homeSets":1,"awaySets":0},"completedSets":[{"set":1,"home":25,"away":23,"winner":"home","overrideReason":null}],"status":"active","endReason":null,"canUndo":true,"scorer":{"deviceId":"phone-1","epoch":1},"broadcast":{"desired":"stopped","generation":0},"scorebugStyle":"lowerThird","pendingSetEnd":null,"output":{"recordOnly":false}}"##
     private let credential = MatchCredential(gameId: "match-1", deviceId: "phone-1", role: .score, token: "scoped-secret")
 
     func testSnapshotRoundTripPreservesWireNullsAndMillisecondDates() throws {
@@ -33,13 +33,13 @@ final class MatchClientTests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(MatchOperation.self, from: Data(#"{"type":"future"}"#.utf8)))
     }
 
-    func testCreatePreservesEndpointBasePathAndUsesInstallationCredential() async throws {
+    func testCreatePreservesEndpointBasePathAndUsesTheSessionToken() async throws {
         let snapshot = try JSONDecoder().decode(MatchSnapshot.self, from: Data(snapshotJSON.utf8))
         let body = "{\"snapshot\":\(snapshotJSON),\"credential\":{\"gameId\":\"match-1\",\"deviceId\":\"phone-1\",\"role\":\"score\",\"token\":\"scoped-secret\"},\"serverTime\":\"2026-09-14T01:00:00.123Z\"}"
         let client = try client(status: 201, body: body) { request in
-            XCTAssertEqual(request.url?.absoluteString, "https://example.com/control/v1/matches")
+            XCTAssertEqual(request.url?.absoluteString, "https://example.com/control/v1/teams/t1/matches")
             XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer install-secret")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-secret")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
             XCTAssertGreaterThan(request.timeoutInterval, 0)
             XCTAssertLessThanOrEqual(request.timeoutInterval, 30)
@@ -48,28 +48,28 @@ final class MatchClientTests: XCTestCase {
             XCTAssertEqual(payload["id"] as? String, "match-1")
             XCTAssertTrue((payload["rules"] as? [String: Any])?["pointCap"] is NSNull)
         }
-        let result = try await client.create(id: "match-1", deviceId: "phone-1", teams: snapshot.teams, rules: snapshot.rules, installationToken: "install-secret")
+        let result = try await client.create(MatchCreation(id: "match-1", deviceId: "phone-1", teams: snapshot.teams, rules: snapshot.rules), token: "session-secret")
         XCTAssertEqual(result.credential, credential)
         XCTAssertEqual(result.snapshot, snapshot)
     }
 
     func testActiveJoinAndSnapshotReadTheirEnvelopes() async throws {
         let active = try client(status: 200, body: #"{"snapshot":null,"serverTime":"2026-09-14T01:00:00Z"}"#) { request in
-            XCTAssertEqual(request.url?.path, "/control/v1/matches/active")
+            XCTAssertEqual(request.url?.path, "/control/v1/teams/t1/matches/active")
             XCTAssertEqual(request.httpMethod, "GET")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer installation")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session")
         }
-        let activeResponse = try await active.active(installationToken: "installation")
+        let activeResponse = try await active.active(token: "session")
         XCTAssertNil(activeResponse.snapshot)
         let joinBody = "{\"snapshot\":\(snapshotJSON),\"credential\":{\"gameId\":\"match-1\",\"deviceId\":\"phone-1\",\"role\":\"score\",\"token\":\"scoped-secret\"},\"serverTime\":\"now\"}"
         let join = try client(status: 200, body: joinBody) { request in
-            XCTAssertEqual(request.url?.path, "/control/v1/matches/match-1/join")
+            XCTAssertEqual(request.url?.path, "/control/v1/teams/t1/matches/match-1/join")
             XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer installation")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session")
             let payload = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: String]
             XCTAssertEqual(payload, ["deviceId": "phone-1", "role": "score"])
         }
-        let joined = try await join.join(gameId: "match-1", deviceId: "phone-1", role: .score, installationToken: "installation")
+        let joined = try await join.join(gameId: "match-1", deviceId: "phone-1", role: .score, token: "session")
         XCTAssertEqual(joined.credential, credential)
         let reader = try client(status: 200, body: "{\"snapshot\":\(snapshotJSON),\"serverTime\":\"now\"}") { request in
             XCTAssertEqual(request.url?.path, "/control/v1/matches/match-1")
@@ -170,15 +170,16 @@ final class MatchClientTests: XCTestCase {
     func testNonHTTPResponseCannotBeDecodedAsSuccess() async throws {
         let client = MatchHTTPClient(endpoint: try ScoringEndpoint("http://localhost:3000"), transport: { request in
             (Data("{}".utf8), URLResponse(url: request.url!, mimeType: nil, expectedContentLength: 2, textEncodingName: nil))
-        })
-        do { _ = try await client.active(installationToken: "installation"); XCTFail("Should throw") }
+        }).team("t1")
+        do { _ = try await client.active(token: "session"); XCTFail("Should throw") }
         catch let error as MatchClientError { XCTAssertEqual(error, .invalidResponse) }
     }
 
+    /// Scoped to team t1: member routes go under `/v1/teams/t1/matches`, match-token routes don't.
     private func client(status: Int, body: String, inspect: @escaping (URLRequest) throws -> Void = { _ in }) throws -> MatchHTTPClient {
         MatchHTTPClient(endpoint: try ScoringEndpoint("https://example.com/control/"), transport: { request in
             try inspect(request)
             return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
-        })
+        }).team("t1")
     }
 }

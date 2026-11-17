@@ -160,16 +160,13 @@ public struct NewMatchDraft: Codable, Equatable, Sendable {
     public var team2: TeamDraft
     public var format: MatchFormat
     public var style: ScorebugStyle
-    /// Nil streams to the server's default destination.
-    public var destinationId: String?
     public var recordIn4K: Bool
 
     public init(team1: TeamDraft = TeamDraft(color: TeamPalette.team1Default),
                 team2: TeamDraft = TeamDraft(color: TeamPalette.team2Default),
-                format: MatchFormat = .bestOf3, style: ScorebugStyle = .bar,
-                destinationId: String? = nil, recordIn4K: Bool = false) {
+                format: MatchFormat = .bestOf3, style: ScorebugStyle = .bar, recordIn4K: Bool = false) {
         self.team1 = team1; self.team2 = team2; self.format = format; self.style = style
-        self.destinationId = destinationId; self.recordIn4K = recordIn4K
+        self.recordIn4K = recordIn4K
     }
 
     public subscript(slot: TeamSlot) -> TeamDraft {
@@ -196,7 +193,6 @@ public struct NewMatchDraft: Codable, Equatable, Sendable {
     /// Team 1 is sent as `home`, Team 2 as `away`.
     public func creation(id: String, deviceId: String, recordOnly: Bool) -> MatchCreation {
         MatchCreation(id: id, deviceId: deviceId, teams: MatchTeams(home: team1.team, away: team2.team),
-                      rules: format.rules, scorebugStyle: style,
-                      destinationId: recordOnly ? nil : destinationId, recordOnly: recordOnly ? true : nil)
+                      rules: format.rules, scorebugStyle: style, recordOnly: recordOnly ? true : nil)
     }
 }

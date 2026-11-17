@@ -8,7 +8,7 @@ import type { RouteConfig } from '../config.js';
 import { mediaRoutes } from './media.js';
 import { inviteRoutes } from './invites.js';
 import { defaultShortName } from '../scoring.js';
-import type { IngestLifecycle } from '../media-lifecycle.js';
+import type { MediaLifecycle } from '../media-lifecycle.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
 const id = z
@@ -59,18 +59,10 @@ const create = z
     teams: z.object({ home: team, away: team }).strict(),
     rules,
     scorebugStyle: z.enum(SCOREBUG_STYLES).optional(),
-    /**
-     * Retired owner destinations. Released apps still have the field and leave it out; there
-     * are no destinations, so a value is refused as destination_not_found.
-     */
-    destinationId: z.uuid().nullish(),
     /** No broadcast at all: the phone only records. */
     recordOnly: z.boolean().optional(),
   })
-  .strict()
-  .refine((value) => !(value.recordOnly && value.destinationId != null), {
-    message: 'recordOnly and destinationId are mutually exclusive',
-  });
+  .strict();
 const operation = z.discriminatedUnion('type', [
   z.object({ type: z.literal('award_point'), side: z.enum(['home', 'away']) }).strict(),
   z.object({ type: z.literal('undo') }).strict(),
@@ -120,7 +112,7 @@ export function matchesRoutes(
   config: RouteConfig,
   store: MatchStore,
   access: MatchAccess,
-  ingest: IngestLifecycle,
+  lifecycle: MediaLifecycle,
   observations?: WorkerObservations,
 ) {
   const app = new Hono<Env>();
@@ -137,8 +129,7 @@ export function matchesRoutes(
     await next();
   });
   app.post('/', bootstrap, zValidator('json', create), (c) => {
-    const { destinationId, ...body } = c.req.valid('json');
-    if (destinationId != null) throw new MatchStoreError('destination_not_found');
+    const body = c.req.valid('json');
     const snapshot = store.create(body);
     const credential = store.issueCredential(snapshot.id, body.deviceId, 'score');
     return c.json({ snapshot, credential, serverTime: new Date().toISOString() }, 201);
@@ -182,7 +173,7 @@ export function matchesRoutes(
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
   app.route('/:id/invites', inviteRoutes(store, access));
-  app.route('/:id/media', mediaRoutes(config, store, bootstrap, ingest, observations));
+  app.route('/:id/media', mediaRoutes(config, store, bootstrap, lifecycle, observations));
   app.onError((error, c) => {
     if (error instanceof MatchStoreError)
       return c.json(

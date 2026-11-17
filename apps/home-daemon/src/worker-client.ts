@@ -26,9 +26,7 @@ const assignmentSchema = z.object({
           homeSets: integer,
           awaySets: integer,
         }),
-        // Optional so a worker can run against a control plane from before the
-        // graphic scorebug; missing values draw the default style with no sets.
-        rules: z.object({ bestOf: z.union([z.literal(3), z.literal(5)]) }).optional(),
+        rules: z.object({ bestOf: z.union([z.literal(3), z.literal(5)]) }),
         completedSets: z
           .array(
             z.object({
@@ -38,24 +36,18 @@ const assignmentSchema = z.object({
               winner: z.enum(['home', 'away']),
             }),
           )
-          .max(5)
-          .optional(),
-        // A style added by a newer control plane falls back to the default.
-        scorebugStyle: z.enum(SCOREBUG_STYLES).optional().catch(undefined),
+          .max(5),
+        scorebugStyle: z.enum(SCOREBUG_STYLES),
         broadcast: z.object({ desired, generation: integer }),
       }),
-      // The match's YouTube ingest; null until the match has a broadcast.
-      output: z
-        .object({
-          destinationId: id.nullable(),
-          publishUrl: z
-            .string()
-            .max(4096)
-            .url()
-            .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol))
-            .nullable(),
-        })
-        .nullable(),
+      // The match's YouTube ingest, with its stream key.
+      output: z.object({
+        publishUrl: z
+          .string()
+          .max(4096)
+          .url()
+          .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol)),
+      }),
       media: z.object({
         gameId: id,
         broadcast: z.object({
@@ -80,11 +72,6 @@ const connectionSchema = z.object({
         .url()
         // Cloudflare Stream's RTMPS playback of the match's live input.
         .refine((value) => new URL(value).protocol === 'rtmps:'),
-      source: z.object({
-        ready: z.boolean(),
-        inboundBytes: integer,
-        tracks: z.array(z.string().min(1).max(64)).max(32),
-      }),
     })
     .nullable(),
 });
@@ -177,9 +164,8 @@ export class WorkerClient {
       scoreRevision: latest.match.revision,
       overlay: serializeScorebugOverlay(scorebugOverlay(latest.match)),
       readUrl: connection.readUrl,
-      sourceReady: connection.source.ready,
       outputId: latest.media.broadcast.selection!.outputId,
-      publishUrl: latest.output?.publishUrl ?? null,
+      publishUrl: latest.output.publishUrl,
     };
   }
 }

@@ -23,7 +23,7 @@ public struct BroadcastCoordinatorState: Equatable, Sendable {
 public actor BroadcastCommandCoordinator {
     private let client: MatchHTTPClient
     private let credential: MatchCredential
-    private let installationToken: String
+    private let sessionToken: String
     private let endpointScope: String
     private let store: any PendingBroadcastStore
     private let now: @Sendable () -> Date
@@ -36,10 +36,10 @@ public actor BroadcastCommandCoordinator {
     private var activeRecordingId: String?
     private var serverOffset: TimeInterval?
 
-    public init(client: MatchHTTPClient, credential: MatchCredential, installationToken: String,
+    public init(client: MatchHTTPClient, credential: MatchCredential, sessionToken: String,
                 endpointScope: String, store: any PendingBroadcastStore,
                 now: @escaping @Sendable () -> Date = { Date() }) {
-        self.client = client; self.credential = credential; self.installationToken = installationToken
+        self.client = client; self.credential = credential; self.sessionToken = sessionToken
         self.endpointScope = endpointScope; self.store = store; self.now = now
     }
 
@@ -81,7 +81,7 @@ public actor BroadcastCommandCoordinator {
         pending = record
         outcome = nil
         try save(record)
-        try acknowledge(try await client.executeBroadcast(command, installationToken: installationToken))
+        try acknowledge(try await client.executeBroadcast(command, token: sessionToken))
         return completedState()
     }
 
@@ -103,7 +103,7 @@ public actor BroadcastCommandCoordinator {
         }
         try Task.checkCancellation()
         try save(pending)
-        try acknowledge(try await client.executeBroadcast(pending.command, installationToken: installationToken))
+        try acknowledge(try await client.executeBroadcast(pending.command, token: sessionToken))
         return completedState()
     }
 
@@ -184,7 +184,7 @@ public actor BroadcastCommandCoordinator {
         catch { return false }
     }
     private func receipt(_ pending: PendingBroadcastCommand) async throws -> BroadcastOutcome? {
-        try await client.broadcastReceipt(gameId: credential.gameId, commandId: pending.command.commandId, installationToken: installationToken)
+        try await client.broadcastReceipt(gameId: credential.gameId, commandId: pending.command.commandId, token: sessionToken)
     }
     private func acknowledge(_ receipt: BroadcastOutcome) throws {
         guard let command = pending?.command, receipt.commandId == command.commandId,

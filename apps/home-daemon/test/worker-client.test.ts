@@ -4,7 +4,7 @@ import { WorkerClient } from '../src/worker-client.js';
 
 const selection = {
   workerId: 'mac',
-  outputId: 'local-sink',
+  outputId: 'youtube',
   captureDeviceId: 'phone',
   recordingId: 'archive',
 };
@@ -21,12 +21,12 @@ const snapshot = () => ({
         away: { name: 'Away', shortName: 'A', color: '#654321' },
       },
       score: { home: 0, away: 0, set: 1, homeSets: 0, awaySets: 0 },
+      rules: { bestOf: 3 as 3 | 5 },
+      completedSets: [] as unknown[],
+      scorebugStyle: 'bar',
       broadcast: { desired: 'running', generation: 1 },
     },
-    output: { destinationId: 'youtube', publishUrl: destination } as {
-      destinationId: string | null;
-      publishUrl: string | null;
-    },
+    output: { publishUrl: destination } as { publishUrl: string | null },
     media: { gameId: 'match', broadcast: structuredClone(broadcast) },
   },
 });
@@ -35,7 +35,6 @@ const connection = () => ({
     gameId: 'match',
     generation: 1,
     readUrl: 'rtmps://live.cloudflare.com:443/live/private-play-key',
-    source: { ready: true, inboundBytes: 300, tracks: ['H264', 'MPEG-4 Audio'] },
   },
 });
 const cleanup: (() => Promise<void>)[] = [];
@@ -94,8 +93,7 @@ it('loads source access between two snapshots and uses the latest authoritative 
         serving: null,
       }) + '\n',
     readUrl: connection().connection.readUrl,
-    sourceReady: true,
-    outputId: 'local-sink',
+    outputId: 'youtube',
     publishUrl: destination,
   });
   expect(f.requests.map((r) => r.path)).toEqual([
@@ -109,12 +107,6 @@ it('returns idle without retrieving credentials when no assignment exists', asyn
   const f = await fixture(() => ({ body: { assignment: null } }));
   expect(await f.client.load()).toBeNull();
   expect(f.requests).toHaveLength(1);
-});
-it('returns waiting-source input rather than claiming output is live', async () => {
-  const source = connection();
-  source.connection.source.ready = false;
-  const f = await fixture((_path, index) => ({ body: index === 2 ? source : snapshot() }));
-  expect(await f.client.load()).toMatchObject({ sourceReady: false });
 });
 it.each(['generation', 'ended', 'worker', 'match', 'stopped'])(
   'returns no runnable input if %s changes during credential retrieval',
@@ -146,6 +138,16 @@ it('rejects malformed response values and any source but Stream RTMPS playback',
   bad.assignment.match.score.home = -1;
   const g = await fixture(() => ({ body: bad }));
   await expect(g.client.load()).rejects.toThrow('invalid_worker_response');
+  for (const field of ['rules', 'completedSets', 'scorebugStyle'] as const) {
+    const partial = snapshot() as { assignment: { match: Record<string, unknown> } };
+    delete partial.assignment.match[field];
+    const h = await fixture(() => ({ body: partial }));
+    await expect(h.client.load()).rejects.toThrow('invalid_worker_response');
+  }
+  const styled = snapshot();
+  styled.assignment.match.scorebugStyle = 'hologram';
+  const i = await fixture(() => ({ body: styled }));
+  await expect(i.client.load()).rejects.toThrow('invalid_worker_response');
 });
 it('uses one bounded deadline for the complete fetch sequence', async () => {
   const f = await fixture(
@@ -168,9 +170,7 @@ it('rejects credentials in the control URL and unsafe worker identities', () => 
   expect(() => new WorkerClient('http://localhost', 'token', '../other')).toThrow();
 });
 it('carries the scorebug style, best-of and completed sets into the overlay', async () => {
-  const styled = snapshot() as ReturnType<typeof snapshot> & {
-    assignment: { match: Record<string, unknown> };
-  };
+  const styled = snapshot();
   Object.assign(styled.assignment.match, {
     scorebugStyle: 'setCard',
     rules: { bestOf: 5, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
@@ -184,14 +184,12 @@ it('carries the scorebug style, best-of and completed sets into the overlay', as
     bestOf: 5,
     completedSets: [{ set: 1, home: 25, away: 20, winner: 'home' }],
   });
-  Object.assign(styled.assignment.match, { scorebugStyle: 'hologram' });
-  expect(JSON.parse((await f.client.load())!.overlay).style).toBe('bar');
 });
 
-it('takes the match destination from the latest snapshot and rejects non-RTMP outputs', async () => {
+it('takes the YouTube ingest from the latest snapshot and requires an RTMP(S) output', async () => {
   const withOutput = (publishUrl: string | null) => {
     const value = snapshot();
-    value.assignment.output = { destinationId: publishUrl ? 'youtube' : null, publishUrl };
+    value.assignment.output = { publishUrl };
     return value;
   };
   const f = await fixture((_path, index) => ({
@@ -201,7 +199,7 @@ it('takes the match destination from the latest snapshot and rejects non-RTMP ou
   const none = await fixture((_path, index) => ({
     body: index === 2 ? connection() : withOutput(null),
   }));
-  expect((await none.client.load())?.publishUrl).toBeNull();
+  await expect(none.client.load()).rejects.toThrow('invalid_worker_response');
   const unsafe = await fixture((_path, index) => ({
     body: index === 2 ? connection() : withOutput('file:///etc/passwd'),
   }));

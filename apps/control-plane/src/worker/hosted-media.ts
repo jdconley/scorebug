@@ -1,11 +1,11 @@
 import type { MatchSnapshot, WorkerOutputAssignment } from '@scorebug/protocol';
 import type { MatchStore } from '../matches-store.js';
 import {
-  RelayLifecycleError,
-  type IngestLifecycle,
+  MediaLifecycleError,
+  type MediaLifecycle,
   type PublishAssignment,
   type PublishRequest,
-  type WorkerIngestAssignment,
+  type WorkerConnection,
 } from '../media-lifecycle.js';
 import type { SqlDb } from '../sql.js';
 import { Channels } from './channels.js';
@@ -109,7 +109,7 @@ export function broadcastTitle(match: MatchSnapshot, timeZone: string | null, at
  * plus the guards that keep nothing billing after a match. Lives in the TeamObject; its rows
  * share the object's SQLite with the match store.
  */
-export class HostedMedia implements IngestLifecycle {
+export class HostedMedia implements MediaLifecycle {
   private readonly now: () => number;
   private readonly locks = new Map<string, Promise<unknown>>();
 
@@ -209,7 +209,7 @@ export class HostedMedia implements IngestLifecycle {
   /** The match store's worker output: the broadcast's ingest. Synchronous (in a transaction). */
   output(gameId: string): WorkerOutputAssignment | null {
     const broadcast = this.row(gameId)?.broadcast;
-    return broadcast ? { destinationId: OUTPUT_ID, publishUrl: broadcast.ingestUrl } : null;
+    return broadcast ? { publishUrl: broadcast.ingestUrl } : null;
   }
 
   /** Inputs that still belong to a live match: the daily sweep keeps these. */
@@ -222,7 +222,7 @@ export class HostedMedia implements IngestLifecycle {
   private ensureInput(gameId: string): Promise<LiveInput> {
     return this.locked(`input:${gameId}`, async () => {
       const existing = this.row(gameId);
-      if (existing?.ended) throw new RelayLifecycleError('broadcast_changed');
+      if (existing?.ended) throw new MediaLifecycleError('broadcast_changed');
       if (existing?.input) return existing.input;
       const input = await this.deps.adapters.stream.createInput(inputName(this.team, gameId));
       return this.update(gameId, (row) => {
@@ -413,27 +413,27 @@ export class HostedMedia implements IngestLifecycle {
       this.deps.setAlarm(this.now());
   }
 
-  // -------------------------------------------------------- IngestLifecycle
+  // --------------------------------------------------------- MediaLifecycle
 
   async publish(request: PublishRequest): Promise<PublishAssignment> {
     const current = () => this.deps.store.media.get(request.gameId).broadcast;
     const check = () => {
       const broadcast = current();
       if (broadcast.desired !== 'running' || broadcast.generation !== request.generation)
-        throw new RelayLifecycleError('broadcast_changed');
+        throw new MediaLifecycleError('broadcast_changed');
       if (
         broadcast.selection?.captureDeviceId !== request.deviceId ||
         broadcast.selection.recordingId !== request.recordingId
       )
-        throw new RelayLifecycleError('capture_not_selected');
+        throw new MediaLifecycleError('capture_not_selected');
     };
     check();
     let input: LiveInput;
     try {
       input = await this.ensureInput(request.gameId);
     } catch (error) {
-      if (error instanceof RelayLifecycleError) throw error;
-      throw new RelayLifecycleError('relay_unavailable');
+      if (error instanceof MediaLifecycleError) throw error;
+      throw new MediaLifecycleError('stream_unavailable');
     }
     check();
     // The phone is back after the idle guard parked the container: start it again.
@@ -445,13 +445,11 @@ export class HostedMedia implements IngestLifecycle {
       recordingId: request.recordingId,
       // Stream's own stream ID and passphrase: the phone checks only the srt:// shape.
       publishUrl: input.publishUrl,
-      ...(request.publishingAttemptId !== undefined
-        ? { publishingAttemptId: request.publishingAttemptId }
-        : {}),
+      publishingAttemptId: request.publishingAttemptId,
     };
   }
 
-  async worker(workerId: string): Promise<WorkerIngestAssignment | null> {
+  async worker(workerId: string): Promise<WorkerConnection | null> {
     if (workerId !== WORKER_ID) return null;
     const assignment = this.deps.store.media.workerAssignment(workerId);
     if (!assignment) return null;
@@ -461,8 +459,6 @@ export class HostedMedia implements IngestLifecycle {
       gameId: assignment.match.id,
       generation: assignment.media.broadcast.generation,
       readUrl: input.readUrl,
-      // Stream is always ready to serve; the worker finds out by reading.
-      source: { ready: true, inboundBytes: 0, tracks: [] },
     };
   }
 
@@ -485,13 +481,16 @@ export class HostedMedia implements IngestLifecycle {
       if (reason === 'time_limit') {
         const broadcast = this.deps.store.media.get(gameId).broadcast;
         if (broadcast.desired === 'running')
-          this.deps.store.media.execute({
-            commandId: `time-limit-${broadcast.generation}`,
-            gameId,
-            expectedGeneration: broadcast.generation,
-            issuedAt: new Date(this.now()).toISOString(),
-            operation: { type: 'stop' },
-          });
+          this.deps.store.media.execute(
+            {
+              commandId: `time-limit-${broadcast.generation}`,
+              gameId,
+              expectedGeneration: broadcast.generation,
+              issuedAt: new Date(this.now()).toISOString(),
+              operation: { type: 'stop' },
+            },
+            { workerId: WORKER_ID, outputId: OUTPUT_ID },
+          );
       }
       await this.stopContainer(gameId, 'stopped');
       if (row.input) {

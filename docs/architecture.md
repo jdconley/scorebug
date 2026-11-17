@@ -98,8 +98,8 @@ credential for the API.
    `liveStream`, makes sure the Stream input exists, and claims a live slot under
    `LIVE_MATCH_CAP`. Any failure is refused with a reason such as
    `youtube_not_set`, `youtube_live_disabled` or `busy`.
-4. The phone asks for its publish URL (`POST /v1/matches/:id/media/publish`) and
-   publishes H.264/AAC over SRT to the Stream input.
+4. The phone asks for its publish URL (`POST /v1/matches/:id/media/publish`, naming
+   its publishing attempt) and publishes H.264/AAC over SRT to the Stream input.
 5. The team object starts the container. The worker in it polls its assignment,
    reads the input's RTMPS playback URL, burns in the score with FFmpeg and
    publishes RTMPS to the YouTube ingest. It reports its state about once a second,
@@ -170,7 +170,7 @@ The hosted match container runs it with the software (x264) encoder and
 
 ## Shared contracts (`packages/protocol`)
 
-TypeScript types for matches, media state, worker status, invites and links, plus
+TypeScript types for matches, media state, worker status and invites, plus
 JSON fixtures that the Swift tests also read so both sides stay in sync.
 
 ## Scope
