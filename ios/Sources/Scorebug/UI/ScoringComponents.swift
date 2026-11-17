@@ -125,10 +125,15 @@ struct MatchOverCard: View {
     var body: some View {
         VStack(spacing: 16) {
             Text(board.snapshot.map(SetPointFlow.isDecided) == true ? "Final" : "Match ended").font(.title3.weight(.bold))
+            let headline = board.snapshot.map(MatchSummary.headline) ?? (team1: 0, team2: 0, caption: nil)
             HStack(spacing: 18) {
-                TeamChip(team: board.info(.team1), size: 26, dim: board.sets(.team1) < board.sets(.team2))
-                Text("\(board.sets(.team1)) – \(board.sets(.team2))").font(Theme.score(44)).monospacedDigit()
-                TeamChip(team: board.info(.team2), size: 26, trailingBar: true, dim: board.sets(.team2) < board.sets(.team1))
+                TeamChip(team: board.info(.team1), size: 26, dim: headline.team1 < headline.team2)
+                Text("\(headline.team1) – \(headline.team2)").font(Theme.score(44)).monospacedDigit()
+                    .accessibilityIdentifier("matchOver.score")
+                TeamChip(team: board.info(.team2), size: 26, trailingBar: true, dim: headline.team2 < headline.team1)
+            }
+            if let caption = headline.caption {
+                Text(caption).font(.subheadline).foregroundStyle(Theme.muted)
             }
             if let snapshot = board.snapshot, !snapshot.completedSets.isEmpty {
                 Text(MatchSummary.setScores(snapshot)).font(.subheadline).foregroundStyle(Theme.muted)

@@ -236,7 +236,7 @@ private struct CameraLayer: View {
             SimulatedCourt()
             #else
             if let session = film.captureSession {
-                CameraPreviewView(session: session)
+                CameraPreviewView(session: session) { [weak film] angle in film?.setCaptureRotation(angle) }
             } else {
                 ProgressView().tint(Theme.text)
             }

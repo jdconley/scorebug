@@ -110,4 +110,16 @@ public enum MatchSummary {
     public static func setScores(_ snapshot: MatchSnapshot) -> String {
         snapshot.completedSets.map { "\($0.home)–\($0.away)" }.joined(separator: ", ")
     }
+
+    /// The big numbers on the match-over card. A decided match shows sets won; a match ended early
+    /// shows the set it ended in (sets alone would read 0–0 after a 3–3 set), with a caption.
+    public static func headline(_ snapshot: MatchSnapshot) -> (team1: Int, team2: Int, caption: String?) {
+        if SetPointFlow.isDecided(snapshot) {
+            return (snapshot.score.sets(.team1), snapshot.score.sets(.team2), nil)
+        }
+        let sets = snapshot.score.sets(.team1) + snapshot.score.sets(.team2)
+        let caption = sets == 0 ? "Set \(snapshot.score.set)"
+            : "Set \(snapshot.score.set) · sets \(snapshot.score.sets(.team1))–\(snapshot.score.sets(.team2))"
+        return (snapshot.score.points(.team1), snapshot.score.points(.team2), caption)
+    }
 }

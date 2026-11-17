@@ -272,6 +272,12 @@ import XCTest
         XCTAssertEqual(relaunched.preferences.lastMatch?.final, true)
         XCTAssertFalse(MatchRecap(snapshot: makeSnapshot(home: 5, homeSets: 1, status: .ended), date: Date()).final,
                        "ended early is not a final")
+        let early = MatchRecap(snapshot: makeSnapshot(home: 7, away: 4, status: .ended), date: Date())
+        XCTAssertEqual(early.title, "CASCADE 7–4 SUMMIT", "a match ended early shows the set's points, not 0–0 sets")
+        XCTAssertEqual(early.status, "Ended early in set 1")
+        let old = ##"{"team1":{"name":"Cascade","shortName":"CASCADE","color":"#2563eb","sets":2},"team2":{"name":"Summit","shortName":"SUMMIT","color":"#f97316","sets":1},"setScores":"","final":true,"date":0}"##
+        XCTAssertEqual(try JSONDecoder().decode(MatchRecap.self, from: Data(old.utf8)).title, "CASCADE 2–1 SUMMIT",
+                       "recaps saved before the set's points still decode")
         XCTAssertNil(try store.value(MatchSession.self, for: StoreKey.session))
     }
 
