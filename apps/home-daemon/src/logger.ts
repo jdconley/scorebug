@@ -6,7 +6,6 @@ export function createLogger(min: Level) {
   const log = (level: Level, msg: string, meta?: Record<string, unknown>) => {
     if (order[level] < order[min]) return;
     const line = { ts: new Date().toISOString(), level, msg, ...meta };
-    // eslint-disable-next-line no-console
     console[level === 'debug' ? 'log' : level](JSON.stringify(line));
   };
   return {

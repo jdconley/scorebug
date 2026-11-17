@@ -54,8 +54,7 @@ export class MediaStore {
   private read(gameId: string): MediaSnapshot {
     const match = this.match(gameId);
     const row = this.db.get('SELECT data FROM media_broadcasts WHERE game_id=?', gameId) as
-      | { data: string }
-      | undefined;
+      { data: string } | undefined;
     const recordings = this.db.all(
       'SELECT data FROM recordings WHERE game_id=? ORDER BY recording_id',
       gameId,

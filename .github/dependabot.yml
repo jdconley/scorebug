@@ -8,22 +8,25 @@ updates:
     directory: '/'
     schedule:
       interval: weekly
+    ignore:
+      # Node types follow the runtime (Node 22 in CI and the match container), not the latest Node.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
       dev-tooling:
         patterns:
           - 'typescript'
           - 'tsx'
-          - 'vite'
           - 'vitest'
-          - '@vitejs/*'
           - 'prettier'
           - '@types/*'
+      cloudflare:
+        patterns:
+          - 'wrangler'
+          - '@cloudflare/*'
       runtime:
         patterns:
           - 'hono'
           - '@hono/*'
-          - 'ws'
-          - '@types/ws'
-          - 'react'
-          - 'react-dom'
           - 'zod'
+          - '@resvg/*'

@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "echo 'lint: noop'",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
     "test": "pnpm --filter @scorebug/protocol build && vitest run",
     "test:watch": "pnpm --filter @scorebug/protocol build && vitest",
@@ -12,17 +11,17 @@
     "dev:worker": "pnpm --filter @scorebug/protocol build && wrangler dev"
   },
   "dependencies": {
-    "@hono/zod-validator": "^0.8.0",
+    "@hono/zod-validator": "^0.9.1",
     "@scorebug/protocol": "workspace:*",
-    "hono": "^4.6.10",
-    "zod": "^4.4.3"
+    "hono": "^4.13.19",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.8.3",
-    "@cloudflare/workers-types": "^5.20261116.1",
+    "@cloudflare/vitest-plugin": "^1.8.4",
+    "@cloudflare/workers-types": "^5.20261117.1",
     "@types/node": "^22.9.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.7",
-    "wrangler": "^4.163.0"
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.164.0"
   }
 }

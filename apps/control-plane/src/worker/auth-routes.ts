@@ -42,8 +42,7 @@ export const isAdmin = (env: Env, email: string) =>
 export const callbackUrl = (env: Env) => `${env.PUBLIC_URL}/v1/auth/google/callback`;
 
 export type SignInOutcome =
-  | { status: 'ok'; person: Person }
-  | { status: 'not_in_beta' | 'cancelled' | 'error' };
+  { status: 'ok'; person: Person } | { status: 'not_in_beta' | 'cancelled' | 'error' };
 
 export type SignInState = Exclude<OAuthState, { purpose: 'youtube' }>;
 /** What the callback does with a signed-in admin browser; set up by the admin page. */

@@ -176,8 +176,7 @@ export class MatchStore {
   }
   private load(id: string): StoredMatch {
     const row = this.db.get('SELECT data FROM matches WHERE id=?', id) as
-      | { data: string }
-      | undefined;
+      { data: string } | undefined;
     if (!row) throw new MatchStoreError('match_not_found');
     return JSON.parse(row.data) as StoredMatch;
   }
@@ -199,8 +198,7 @@ export class MatchStore {
   }
   active(): MatchSnapshot | undefined {
     const row = this.db.get("SELECT data FROM matches WHERE status='active'") as
-      | { data: string }
-      | undefined;
+      { data: string } | undefined;
     return row ? snapshot(JSON.parse(row.data) as StoredMatch) : undefined;
   }
   create(input: CreateMatch): MatchSnapshot {
@@ -327,8 +325,7 @@ export class MatchStore {
   }
   private inviteRow(gameId: string, inviteId: string): InviteRow | undefined {
     return this.db.get('SELECT * FROM match_invites WHERE game_id=? AND id=?', gameId, inviteId) as
-      | InviteRow
-      | undefined;
+      InviteRow | undefined;
   }
   listInvites(gameId: string): MatchInvite[] {
     return this.transaction(() => {
@@ -368,8 +365,7 @@ export class MatchStore {
       if (!code) throw new MatchStoreError('invite_invalid');
       const hash = this.codeHash('match-invite', code);
       const row = this.db.get('SELECT * FROM match_invites WHERE code_hash=?', hash) as
-        | InviteRow
-        | undefined;
+        InviteRow | undefined;
       if (!row || !timingSafeEqual(Buffer.from(row.code_hash), Buffer.from(hash)))
         throw new MatchStoreError('invite_invalid');
       if (row.revoked_at !== null) throw new MatchStoreError('invite_revoked');
