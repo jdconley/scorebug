@@ -28,7 +28,7 @@ const schema = z
       .default('1080p30'),
     /** Hold score changes this long so they line up with delayed video (hosted: 1100). */
     SCORE_DELAY_MS: z.coerce.number().int().min(0).max(5000).default(0),
-    /** `fast` bounds FFmpeg's input analysis for the known SRT source (hosted). */
+    /** `fast` bounds FFmpeg's input analysis for the known Stream RTMPS source (hosted). */
     INPUT_PROBE: z.enum(['default', 'fast']).default('default'),
     /** Fail an attempt when the source sends nothing for this long; unset waits. */
     INPUT_READ_TIMEOUT_MS: z.coerce.number().int().min(500).max(120_000).optional(),
@@ -39,7 +39,6 @@ const schema = z
     /** An attempt that ran this long gives its retry back (source absent, not a crash). */
     RETRY_FREE_AFTER_MS: z.coerce.number().int().min(100).max(120_000).optional(),
     FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
-    FFPROBE_PATH: z.string().min(1).default('ffprobe'),
     SCORE_DIR: z.string().default('/tmp/scorebug'),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   })

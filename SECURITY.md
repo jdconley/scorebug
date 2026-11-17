@@ -11,12 +11,13 @@ We aim to acknowledge reports within 72 hours.
 - People sign in with Google. Access is invite-only, by email, during the beta.
 - YouTube access is granted per team through Google OAuth. Refresh tokens are
   encrypted at rest and never sent to the phone.
-- Each live match gets its own Cloudflare Stream input and its own match
-  credentials. Both are revoked when the match ends.
+- Each live match gets its own Cloudflare Stream input, deleted when the match
+  ends. Match credentials can still read an ended match but can no longer score it.
 - A second-phone scorer joins as a team member, or with a short-lived join code
   that grants scoring for one match. Code redemption is rate-limited.
 - Service secrets live in Cloudflare Worker secrets and GitHub Actions secrets,
-  never in this repository. Workflows only use them on pushes to `main`.
+  never in this repository. Pull requests never get them: deploys
+  run on pushes to `main` or by hand, and TestFlight uploads only from `main`.
 
 ## Self-hosted deployments
 

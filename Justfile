@@ -49,7 +49,7 @@ home-daemon-dev:
 # --- iOS ---
 
 ios-generate:
-    cd ios && xcodegen generate --spec Project.yml && xcodegen generate --spec Scoring.yml
+    cd ios && xcodegen generate --spec Project.yml
 
 ios-build: ios-generate
-    xcodebuild build -project ios/Scorebug.xcodeproj -scheme Scorebug -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/DerivedData/Local CODE_SIGNING_ALLOWED=NO
+    xcodebuild build -project ios/Scorebug.xcodeproj -scheme Scorebug -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/DerivedData/Local ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO

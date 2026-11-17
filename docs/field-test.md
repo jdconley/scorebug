@@ -1,58 +1,89 @@
 # Scorebug field test
 
-The first real run, end to end. Do it in this order, because each part depends on the one before. Write down anything odd with the time it happened, so it can be matched to the server logs (`infra/install.sh status`, `docker compose logs`).
+A real match with the hosted app, end to end. Go in order: each part depends on the one before.
+Write down anything odd with the time it happened, so it can be matched to the Worker logs in the
+Cloudflare dashboard.
 
-## 0. At home, the day before
+You need the filming iPhone on a tripod, its paired Apple Watch, and a second phone for scoring.
 
-- [ ] Server is on the latest main (`infra/install.sh` re-run on the server, and `infra/install.sh worker` on the home worker if split). This writes the new `SERVER_SECRET` (replacing `PHONE_TOKEN`); update the API and the worker together, and re-pair the phone from the QR if it was set up with the old token.
-- [ ] `infra/install.sh status`: control plane, relay and worker all healthy.
-- [ ] YouTube: create a **private or unlisted** stream, check the key matches the one saved in Scorebug, and turn on _Auto-start_ (and _Auto-stop_ off) so YouTube goes live by itself.
-- [ ] Phone: install **Scorebug Live** from TestFlight (internal group "Conley Chaos"). Delete any old dev build first so no stale pairing is left over.
-- [ ] Connect: `infra/install.sh phone` on the server, then scan the QR with the iPhone camera. Home should show `Server … connected · YouTube ready`.
-- [ ] Watch: install the Watch app from the iPhone's Watch app.
-- [ ] Second phone (family member's): install the app, but **don't** connect it to the server.
-- [ ] Free space: at least about 10 GB for a 1080p match (Home → Recordings shows what's free).
+## 1. At home, the day before
 
-## 1. Dry run at home, 10 minutes
+- [ ] Filming iPhone: install **Scorebug** from TestFlight. Install it on the Watch too, from the
+      Watch app on the iPhone if it doesn't appear by itself.
+- [ ] **Sign in with Google.** Home appears. If it says "Scorebug is in private beta", the account
+      isn't on the beta list yet.
+- [ ] Team: tap **Create team**, or open the invite link from your team owner. Tap the team on Home
+      to open the team screen.
+- [ ] YouTube (team owner): **Connect a YouTube channel** and finish Google's YouTube consent. The
+      channel status reads "Matches go live here, unlisted". If it says the channel can't live stream
+      yet, wait out YouTube's 24 hours and tap **Check again**.
+- [ ] Second phone: install Scorebug. Either join the team (**Invite people** → **Create invite
+      link** → **Share invite**, then open the link on that phone and tap **Join team**), or plan to
+      join the match with a code at the gym.
+- [ ] Free space: Home → **Recordings** shows how much is free. Leave about 10 GB for a 1080p match.
 
-- [ ] New match: type both team names. Check the short names prefill and that you can edit them. Pick colors, Best of 3, the **Bar** scorebug, Stream to YouTube. Leave 4K off.
-- [ ] Go live. Within about 10 s the LIVE pill shows and `720p out · good`. The YouTube preview plays with the scorebug burned in.
-- [ ] Tap each half and check the score changes on the phone **and** on YouTube (about 5–15 s behind).
-- [ ] Undo removes the last point on both.
-- [ ] Watch: open Scorebug on the Watch. The teams and score appear in the same left/right order as the phone. Tap to score, then long-press to undo.
-- [ ] Invite scorer: on the second phone, scan the QR, which should open the app and land on the scorer screen. Score a few points from it. The filming phone shows "scoring on another device" and **Take over** works.
-- [ ] Bring a set to 25–2x. The set-point sheet appears on whichever device is scoring. Tap **Keep playing** once, then **End set**. "Teams switching sides?" appears; choose Yes and check the halves swap.
-- [ ] Try scorebug styles: end, start a new match with **Lower third**, then **Set card**, and check each on YouTube.
-- [ ] End the match. Recordings lists it. Play works and Save to Photos works.
+## 2. Dry run at home, 10 minutes
 
-## 2. At the gym
+- [ ] **New match** on the team. Team 1 is your team. Type Team 2's name and check its short name
+      fills in and can be edited. Pick colors, **Best of 3 · 25/15** and the **Bar** scorebug.
+      **Stream to** shows the team's channel. Leave **Record in 4K** off.
+- [ ] **Go live.** The screen turns landscape, the LIVE pill appears and the status line settles at
+      something like `REC 1080p · 720p out · good`.
+- [ ] **Watch link**: send it to another device and open it. The YouTube stream plays with the
+      scorebug burned in.
+- [ ] Tap each half of the picture. The score changes on the phone and, a few seconds later, on
+      YouTube. **Undo** removes the last point on both.
+- [ ] Watch: open Scorebug. The teams and score appear in the same left/right order as the phone.
+      Tap to score, then long-press to undo.
+- [ ] **Invite scorer** on the filming phone. On the second phone, point the camera at the QR code
+      and tap **Join and score** (or **Join with a code** and type the code). Score a few points from
+      it. The filming phone shows **Scoring on another phone · Take over**; tap it and check scoring
+      comes back.
+- [ ] Bring a set to set point. The prompt "… wins set 1?" appears on the phone that is scoring. Tap
+      **Keep playing** once, then score again and tap **End set**. "Teams switching sides?" appears;
+      tap **Yes, switch** and check the halves swap.
+- [ ] **End** → **End match**. The match card shows the result and "Saving the video…", then
+      **Done**. YouTube goes off air.
+- [ ] Recordings lists the match. **Play** and **Save to Photos** work.
+- [ ] Try the other scorebug styles: a short match with **Lower third**, then **Set card**, and check
+      each on YouTube.
+
+## 3. At the gym
 
 **Network**
 
-- [ ] Note what the uplink is: gym Wi-Fi, or cellular (and how many bars).
-- [ ] Go live and watch the quality line for the first 5 minutes. It should settle at `720p` or `540p out`, with no repeated "Retry stream" banners.
-- [ ] Network drop: turn on Airplane mode for about 20 s, then turn it off. Recording continues the whole time and the stream comes back by itself. Note how long YouTube shows the "stream interrupted" slate.
+- [ ] Note the uplink: gym Wi-Fi, or cellular (and how many bars).
+- [ ] **Go live** and watch the status line for the first 5 minutes. Note where it settles
+      (`1080p`, `720p` or `540p out`) and any banners.
+- [ ] Network drop: turn on Airplane mode for about 20 seconds, then turn it off. The recording
+      keeps going the whole time. Note whether the stream comes back by itself ("Reconnecting
+      stream…") or needs **Go live again**, and what YouTube shows meanwhile.
 
-**A full match** (one person filming and scoring)
+**A full match**, one person filming and scoring
 
-- [ ] Tripod, landscape, whole court in frame. Score by tapping halves for the whole match.
-- [ ] After each set, answer the switch-sides prompt. The halves should still match who is on which side.
-- [ ] At least once, score a set from the **Watch** only (phone on the tripod).
-- [ ] At least once, hand scoring to the second phone through Invite scorer, then take it back.
-- [ ] Note the phone temperature: is any thermal warning or downshift to 540p shown? At what minute?
-- [ ] Note battery percentage at the start and at the end. Is it plugged in or not?
+- [ ] Tripod, landscape, whole court in frame. Score by tapping the halves for the whole match.
+- [ ] After each set, answer "Teams switching sides?". The halves still match who is on which
+      side.
+- [ ] Score at least one set from the Watch only, with the phone on the tripod.
+- [ ] At least once, hand scoring to the second phone through **Invite scorer**, then take it back
+      with **Take over**.
+- [ ] Note the phone's temperature: any drop in stream quality, and at what minute.
+- [ ] Note the battery at the start and the end, and whether the phone was plugged in.
 
 **After the match**
 
-- [ ] End match. YouTube goes off air, and the VOD has the scorebug and correct final scores.
-- [ ] Recordings: the file covers the whole match with no gap at the network drop. Save to Photos works.
+- [ ] **End** → **End match**. YouTube goes off air. The YouTube video has the scorebug and the
+      right final score.
+- [ ] Recordings: the file covers the whole match, with no gap at the network drop. **Save to
+      Photos** works.
 - [ ] Optional: a second match with **Record in 4K** on, to check heat over a full match.
 
-## 3. Report back
+## 4. Report back
 
-For anything that went wrong, note the time, the screen it happened on, what you expected, and a screenshot. Also note which of these needed explanation or felt slow:
+For anything that went wrong, note the time, the screen, what you expected, and a screenshot. Also
+note which of these needed explaining or felt slow:
 
-- connecting the phone
+- signing in and connecting YouTube
 - the New match sheet
 - inviting a scorer
 - the set-point prompt

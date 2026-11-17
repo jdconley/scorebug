@@ -1,5 +1,7 @@
 # Copy to .dev.vars for `pnpm --filter @scorebug/control-plane dev:worker`. Never commit .dev.vars.
 PUBLIC_URL=http://localhost:8787
 GOOGLE_CLIENT_SECRET=
+# Cloudflare Stream token, only needed to Go live locally.
+STREAM_API_TOKEN=
 SERVER_SECRET=local-dev-server-secret-0123456789abcdef
 ADMIN_EMAILS=you@example.com

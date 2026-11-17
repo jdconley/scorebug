@@ -113,7 +113,6 @@ services:
       ENCODER: software
       VIDEO_PROFILE: ${VIDEO_PROFILE:-720p30}
       FFMPEG_PATH: /usr/bin/ffmpeg
-      FFPROBE_PATH: /usr/bin/ffprobe
       SCORE_DIR: /tmp/scorebug-worker
       LOG_LEVEL: ${LOG_LEVEL:-info}
     healthcheck:

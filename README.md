@@ -15,7 +15,7 @@ iPhone app is on TestFlight. Access is invite-only, and accounts are added by ha
 
 The full path works in production: sign in with Google, connect a YouTube channel
 once, tap **Go live**, and the match appears on YouTube with the score drawn on it.
-You can also run the whole thing yourself (see [Self-hosting](#self-hosting)).
+The hosted service is the only one the current iPhone app supports.
 
 ## How it works
 
@@ -37,8 +37,8 @@ Watch ◀──WatchConnectivity──▶ paired iPhone
   pushes it to YouTube. It stops when the match ends, so nothing runs between
   matches.
 
-[docs/superpowers/specs/2026-11-16-hosted-cloudflare-design.md](docs/superpowers/specs/2026-11-16-hosted-cloudflare-design.md)
-has the full design for the hosted version.
+See [docs/architecture.md](docs/architecture.md) for details and
+[docs/api.md](docs/api.md) for the HTTP API.
 
 ## Repository layout
 
@@ -51,12 +51,12 @@ vendor/MediaMTX/      Pinned MediaMTX relay with two small patches (self-hosting
 vendor/HaishinKit/    Pinned HaishinKit streaming library for the iPhone app
 infra/                Local fixture config and the self-hosted deployment
 scripts/              Integration tests run in CI
-docs/                 Architecture, API, development and self-hosting guides
+docs/                 Architecture, API, development, field-test and self-hosting guides
 ```
 
 ## Develop
 
-Requires Node 22.13+, pnpm 9.15.0, Docker, and FFmpeg with SRT and drawtext support.
+Requires Node 22.13+, pnpm 9.15.0, Docker, and FFmpeg with SRT, H.264 and AAC support.
 The iPhone apps need Xcode 26 and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```sh
@@ -77,14 +77,16 @@ the integration tests, and [ios/README.md](ios/README.md) for building the apps.
 
 ## Self-hosting
 
-You can run your own server on a Linux machine with Docker, a domain name and a
-YouTube stream key. It uses a MediaMTX relay instead of Cloudflare Stream and needs
-no Scorebug account. See [docs/self-hosting.md](docs/self-hosting.md).
+The repo also has a self-hosted server: a Node + SQLite API, a MediaMTX relay and the
+same broadcast worker, set up by one installer script. The current iPhone app can't
+connect to it, because the app signs in with Google and uses team routes only the
+hosted service serves. See [docs/self-hosting.md](docs/self-hosting.md).
 
 ## Contributing
 
-Issues and pull requests are welcome. CI runs the TypeScript tests, the Docker
-images, and the iPhone and Watch builds on every pull request.
+Issues and pull requests are welcome. CI runs the TypeScript tests and the Docker
+images on every pull request, and the iPhone and Watch builds on pull requests that
+touch `ios/`.
 
 ## License
 
