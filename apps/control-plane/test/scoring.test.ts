@@ -2,13 +2,20 @@ import { describe, expect, it } from 'vitest';
 import type { MatchRules, ScoringOperation, ScoringState, Side } from '@scorebug/protocol';
 import {
   applyScoringOperation,
-  defaultRules,
   defaultShortName,
   initialScoringState,
   pendingSetEnd,
   ScoringError,
   validateRules,
 } from '../src/scoring.js';
+
+const defaultRules: MatchRules = {
+  bestOf: 3,
+  pointsToWin: 25,
+  decidingPointsToWin: 15,
+  winBy: 2,
+  pointCap: null,
+};
 
 function points(
   state: ScoringState,
@@ -45,14 +52,7 @@ function expectError(
 }
 
 describe('volleyball scoring', () => {
-  it('starts fresh with default best-of-three rules and awards only the chosen side', () => {
-    expect(defaultRules).toEqual({
-      bestOf: 3,
-      pointsToWin: 25,
-      decidingPointsToWin: 15,
-      winBy: 2,
-      pointCap: null,
-    });
+  it('starts fresh and awards only the chosen side', () => {
     const initial = initialScoringState();
     expect(initial).toEqual({
       score: { home: 0, away: 0, set: 1, homeSets: 0, awaySets: 0 },

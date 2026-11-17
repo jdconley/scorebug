@@ -265,7 +265,7 @@ it('goes live: Stream input, one unlisted broadcast, the container, and the watc
   const read = await body(await h.call('/v1/matches/game-1', { headers: h.auth(capture.token) }));
   expect(read.youtube.watchUrl).toBe(outcome.youtube.watchUrl);
 
-  // The phone's publish credential: Stream's SRT publish URL, same response shape as today.
+  // The phone's publish credential: Stream's SRT publish URL.
   const publish = await h.json(
     '/v1/matches/game-1/media/publish',
     {
@@ -290,24 +290,22 @@ it('goes live: Stream input, one unlisted broadcast, the container, and the watc
     owner.teamId,
     '/v1/worker/sessions',
     'POST',
-    JSON.stringify({ workerId: 'match', runId: 'run-1', outputId: 'youtube' }),
+    JSON.stringify({ workerId: 'match', runId: 'run-1' }),
   );
   expect(session.status).toBe(200);
   const snapshot = JSON.parse(
     (await workerApi(owner.teamId, '/v1/worker/snapshot?workerId=match')).body,
   );
   expect(snapshot.assignment.output).toEqual({
-    destinationId: 'youtube',
     publishUrl: expect.stringMatching(/^rtmps:\/\/a\.rtmps\.youtube\.example\/live2\/key-stream-/),
   });
   const connection = JSON.parse(
     (await workerApi(owner.teamId, '/v1/worker/connection?workerId=match')).body,
   );
-  expect(connection.connection).toMatchObject({
+  expect(connection.connection).toEqual({
     gameId: 'game-1',
     generation: 1,
     readUrl: expect.stringMatching(/^rtmps:\/\/live\.cloudflare\.example:443\/live\/play-/),
-    source: { ready: true },
   });
   const refused = await team(owner.teamId).workerApi(
     'GET',
@@ -329,7 +327,11 @@ it('publishes only to the selected capture and generation, and connects only the
   const other = (await body(joined)).credential as Credential;
   const publish = (token: string, payload: Json) =>
     h.json('/v1/matches/game-1/media/publish', payload, { headers: h.auth(token) });
-  const request = { recordingId: 'rec-1', generation: 1 };
+  const request = {
+    recordingId: 'rec-1',
+    generation: 1,
+    publishingAttemptId: '0a1b2c3d-0000-4000-8000-000000000002',
+  };
   // Before Go Live there is no running generation.
   const early = await publish(capture.token, request);
   expect(early.status).toBe(409);
@@ -345,6 +347,8 @@ it('publishes only to the selected capture and generation, and connects only the
   expect((await publish(capture.token, { ...request, publishingAttemptId: 'nope' })).status).toBe(
     400,
   );
+  const { publishingAttemptId: _, ...withoutAttempt } = request;
+  expect((await publish(capture.token, withoutAttempt)).status).toBe(400);
   expect((await publish(capture.token, request)).status).toBe(200);
   const elsewhere = JSON.parse(
     (await workerApi(owner.teamId, '/v1/worker/connection?workerId=other')).body,

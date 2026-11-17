@@ -22,8 +22,8 @@ public struct MatchCoordinatorState: Equatable, Sendable {
     public let status: MatchCoordinatorStatus
 }
 
-/// Durable, single-command scoring outbox shared by iPhone and watch. Give each
-/// outbox file one active coordinator owner. Endpoint/account changes require a
+/// Durable, single-command scoring outbox. Give each outbox file one active
+/// coordinator owner. Endpoint/account changes require a
 /// new coordinator and scope; an old pending record then blocks all network use.
 public actor MatchCommandCoordinator {
     private let client: any MatchScoringClient

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DEFAULT_SCOREBUG_STYLE, SCOREBUG_STYLES, type ScorebugOverlay } from '@scorebug/protocol';
+import { SCOREBUG_STYLES, type ScorebugOverlay } from '@scorebug/protocol';
 
 const integer = z.number().int().min(0).max(999);
 const side = z.enum(['home', 'away']);
@@ -26,24 +26,24 @@ export const scorebugOverlaySchema = z.object({
   serving: side.nullable(),
 });
 
-/** Match snapshot fields the worker receives; absent style means a pre-style control plane. */
+/** The match snapshot fields the worker draws. */
 export type ScorebugMatch = {
   teams: ScorebugOverlay['teams'];
   score: ScorebugOverlay['score'];
-  rules?: { bestOf: 3 | 5 } | undefined;
-  completedSets?: ScorebugOverlay['completedSets'] | undefined;
-  scorebugStyle?: ScorebugOverlay['style'] | undefined;
+  rules: { bestOf: 3 | 5 };
+  completedSets: ScorebugOverlay['completedSets'];
+  scorebugStyle: ScorebugOverlay['style'];
 };
 
 export function scorebugOverlay(match: ScorebugMatch): ScorebugOverlay {
   return {
-    style: match.scorebugStyle ?? DEFAULT_SCOREBUG_STYLE,
+    style: match.scorebugStyle,
     // The match model has no title/division or serve state yet: leave them blank.
     label: null,
-    bestOf: match.rules?.bestOf ?? 3,
+    bestOf: match.rules.bestOf,
     teams: match.teams,
     score: match.score,
-    completedSets: (match.completedSets ?? []).map(({ set, home, away, winner }) => ({
+    completedSets: match.completedSets.map(({ set, home, away, winner }) => ({
       set,
       home,
       away,
@@ -58,7 +58,7 @@ export function serializeScorebugOverlay(overlay: ScorebugOverlay): string {
   return `${JSON.stringify(overlay)}\n`;
 }
 
-/** Null for anything that is not a complete overlay (e.g. a legacy drawtext line). */
+/** Null for anything that is not a complete overlay. */
 export function parseScorebugOverlay(text: string): ScorebugOverlay | null {
   let value: unknown;
   try {

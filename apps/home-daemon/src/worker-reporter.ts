@@ -21,8 +21,6 @@ export class WorkerReporter {
     private readonly runId = randomUUID(),
     /** The configured output profile, shown to the app with the status. */
     private readonly output?: WorkerOutput,
-    /** OUTPUT_ID, so a phone can start a broadcast without naming the output. */
-    private readonly outputId?: string,
   ) {
     try {
       this.base = new URL(url);
@@ -38,7 +36,6 @@ export class WorkerReporter {
       !token ||
       !identifier.safeParse(workerId).success ||
       !identifier.safeParse(runId).success ||
-      (outputId !== undefined && !identifier.safeParse(outputId).success) ||
       !Number.isInteger(timeout) ||
       timeout < 1 ||
       timeout > 30_000
@@ -104,11 +101,7 @@ export class WorkerReporter {
         this.sessionId ??= (
           await this.post(
             'sessions',
-            {
-              workerId: this.workerId,
-              runId: this.runId,
-              ...(this.outputId === undefined ? {} : { outputId: this.outputId }),
-            },
+            { workerId: this.workerId, runId: this.runId },
             session,
             signal,
           )

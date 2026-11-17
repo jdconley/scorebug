@@ -6,6 +6,7 @@ const baseSpec = {
   pullUrl: 'rtmps://live.cloudflare.com:443/live/PLAYKEY',
   publishUrl: 'rtmps://a.rtmps.youtube.com/live2/STREAMKEY',
   scoreFile: '/tmp/scorebug/score.txt',
+  profile: { width: 1920, height: 1080, fps: 30, bitrateKbps: 6000 },
 };
 
 describe('buildFfmpegArgs', () => {
@@ -39,7 +40,7 @@ describe('buildFfmpegArgs', () => {
     expect(filter).toContain(
       '[1:v:0]split=3[scorebug_bar_packed][scorebug_setCard_packed][scorebug_lowerThird_packed];',
     );
-    // 1080p default canvas: each style's box is cropped from the packed feed...
+    // 1080p canvas: each style's box is cropped from the packed feed...
     expect(filter).toContain(
       '[scorebug_bar_packed]crop=520:244:0:0,format=yuva420p[scorebug_bar];',
     );
@@ -83,10 +84,10 @@ it('applies the output canvas and bitrate of the video profile', () => {
   expect(args[args.indexOf('-filter_complex') + 1]).toContain('crop=348:164:0:0,');
 });
 describe('source timestamps', () => {
-  it.each([false, true])('preserves the common A/V timeline with profile=%s', (withProfile) => {
+  it('preserves the common A/V timeline', () => {
     const args = buildFfmpegArgs({
       ...baseSpec,
-      ...(withProfile ? { profile: { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 } } : {}),
+      profile: { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 },
     });
     const inputIndex = args.indexOf('-i');
     const shiftIndex = args.indexOf('-avoid_negative_ts');
@@ -106,19 +107,14 @@ describe('source timestamps', () => {
     expect(args).not.toContain('-fpsmax');
     expect(filter).not.toContain('setpts');
 
-    if (withProfile) {
-      expect(args[args.indexOf('-reinit_filter:v:0') + 1]).toBe('0');
-      expect(filter).toContain(':(ow-iw)/2:(oh-ih)/2:eval=frame[base];');
-      expect(args.indexOf('-reinit_filter:v:0')).toBeLessThan(inputIndex);
-      expect(filter).toContain(
-        "nullsink;[live]settb=1/90000,select='st(0,if(isnan(prev_t),2,min(2,ld(0)+max(0,t-ld(1))*30)))",
-      );
-      expect(filter.indexOf('[decoded]settb=1/90000')).toBeGreaterThan(-1);
-      expect(filter.indexOf('[decoded]settb=1/90000')).toBeLessThan(filter.indexOf('select='));
-    } else {
-      expect(args).not.toContain('-reinit_filter:v:0');
-      expect(filter).not.toContain('select=');
-    }
+    expect(args[args.indexOf('-reinit_filter:v:0') + 1]).toBe('0');
+    expect(filter).toContain(':(ow-iw)/2:(oh-ih)/2:eval=frame[base];');
+    expect(args.indexOf('-reinit_filter:v:0')).toBeLessThan(inputIndex);
+    expect(filter).toContain(
+      "nullsink;[live]settb=1/90000,select='st(0,if(isnan(prev_t),2,min(2,ld(0)+max(0,t-ld(1))*30)))",
+    );
+    expect(filter.indexOf('[decoded]settb=1/90000')).toBeGreaterThan(-1);
+    expect(filter.indexOf('[decoded]settb=1/90000')).toBeLessThan(filter.indexOf('select='));
   });
 });
 

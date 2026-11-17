@@ -1,6 +1,5 @@
 import type {
   BroadcastCommand,
-  BroadcastOperation,
   BroadcastOutcome,
   BroadcastSelection,
   MatchSnapshot,
@@ -19,34 +18,15 @@ export class MediaStoreError extends Error {
     super(code);
   }
 }
-/** Picks the worker and output for a start selection that leaves them out. */
-export type WorkerSelector = (requested: {
-  workerId?: string | undefined;
-  outputId?: string | undefined;
-}) => Pick<BroadcastSelection, 'workerId' | 'outputId'>;
-
-function withWorker(
-  operation: BroadcastOperation,
-  selectWorker: WorkerSelector | undefined,
-): BroadcastOperation {
-  if (
-    operation?.type !== 'start' ||
-    !operation.selection ||
-    typeof operation.selection !== 'object'
-  )
-    return operation;
-  const { selection } = operation;
-  if (selection.workerId !== undefined && selection.outputId !== undefined) return operation;
-  if (!selectWorker) throw new MediaStateError('no_worker');
-  return { type: 'start', selection: { ...selection, ...selectWorker(selection) } };
-}
+/** The worker and output a start command goes to. */
+export type BroadcastWorker = Pick<BroadcastSelection, 'workerId' | 'outputId'>;
 
 type Dependencies = {
   transaction: <T>(body: () => T) => T;
   match: (id: string) => MatchSnapshot | undefined;
   active: () => MatchSnapshot | undefined;
   updateBroadcast: (id: string, broadcast: MediaBroadcast) => void;
-  output: (id: string) => WorkerOutputAssignment;
+  output: (id: string) => WorkerOutputAssignment | null;
   now: () => number;
 };
 
@@ -99,10 +79,10 @@ export class MediaStore {
       const match = this.deps.active();
       if (!match) return null;
       const media = this.read(match.id);
-      return media.broadcast.desired === 'running' &&
-        media.broadcast.selection?.workerId === workerId
-        ? { match, media, output: this.deps.output(match.id) }
-        : null;
+      if (media.broadcast.desired !== 'running' || media.broadcast.selection?.workerId !== workerId)
+        return null;
+      const output = this.deps.output(match.id);
+      return output ? { match, media, output } : null;
     });
   }
   reportRecording(gameId: string, deviceId: string, report: RecordingReport): RecordingAssociation {
@@ -157,9 +137,8 @@ export class MediaStore {
     ) as { outcome: string } | undefined;
     return row ? (JSON.parse(row.outcome) as BroadcastOutcome) : undefined;
   }
-  /** `selectWorker` fills a start selection that omits workerId/outputId. It runs after the
-   * receipt check, so a retry of the same command replays its first outcome. */
-  execute(command: BroadcastCommand, selectWorker?: WorkerSelector): BroadcastOutcome {
+  /** A start goes to `worker`. A retry of the same command replays its first outcome. */
+  execute(command: BroadcastCommand, worker: BroadcastWorker): BroadcastOutcome {
     return this.deps.transaction(() => {
       if (
         !/^[A-Za-z0-9_-]{1,128}$/.test(command.commandId) ||
@@ -192,7 +171,8 @@ export class MediaStore {
         try {
           const broadcast = applyBroadcastOperation(
             snapshot.broadcast,
-            withWorker(command.operation, selectWorker),
+            command.operation,
+            worker,
             snapshot.recordings,
             this.match(command.gameId).status,
           );

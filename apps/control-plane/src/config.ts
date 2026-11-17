@@ -2,7 +2,7 @@
 export type RouteConfig = {
   /** The bearer token the match container's worker sends on /v1/worker. */
   workerToken: string;
-  /** The worker and output a start command goes to when it names neither. */
+  /** The worker and output every start command goes to. */
   workerId: string;
   outputId: string;
 };

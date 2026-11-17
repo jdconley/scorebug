@@ -1,13 +1,4 @@
-import type { MatchCredential, MatchSnapshot } from './matches.js';
-
-/**
- * Match invites and match outputs. See docs/api.md.
- *
- * Join link format (query values are percent-encoded as usual for URLs):
- *   scorebug://join?server=<https-url>&code=<invite-code>     score a match
- */
-export const JOIN_LINK_PREFIX = 'scorebug://join';
-
+/** Match invites and match outputs. See docs/api.md. */
 export type MatchInvite = {
   id: string;
   gameId: string;
@@ -16,26 +7,13 @@ export type MatchInvite = {
   revokedAt: string | null;
   redemptions: number;
 };
-/** `code` is displayed grouped (`K7P-4QX`); redemption ignores case, spaces and dashes. */
-export type MatchInviteIssued = {
-  invite: MatchInvite;
-  code: string;
-  link: string;
-  expiresAt: string;
-};
 export type InviteRedeemRequest = { code: string; deviceId: string };
-/** Always a per-match `score` credential. */
-export type InviteRedeemed = {
-  credential: MatchCredential;
-  snapshot: MatchSnapshot;
-  serverTime: string;
-};
 
-/** `destinationId` is always null: matches stream to the team's YouTube channel. */
-export type MatchOutput = { destinationId: string | null; recordOnly: boolean };
+/** A match streams to its team's YouTube channel unless it only records. */
+export type MatchOutput = { recordOnly: boolean };
 
-/** Part of the worker snapshot assignment. `publishUrl` is the YouTube ingest URL with its stream key. */
-export type WorkerOutputAssignment = { destinationId: string | null; publishUrl: string | null };
+/** Part of the worker snapshot assignment: the YouTube RTMPS ingest URL with its stream key. */
+export type WorkerOutputAssignment = { publishUrl: string };
 
 /** Unambiguous invite alphabet: no 0/O, 1/I/L or U. */
 export const INVITE_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -51,11 +29,4 @@ export function normalizeInviteCode(input: string): string | null {
 
 export function formatInviteCode(code: string): string {
   return `${code.slice(0, 3)}-${code.slice(3)}`;
-}
-
-const query = (server: string, code: string) =>
-  `server=${encodeURIComponent(server)}&code=${encodeURIComponent(code)}`;
-
-export function joinLink(server: string, code: string): string {
-  return `${JOIN_LINK_PREFIX}?${query(server, code)}`;
 }

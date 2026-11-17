@@ -131,15 +131,6 @@ import XCTest
         XCTAssertEqual(app.error, "You've been signed out. Sign in again.")
     }
 
-    func testSelfHostedLeftoversAreCleared() {
-        store.values["server"] = Data("{}".utf8)
-        store.values["enrollment-device"] = Data("\"x\"".utf8)
-        let app = makeApp()
-        XCTAssertNil(store.values["server"])
-        XCTAssertNil(store.values["enrollment-device"])
-        XCTAssertEqual(app.route, .signIn)
-    }
-
     func testDebugServerOverrideSignsOut() async throws {
         let app = makeApp()
         await app.signIn()
@@ -202,7 +193,6 @@ import XCTest
     func testNonScorebugTextIsNotALink() {
         let app = makeApp()
         XCTAssertFalse(app.open("https://example.com/join/K7P4QX"))
-        XCTAssertFalse(app.open("scorebug://connect?server=https%3A%2F%2Fa.example&code=setup-code-123456789012"))
         XCTAssertNil(app.pendingLink)
     }
 
@@ -275,16 +265,7 @@ import XCTest
         let early = MatchRecap(snapshot: makeSnapshot(home: 7, away: 4, status: .ended), date: Date())
         XCTAssertEqual(early.title, "CASCADE 7–4 SUMMIT", "a match ended early shows the set's points, not 0–0 sets")
         XCTAssertEqual(early.status, "Ended early in set 1")
-        let old = ##"{"team1":{"name":"Cascade","shortName":"CASCADE","color":"#2563eb","sets":2},"team2":{"name":"Summit","shortName":"SUMMIT","color":"#f97316","sets":1},"setScores":"","final":true,"date":0}"##
-        XCTAssertEqual(try JSONDecoder().decode(MatchRecap.self, from: Data(old.utf8)).title, "CASCADE 2–1 SUMMIT",
-                       "recaps saved before the set's points still decode")
         XCTAssertNil(try store.value(MatchSession.self, for: StoreKey.session))
-    }
-
-    func testSessionsSavedBeforeTeamsStillDecode() throws {
-        let old = #"{"kind":"scoring","endpoint":"https://scorebug.live","credential":{"gameId":"m1","deviceId":"d","role":"score","token":"t"},"recordOnly":true,"layout":{"leftTeam":"team1"},"startedAt":0}"#
-        let session = try JSONDecoder().decode(MatchSession.self, from: Data(old.utf8))
-        XCTAssertNil(session.teamId)
     }
 
     func testSignOutIsRefusedMidMatch() async {

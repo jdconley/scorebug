@@ -60,7 +60,6 @@ import XCTest
         XCTAssertEqual(teams?["away"]?["shortName"], "SUMMIT")
         XCTAssertEqual(body["scorebugStyle"] as? String, "lowerThird")
         XCTAssertEqual((body["rules"] as? [String: Any])?["bestOf"] as? Int, 5)
-        XCTAssertNil(body["destinationId"], "the stream goes to the team's channel")
         XCTAssertNil(body["recordOnly"])
     }
 
@@ -75,7 +74,6 @@ import XCTest
         let bodies = await server.creationBodies
         let body = try XCTUnwrap(bodies.last)
         XCTAssertEqual(body["recordOnly"] as? Bool, true)
-        XCTAssertNil(body["destinationId"])
 
         let next = makeModel()
         XCTAssertEqual(next.draft.team1.name, "Cascade 14 Black")
@@ -84,12 +82,11 @@ import XCTest
         XCTAssertTrue(next.draft.recordIn4K)
     }
 
-    func testAnotherTeamReplacesTeam1AndDropsAStaleDestination() async {
-        var draft = NewMatchDraft(destinationId: "old-self-hosted")
+    func testAnotherTeamReplacesTeam1() async {
+        var draft = NewMatchDraft()
         draft.team1.setName("Summit 14 Red"); draft.team2.setName("Cascade 14 Black")
         preferences.lastDraft = draft
         let model = makeModel()
-        XCTAssertNil(model.draft.destinationId)
         XCTAssertEqual(model.draft.team1.name, "Cascade 14 Black")
         XCTAssertEqual(model.draft.team2.name, "", "the team doesn't play itself")
     }

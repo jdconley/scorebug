@@ -47,8 +47,6 @@
     "operation": {
       "type": "start",
       "selection": {
-        "workerId": "mac",
-        "outputId": "local-sink",
         "captureDeviceId": "phone",
         "recordingId": "archive-1"
       }
@@ -75,8 +73,8 @@
         "desired": "running",
         "generation": 1,
         "selection": {
-          "workerId": "mac",
-          "outputId": "local-sink",
+          "workerId": "match",
+          "outputId": "youtube",
           "captureDeviceId": "phone",
           "recordingId": "archive-1"
         }

@@ -8,26 +8,16 @@ export type WorkerInput = {
   scoreRevision: number;
   overlay: string;
   readUrl: string;
-  sourceReady: boolean;
   outputId: string;
-  /** The match's destination from the control plane (contains the stream key); null = none yet. */
-  publishUrl?: string | null;
+  /** The match's YouTube ingest from the control plane (contains the stream key). */
+  publishUrl: string;
 };
 export type WorkerState = {
-  state:
-    | 'idle'
-    | 'waiting_source'
-    | 'starting'
-    | 'producing_output'
-    | 'stopping'
-    | 'retrying'
-    | 'failed'
-    | 'closed';
+  state: 'idle' | 'starting' | 'producing_output' | 'stopping' | 'retrying' | 'failed' | 'closed';
   gameId?: string;
   generation?: number;
   reason?:
     | 'assignment_changed'
-    | 'source_unavailable'
     | 'output_mismatch'
     | 'control_unavailable'
     | 'control_timeout'
@@ -362,20 +352,15 @@ export class WorkerSupervisor {
       (old.input.gameId !== input.gameId ||
         old.input.generation !== input.generation ||
         old.input.readUrl !== input.readUrl ||
-        old.input.outputId !== input.outputId ||
-        !input.sourceReady)
+        old.input.outputId !== input.outputId)
     ) {
-      await this.stop(input.sourceReady ? 'assignment_changed' : 'source_unavailable');
+      await this.stop('assignment_changed');
       // A deliberate routing replacement may start immediately, but still consumes the same generation's budget.
       this.nextAttempt = -Infinity;
     } else if (old?.stopping) {
       await old.exit;
     }
     if (this.closed) return;
-    if (!input.sourceReady) {
-      this.emit('waiting_source', 'source_unavailable');
-      return;
-    }
     if (this.now() - this.lastControl >= this.controlTimeoutMs) {
       this.emit('failed', 'control_timeout');
       return;

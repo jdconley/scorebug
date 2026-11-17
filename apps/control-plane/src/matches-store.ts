@@ -11,7 +11,6 @@ import type {
   InviteRedeemRequest,
   MatchCommand,
   MatchInvite,
-  MatchOutput,
   MatchCredential,
   MatchRules,
   MatchSnapshot,
@@ -44,27 +43,16 @@ export type CreateMatch = {
   scorebugStyle?: ScorebugStyle | undefined;
   recordOnly?: boolean | undefined;
 };
+/** A database written by a newer schema is refused rather than misread. */
 const SCHEMA_VERSION = 5;
 export const INVITE_TTL_MS = 6 * 60 * 60 * 1000;
-const NO_OUTPUT: MatchOutput = { destinationId: null, recordOnly: false };
-// Match rows are JSON documents: rows written before scorebugStyle existed lack
-// the field and read back as the default style, so no SQL migration is needed.
-// Rows from before match outputs lack `output` and read back as NO_OUTPUT.
+/** Match rows are JSON documents; the snapshot derives scoring state from `scoring`. */
 type StoredMatch = Omit<
   MatchSnapshot,
-  | 'score'
-  | 'completedSets'
-  | 'canUndo'
-  | 'endReason'
-  | 'status'
-  | 'scorebugStyle'
-  | 'pendingSetEnd'
-  | 'output'
+  'score' | 'completedSets' | 'canUndo' | 'endReason' | 'status' | 'pendingSetEnd'
 > & {
   scoring: ScoringState;
   creationRequest: string;
-  scorebugStyle?: ScorebugStyle;
-  output?: MatchOutput;
 };
 type InviteRow = {
   id: string;
@@ -75,8 +63,8 @@ type InviteRow = {
   revoked_at: number | null;
 };
 export type MatchStoreOptions = {
-  /** The worker's output for a match: the team's YouTube ingest once the match has a
-   * broadcast. Null (or no option) means no output yet. */
+  /** The worker's output for a match: its YouTube ingest once the match has a broadcast.
+   * Without one (null, or no option) the match has no worker assignment. */
   output?: (gameId: string) => WorkerOutputAssignment | null;
 };
 export class MatchStoreError extends Error {
@@ -102,9 +90,9 @@ function snapshot(match: StoredMatch): MatchSnapshot {
     canUndo: match.scoring.status === 'active' && match.scoring.history.length > 0,
     scorer: match.scorer,
     broadcast: match.broadcast,
-    scorebugStyle: match.scorebugStyle ?? DEFAULT_SCOREBUG_STYLE,
+    scorebugStyle: match.scorebugStyle,
     pendingSetEnd: pendingSetEnd(match.scoring, match.rules),
-    output: match.output ?? NO_OUTPUT,
+    output: { recordOnly: match.output.recordOnly },
   };
 }
 
@@ -136,8 +124,6 @@ export class MatchStore {
             role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, PRIMARY KEY(game_id, device_id, role));
           CREATE TABLE IF NOT EXISTS commands(game_id TEXT NOT NULL REFERENCES matches(id), device_id TEXT NOT NULL,
             command_id TEXT NOT NULL, request TEXT NOT NULL, outcome TEXT NOT NULL, PRIMARY KEY(game_id, device_id, command_id));
-          -- Retired Watch pairing capabilities: the Watch now mirrors the iPhone.
-          DROP TABLE IF EXISTS watch_pairings;
         `);
         MediaStore.migrate(this.db);
         this.db.exec(`
@@ -169,7 +155,7 @@ export class MatchStore {
           match.revision++;
           this.save(match);
         },
-        output: (id) => options.output?.(id) ?? { destinationId: null, publishUrl: null },
+        output: (id) => options.output?.(id) ?? null,
         now: this.now,
       });
     } catch (error) {
@@ -226,7 +212,6 @@ export class MatchStore {
         return snapshot(match);
       }
       if (this.active()) throw new MatchStoreError('match_in_flight');
-      const output: MatchOutput = { destinationId: null, recordOnly: input.recordOnly === true };
       const match: StoredMatch = {
         id: input.id,
         createdAt: new Date(this.now()).toISOString(),
@@ -237,7 +222,7 @@ export class MatchStore {
         scorer: { deviceId: input.deviceId, epoch: 1 },
         broadcast: { desired: 'stopped', generation: 0 },
         scorebugStyle: input.scorebugStyle ?? DEFAULT_SCOREBUG_STYLE,
-        output,
+        output: { recordOnly: input.recordOnly === true },
         creationRequest: canonical(input),
       };
       this.db.run(

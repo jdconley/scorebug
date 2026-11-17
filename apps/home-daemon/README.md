@@ -36,11 +36,9 @@ assigned to this `WORKER_ID`.
 - **Input.** The read URL is Stream's RTMPS playback of the match's live input. The
   worker rejects any other scheme.
 - **Output.** The publish URL is the match's YouTube ingest URL with its stream key.
-  If the assignment has none, the worker logs `worker_output_missing` and does not
-  start FFmpeg.
+  The control plane assigns a broadcast only once the match has one.
 
-The worker waits until the control plane reports the source ready before it starts
-FFmpeg. It stops FFmpeg when:
+The worker stops FFmpeg when:
 
 - the assignment changes or the match ends (it lets FFmpeg drain for up to 10 seconds),
 - the control plane has been unreachable for 5 seconds,
@@ -52,8 +50,8 @@ second apart. An attempt that ran for `RETRY_FREE_AFTER_MS` gives its retry back
 a phone that drops off and returns does not use up the budget. A small guardian
 process owns FFmpeg, so FFmpeg is cleaned up even if the worker is killed.
 
-Every second the worker reports its state (`waiting_source`, `starting`,
-`producing_output`, `retrying` and so on), FFmpeg's frame and time counters, and its
+Every second the worker reports its state (`starting`, `producing_output`,
+`retrying` and so on), FFmpeg's frame and time counters, and its
 output profile to the control plane (`POST /v1/worker/sessions` and
 `/v1/worker/observations`). The apps use this to show whether the broadcast is live,
 and the Durable Object uses it for the idle guard. Logs never contain media URLs or

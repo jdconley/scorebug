@@ -26,14 +26,11 @@ const recording: RecordingAssociation = {
   deviceId: 'camera-1',
   updatedAt: now,
 };
-const selection: BroadcastSelection = {
-  workerId: 'worker-1',
-  outputId: 'youtube-1',
-  captureDeviceId: 'camera-1',
-  recordingId: 'recording-1',
-};
+const worker = { workerId: 'worker-1', outputId: 'youtube-1' };
+const request = { captureDeviceId: 'camera-1', recordingId: 'recording-1' };
+const selection: BroadcastSelection = { ...worker, ...request };
 const stopped: MediaBroadcast = { desired: 'stopped', generation: 0, selection: null };
-const start: BroadcastOperation = { type: 'start', selection };
+const start: BroadcastOperation = { type: 'start', selection: request };
 
 it('associates a recording with its authenticated device and server update time', () => {
   expect(applyRecordingReport(undefined, 'game-1', 'camera-1', report, now)).toEqual(recording);
@@ -198,7 +195,7 @@ it('allows stopped recording reports to advance without resuming', () => {
 });
 
 it('starts a selected local recording with the next broadcast generation', () => {
-  const result = applyBroadcastOperation(stopped, start, [recording], 'active');
+  const result = applyBroadcastOperation(stopped, start, worker, [recording], 'active');
   expect(result).toEqual({ desired: 'running', generation: 1, selection });
   expect(result.selection).not.toBe(selection);
   expect(stopped).toEqual({ desired: 'stopped', generation: 0, selection: null });
@@ -206,85 +203,54 @@ it('starts a selected local recording with the next broadcast generation', () =>
 
 it('stops broadcasting without ending local recording', () => {
   const running: MediaBroadcast = { desired: 'running', generation: 7, selection };
-  expect(applyBroadcastOperation(running, { type: 'stop' }, [recording], 'active')).toEqual({
-    desired: 'stopped',
-    generation: 8,
-    selection: null,
-  });
+  expect(applyBroadcastOperation(running, { type: 'stop' }, worker, [recording], 'active')).toEqual(
+    {
+      desired: 'stopped',
+      generation: 8,
+      selection: null,
+    },
+  );
   expect(recording.status).toBe('recording');
   expect(running.desired).toBe('running');
 });
 
-it('requires an explicit stop before moving a running broadcast to another worker', () => {
-  const running: MediaBroadcast = { desired: 'running', generation: 7, selection };
-  expect(() =>
-    applyBroadcastOperation(
-      running,
-      { type: 'start', selection: { ...selection, workerId: 'worker-2' } },
-      [recording],
-      'active',
-    ),
-  ).toThrow(new MediaStateError('worker_move_requires_stop'));
-  expect(running).toEqual({ desired: 'running', generation: 7, selection });
-  expect(recording.status).toBe('recording');
-});
-
-it('permits a new output and recording on the same worker with a new generation', () => {
+it('permits a new recording on a running broadcast with a new generation', () => {
   const running: MediaBroadcast = { desired: 'running', generation: 7, selection };
   const nextRecording = { ...recording, recordingId: 'recording-2', deviceId: 'camera-2' };
-  const nextSelection = {
-    ...selection,
-    outputId: 'youtube-2',
-    captureDeviceId: 'camera-2',
-    recordingId: 'recording-2',
-  };
+  const next = { captureDeviceId: 'camera-2', recordingId: 'recording-2' };
   expect(
     applyBroadcastOperation(
       running,
-      { type: 'start', selection: nextSelection },
+      { type: 'start', selection: next },
+      worker,
       [recording, nextRecording],
       'active',
     ),
-  ).toEqual({ desired: 'running', generation: 8, selection: nextSelection });
-});
-
-it('permits moving to another worker after an explicit stop while recording continues', () => {
-  const running: MediaBroadcast = { desired: 'running', generation: 7, selection };
-  const afterStop = applyBroadcastOperation(running, { type: 'stop' }, [recording], 'active');
-  const nextSelection = { ...selection, workerId: 'worker-2' };
-  expect(
-    applyBroadcastOperation(
-      afterStop,
-      { type: 'start', selection: nextSelection },
-      [recording],
-      'active',
-    ),
-  ).toEqual({ desired: 'running', generation: 9, selection: nextSelection });
-  expect(recording.status).toBe('recording');
+  ).toEqual({ desired: 'running', generation: 8, selection: { ...worker, ...next } });
 });
 
 it('advances generation for a new stop even when already stopped or match has ended', () => {
-  expect(applyBroadcastOperation(stopped, { type: 'stop' }, [], 'ended')).toEqual({
+  expect(applyBroadcastOperation(stopped, { type: 'stop' }, worker, [], 'ended')).toEqual({
     ...stopped,
     generation: 1,
   });
 });
 
 it('rejects starting broadcast after match end', () => {
-  expect(() => applyBroadcastOperation(stopped, start, [recording], 'ended')).toThrow(
+  expect(() => applyBroadcastOperation(stopped, start, worker, [recording], 'ended')).toThrow(
     new MediaStateError('match_ended'),
   );
 });
 
 it('rejects a selected recording that does not exist', () => {
-  expect(() => applyBroadcastOperation(stopped, start, [], 'active')).toThrow(
+  expect(() => applyBroadcastOperation(stopped, start, worker, [], 'active')).toThrow(
     new MediaStateError('recording_not_found'),
   );
 });
 
 it.each(['stopped', 'interrupted'] as const)('rejects selecting a %s recording', (status) => {
   expect(() =>
-    applyBroadcastOperation(stopped, start, [{ ...recording, status }], 'active'),
+    applyBroadcastOperation(stopped, start, worker, [{ ...recording, status }], 'active'),
   ).toThrow(new MediaStateError('recording_not_active'));
 });
 
@@ -292,32 +258,31 @@ it('rejects selecting a recording owned by another capture device', () => {
   expect(() =>
     applyBroadcastOperation(
       stopped,
-      { type: 'start', selection: { ...selection, captureDeviceId: 'camera-2' } },
+      { type: 'start', selection: { ...request, captureDeviceId: 'camera-2' } },
+      worker,
       [recording],
       'active',
     ),
   ).toThrow(new MediaStateError('recording_device_mismatch'));
 });
 
-it.each(['workerId', 'outputId', 'captureDeviceId', 'recordingId'] as const)(
-  'validates selection %s',
-  (key) => {
-    expect(() =>
-      applyBroadcastOperation(
-        stopped,
-        { type: 'start', selection: { ...selection, [key]: '../unsafe' } },
-        [recording],
-        'active',
-      ),
-    ).toThrow(new MediaStateError('invalid_id'));
-  },
-);
+it.each(['captureDeviceId', 'recordingId'] as const)('validates selection %s', (key) => {
+  expect(() =>
+    applyBroadcastOperation(
+      stopped,
+      { type: 'start', selection: { ...request, [key]: '../unsafe' } },
+      worker,
+      [recording],
+      'active',
+    ),
+  ).toThrow(new MediaStateError('invalid_id'));
+});
 
 it.each([-1, 1.5, Number.MAX_SAFE_INTEGER])(
   'cannot advance invalid or exhausted generation %s',
   (generation) => {
     expect(() =>
-      applyBroadcastOperation({ ...stopped, generation }, { type: 'stop' }, [], 'active'),
+      applyBroadcastOperation({ ...stopped, generation }, { type: 'stop' }, worker, [], 'active'),
     ).toThrow(new MediaStateError('invalid_generation'));
   },
 );
@@ -325,7 +290,7 @@ it.each([-1, 1.5, Number.MAX_SAFE_INTEGER])(
 it('rejects malformed runtime operations', () => {
   for (const operation of [null, {}, { type: 'start' }, { type: 'restart' }]) {
     expect(() =>
-      applyBroadcastOperation(stopped, operation as BroadcastOperation, [], 'active'),
+      applyBroadcastOperation(stopped, operation as BroadcastOperation, worker, [], 'active'),
     ).toThrow(new MediaStateError('invalid_broadcast_operation'));
   }
 });

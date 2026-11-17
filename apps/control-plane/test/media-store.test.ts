@@ -4,13 +4,14 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { MatchStore } from '../src/matches-store.js';
+import { TEST_OUTPUT } from './helpers.js';
 import { openNodeSqlite } from './sqlite.js';
+
+const worker = { workerId: 'match', outputId: 'youtube' };
 
 const now = Date.parse('2026-09-14T03:00:00Z');
 const issuedAt = new Date(now).toISOString();
 const selection = {
-  workerId: 'mac',
-  outputId: 'local-sink',
   captureDeviceId: 'phone',
   recordingId: 'archive-1',
 };
@@ -34,7 +35,9 @@ afterEach(() => {
   directories.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
 });
 function open(path = ':memory:', clock = () => now) {
-  const value = new MatchStore(openNodeSqlite(path), 'qa-media-key-not-production', clock);
+  const value = new MatchStore(openNodeSqlite(path), 'qa-media-key-not-production', clock, {
+    output: () => TEST_OUTPUT,
+  });
   stores.push(value);
   return value;
 }
@@ -88,27 +91,32 @@ it('persists broadcast command receipts and rejects older/new-generation conflic
   const first = open(path, () => clock);
   create(first);
   recording(first);
-  const accepted = first.media.execute(start);
+  const accepted = first.media.execute(start, worker);
   expect(accepted.accepted).toBe(true);
   expect(first.get('match')).toMatchObject({
     revision: 1,
     broadcast: { desired: 'running', generation: 1 },
   });
-  const stopped = first.media.execute({
-    ...start,
-    commandId: 'stop',
-    expectedGeneration: 1,
-    operation: { type: 'stop' },
-  });
+  const stopped = first.media.execute(
+    {
+      ...start,
+      commandId: 'stop',
+      expectedGeneration: 1,
+      operation: { type: 'stop' },
+    },
+    worker,
+  );
   expect(stopped.snapshot.broadcast).toMatchObject({ desired: 'stopped', generation: 2 });
   first.close();
   clock += 60_000;
   const second = open(path, () => clock);
-  expect(second.media.execute(start)).toEqual(accepted);
+  expect(second.media.execute(start, worker)).toEqual(accepted);
   expect(second.media.receipt('match', 'start-1')).toEqual(accepted);
   expect(
-    second.media.execute({ ...start, commandId: 'late', issuedAt: new Date(clock).toISOString() })
-      .error,
+    second.media.execute(
+      { ...start, commandId: 'late', issuedAt: new Date(clock).toISOString() },
+      worker,
+    ).error,
   ).toBe('generation_conflict');
   expect(second.media.get('match').broadcast.desired).toBe('stopped');
   expect(second.media.get('match').recordings[0]?.status).toBe('recording');
@@ -117,8 +125,8 @@ it('does not replace an original receipt when a broadcast command ID is reused',
   const db = open();
   create(db);
   recording(db);
-  const original = db.media.execute(start);
-  expect(db.media.execute({ ...start, operation: { type: 'stop' } }).error).toBe(
+  const original = db.media.execute(start, worker);
+  expect(db.media.execute({ ...start, operation: { type: 'stop' } }, worker).error).toBe(
     'command_id_reused',
   );
   expect(db.media.receipt('match', start.commandId)).toEqual(original);
@@ -127,7 +135,7 @@ it('ends the match and stops broadcast atomically while local recording continue
   const db = open();
   create(db);
   recording(db);
-  db.media.execute(start);
+  db.media.execute(start, worker);
   const ended = db.execute({
     commandId: 'end',
     gameId: 'match',
@@ -145,9 +153,9 @@ it('ends the match and stops broadcast atomically while local recording continue
     db.media.reportRecording('match', 'phone', { ...report, sequence: 1, status: 'stopped' })
       .status,
   ).toBe('stopped');
-  expect(db.media.execute({ ...start, commandId: 'restart', expectedGeneration: 2 }).error).toBe(
-    'match_ended',
-  );
+  expect(
+    db.media.execute({ ...start, commandId: 'restart', expectedGeneration: 2 }, worker).error,
+  ).toBe('match_ended');
 });
 it('rolls back both broadcast state and the match summary when receipt persistence fails', () => {
   const path = databasePath();
@@ -159,7 +167,7 @@ it('rolls back both broadcast state and the match summary when receipt persisten
     probe.exec(
       "CREATE TRIGGER fail_media_receipt BEFORE INSERT ON media_commands BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;",
     );
-    expect(() => db.media.execute(start)).toThrow('fixture failure');
+    expect(() => db.media.execute(start, worker)).toThrow('fixture failure');
     expect(db.media.get('match').broadcast.generation).toBe(0);
     expect(db.get('match')?.revision).toBe(0);
     expect(db.media.receipt('match', start.commandId)).toBeUndefined();
@@ -172,7 +180,7 @@ it('rolls back broadcast stop when a match-end receipt cannot be saved', () => {
   const db = open(path);
   create(db);
   recording(db);
-  db.media.execute(start);
+  db.media.execute(start, worker);
   const probe = new DatabaseSync(path);
   try {
     probe.exec(
@@ -195,41 +203,6 @@ it('rolls back broadcast stop when a match-end receipt cannot be saved', () => {
     probe.close();
   }
 });
-it('upgrades the previous database layout without losing scoring credentials or state', () => {
-  const path = databasePath();
-  const first = open(path);
-  create(first);
-  const credential = first.issueCredential('match', 'scorer', 'score');
-  const point = {
-    commandId: 'before-upgrade',
-    gameId: 'match',
-    deviceId: 'scorer',
-    expectedRevision: 0,
-    scorerEpoch: 1,
-    issuedAt,
-    operation: { type: 'award_point' as const, side: 'home' as const },
-  };
-  const receipt = first.execute(point);
-  first.close();
-  const previous = new DatabaseSync(path);
-  previous.exec(
-    'DROP TABLE IF EXISTS media_commands; DROP TABLE IF EXISTS media_broadcasts; DROP TABLE IF EXISTS recordings; PRAGMA user_version=1;',
-  );
-  previous.close();
-  const upgraded = open(path);
-  expect(upgraded.get('match')?.scorer.deviceId).toBe('scorer');
-  expect(upgraded.authenticate('match', credential.token)?.deviceId).toBe('scorer');
-  expect(upgraded.receipt('match', 'scorer', point.commandId)).toEqual(receipt);
-  expect(upgraded.execute(point)).toEqual(receipt);
-  expect(upgraded.get('match')).toMatchObject({ revision: 1, score: { home: 1 } });
-  expect(recording(upgraded).recordingId).toBe('archive-1');
-  expect(upgraded.media.get('match').broadcast).toEqual({
-    desired: 'stopped',
-    generation: 0,
-    selection: null,
-  });
-});
-
 it('matches the media JSON fixture shared with native clients', () => {
   const fixture = JSON.parse(
     readFileSync(
@@ -243,7 +216,7 @@ it('matches the media JSON fixture shared with native clients', () => {
     fixture.recordingResponse.recording,
   );
   expect(db.media.get('match')).toEqual(fixture.snapshotResponse.snapshot);
-  expect(db.media.execute(fixture.command)).toEqual(fixture.outcome);
+  expect(db.media.execute(fixture.command, worker)).toEqual(fixture.outcome);
 });
 it('serializes competing broadcasts through separate SQLite connections', () => {
   const path = databasePath();
@@ -251,14 +224,36 @@ it('serializes competing broadcasts through separate SQLite connections', () => 
   create(first);
   recording(first);
   const second = open(path);
-  expect(first.media.execute(start).accepted).toBe(true);
+  expect(first.media.execute(start, worker).accepted).toBe(true);
   expect(
-    second.media.execute({
-      ...start,
-      commandId: 'competing',
-      operation: { type: 'start', selection: { ...selection, workerId: 'cloud' } },
-    }).error,
+    second.media.execute(
+      {
+        ...start,
+        commandId: 'competing',
+      },
+      worker,
+    ).error,
   ).toBe('generation_conflict');
-  expect(second.media.workerAssignment('mac')?.media.broadcast.generation).toBe(1);
-  expect(second.media.workerAssignment('cloud')).toBeNull();
+  expect(second.media.get('match').broadcast.generation).toBe(1);
+});
+it('assigns the selected worker only once the match has its output', () => {
+  const withOutput = open();
+  create(withOutput);
+  recording(withOutput);
+  withOutput.media.execute(start, worker);
+  expect(withOutput.media.workerAssignment('match')).toMatchObject({
+    match: { id: 'match' },
+    output: TEST_OUTPUT,
+  });
+  expect(withOutput.media.workerAssignment('other')).toBeNull();
+  const withoutOutput = new MatchStore(
+    openNodeSqlite(':memory:'),
+    'qa-media-key-not-production',
+    () => now,
+  );
+  stores.push(withoutOutput);
+  create(withoutOutput);
+  recording(withoutOutput);
+  expect(withoutOutput.media.execute(start, worker).accepted).toBe(true);
+  expect(withoutOutput.media.workerAssignment('match')).toBeNull();
 });

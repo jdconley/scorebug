@@ -22,7 +22,6 @@ const reporter = new WorkerReporter(
   undefined,
   undefined,
   profile,
-  config.OUTPUT_ID,
 );
 const supervisor = new WorkerSupervisor({
   load: () => client.load(),
@@ -35,13 +34,8 @@ const supervisor = new WorkerSupervisor({
   ...(config.RETRY_FREE_AFTER_MS === undefined
     ? {}
     : { retryFreeAfterMs: config.RETRY_FREE_AFTER_MS }),
-  start: (input, onProgress) => {
-    if (!input.publishUrl) {
-      // Never log the URL itself: it contains the stream key.
-      log.error('worker_output_missing', { gameId: input.gameId });
-      throw new Error('missing_output_url');
-    }
-    return startPipeline(
+  start: (input, onProgress) =>
+    startPipeline(
       {
         gameId: input.gameId,
         pullUrl: input.readUrl,
@@ -56,8 +50,7 @@ const supervisor = new WorkerSupervisor({
       },
       log,
       { onProgress, stopTimeoutMs: 1000 },
-    );
-  },
+    ),
 });
 let stopping = false;
 let timer: ReturnType<typeof setTimeout> | undefined;

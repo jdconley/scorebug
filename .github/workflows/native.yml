@@ -31,7 +31,7 @@ jobs:
           xcodebuild -version
           brew install xcodegen
           xcodegen generate --spec ios/Project.yml
-      - name: Shared scoring, setup links, set point, Watch protocol and quality-ladder contracts
+      - name: Shared scoring, set point, Watch protocol and quality-ladder contracts
         run: swift test --package-path ios/Packages/ScorebugCore --scratch-path ios/.build/core
       - name: Recording and publishing session
         run: swift test --package-path ios/Packages/ScorebugMedia --scratch-path ios/.build/media

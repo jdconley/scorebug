@@ -4,13 +4,15 @@ import ScorebugCore
 
 final class PublishAccessTests: XCTestCase {
     private let credential = MatchCredential(gameId: "match", deviceId: "phone", role: .capture, token: "capture-secret")
-    private let valid: [String: Any] = [
-        "gameId": "match", "generation": 3, "recordingId": "recording-1",
-        "publishUrl": "srt://localhost:8890?streamid=publish:scorebug-path&passphrase=private-secret&pkt_size=1316",
-        "serverTime": "2026-09-14T03:00:00.123Z"
-    ]
+    private let attempt = UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789")!
+    /// Cloudflare Stream's SRT URL: its passphrase and its own stream ID.
+    private let streamURL = "srt://live.cloudflare.com:778?passphrase=0123456789abcdef0123&streamid=f256e6ea9341d51eea64c9454659e576"
+    private var valid: [String: Any] {
+        ["gameId": "match", "generation": 3, "recordingId": "recording-1", "publishUrl": streamURL,
+         "serverTime": "2026-09-14T03:00:00.123Z", "publishingAttemptId": attempt.uuidString.lowercased()]
+    }
 
-    func testRequestsSelectedRecordingWithScopedAuthorizationAndDecodesAccess() async throws {
+    func testRequestsTheAttemptWithScopedAuthorizationAndDecodesAccess() async throws {
         let client = try client(body: valid) { request in
             XCTAssertEqual(request.url?.absoluteString, "https://example.com/control/v1/matches/match/media/publish")
             XCTAssertEqual(request.httpMethod, "POST")
@@ -18,33 +20,38 @@ final class PublishAccessTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
             XCTAssertEqual(request.timeoutInterval, 20)
             XCTAssertEqual(try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? NSDictionary,
-                           ["recordingId": "recording-1", "generation": 3] as NSDictionary)
+                           ["recordingId": "recording-1", "generation": 3,
+                            "publishingAttemptId": "abcdef01-2345-6789-abcd-ef0123456789"] as NSDictionary)
         }
-        let access = try await client.publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
+        let access = try await publish(client)
         XCTAssertEqual(access.gameId, "match")
         XCTAssertEqual(access.recordingId, "recording-1")
         XCTAssertEqual(access.generation, 3)
-        XCTAssertEqual(access.publishUrl.absoluteString, valid["publishUrl"] as? String)
+        XCTAssertEqual(access.publishingAttemptId, attempt)
+        XCTAssertEqual(access.publishUrl.absoluteString, streamURL)
+        XCTAssertEqual(access.publishUrl.host, "live.cloudflare.com")
+        XCTAssertEqual(access.publishUrl.port, 778)
         XCTAssertEqual(access.serverTime, valid["serverTime"] as? String)
         var dumpOutput = ""
         dump(access, to: &dumpOutput)
         for description in [String(describing: access), String(reflecting: access), dumpOutput] {
-            XCTAssertFalse(description.contains("private-secret"))
+            XCTAssertFalse(description.contains("0123456789abcdef0123"))
+            XCTAssertFalse(description.contains(attempt.uuidString.lowercased()))
             XCTAssertFalse(description.contains("srt://"))
         }
     }
 
-    func testAcceptsIPv6DestinationAndRejectsMalformedSuccess() async throws {
-        var ipv6 = valid
-        ipv6["publishUrl"] = "srt://[::1]:8890?streamid=publish:scorebug-path&passphrase=private-secret"
-        let access = try await client(body: ipv6).publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
+    func testAcceptsIPv6AndDecodedQueryValuesAndRejectsMissingFields() async throws {
+        var body = valid
+        body["publishUrl"] = "srt://[::1]:8890?pkt_size=1316&streamid=publish%3Ascorebug%3Dx"
+        let access = try await publish(client(body: body))
         XCTAssertEqual(access.publishUrl.host, "::1")
-        for key in ["gameId", "recordingId", "generation", "publishUrl", "serverTime"] {
+        for key in ["gameId", "recordingId", "generation", "publishUrl", "serverTime", "publishingAttemptId"] {
             var malformed = valid
             malformed.removeValue(forKey: key)
             do {
-                _ = try await client(body: malformed).publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
-                XCTFail("Must reject missing field")
+                _ = try await publish(client(body: malformed))
+                XCTFail("Must reject missing \(key)")
             } catch is DecodingError {}
         }
     }
@@ -53,11 +60,7 @@ final class PublishAccessTests: XCTestCase {
         for (key, value) in [("gameId", "other" as Any), ("recordingId", "other" as Any), ("generation", 4 as Any)] {
             var body = valid
             body[key] = value
-            let client = try client(body: body)
-            do {
-                _ = try await client.publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
-                XCTFail("Must reject mismatched \(key)")
-            } catch let error as MatchClientError { XCTAssertEqual(error, .invalidResponse) }
+            await assertInvalid(body)
         }
     }
 
@@ -65,129 +68,59 @@ final class PublishAccessTests: XCTestCase {
         for url in ["https://localhost:8890", "srt:///", "srt://localhost", "srt://localhost:0", "srt://localhost:65536",
                     "srt://user:password@localhost:8890", "srt://localhost:8890#fragment"] {
             var body = valid
-            body["publishUrl"] = url
-            let client = try client(body: body)
-            do {
-                _ = try await client.publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
-                XCTFail("Must reject invalid destination")
-            } catch let error as MatchClientError { XCTAssertEqual(error, .invalidResponse) }
+            body["publishUrl"] = url + "?streamid=abc"
+            await assertInvalid(body)
         }
     }
 
-    func testAuthorizationConflictsAndUnavailableRelayNeverReturnAccess() async throws {
+    func testAuthorizationConflictsAndUnavailableStreamNeverReturnAccess() async throws {
         for (status, code, expected) in [
             (401, "unauthorized", MatchClientError.unauthorized),
             (403, "forbidden", .forbidden),
             (409, "broadcast_changed", .http(status: 409, code: "broadcast_changed")),
-            (503, "relay_unavailable", .http(status: 503, code: "relay_unavailable"))
+            (503, "stream_unavailable", .http(status: 503, code: "stream_unavailable"))
         ] {
-            let client = try client(body: ["error": code], status: status)
             do {
-                _ = try await client.publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
+                _ = try await publish(client(body: ["error": code], status: status))
                 XCTFail("Must reject HTTP \(status)")
             } catch let error as MatchClientError { XCTAssertEqual(error, expected) }
         }
         let failed = MatchHTTPClient(endpoint: try ScoringEndpoint("http://localhost:3000"), transport: { _ in throw URLError(.timedOut) })
         do {
-            _ = try await failed.publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
+            _ = try await publish(failed)
             XCTFail("Must propagate timeout")
         } catch let error as URLError { XCTAssertEqual(error.code, .timedOut) }
     }
 
-    func testAttemptGrantUsesCanonicalRequestAndReturnsBoundIdentity() async throws {
-        let attempt = UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789")!
-        let body = attemptBody(attempt)
-        let client = try client(body: body) { request in
-            let payload = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any]
-            XCTAssertEqual(payload?["publishingAttemptId"] as? String, attempt.uuidString.lowercased())
-            XCTAssertEqual(payload?["recordingId"] as? String, "recording-1")
-            XCTAssertEqual(payload?["generation"] as? Int, 3)
-        }
-        let access = try await client.publishAccess(recordingId: "recording-1", generation: 3,
-                                                   publishingAttemptId: attempt, credential: credential)
-        XCTAssertEqual(access.publishingAttemptId, attempt)
-        XCTAssertEqual(access.publishUrl.absoluteString, body["publishUrl"] as? String)
-        var dumpOutput = ""
-        dump(access, to: &dumpOutput)
-        for description in [String(describing: access), String(reflecting: access), dumpOutput] {
-            XCTAssertFalse(description.contains(attempt.uuidString.lowercased()))
-            XCTAssertFalse(description.contains("sbp1"))
-            XCTAssertFalse(description.contains("srt://"))
-        }
-    }
-
-    func testAttemptGrantRequiresExactCanonicalEcho() async throws {
-        let attempt = UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789")!
-        for echo in [nil, "", "not-a-uuid", UUID().uuidString.lowercased(), attempt.uuidString] as [String?] {
-            var body = attemptBody(attempt)
+    func testRequiresTheExactCanonicalAttemptEcho() async throws {
+        for echo in ["", "not-a-uuid", UUID().uuidString.lowercased(), attempt.uuidString] {
+            var body = valid
             body["publishingAttemptId"] = echo
-            await assertInvalidAttempt(body, attempt: attempt)
+            await assertInvalid(body)
         }
     }
 
-    func testAttemptGrantRequiresOneIntactStreamID() async throws {
-        let attempt = UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789")!
-        let stream = attemptStreamID(attempt)
+    func testRequiresOneIntactStreamID() async throws {
+        let stream = "f256e6ea9341d51eea64c9454659e576"
         let invalidQueries = [
             "", "streamid", "streamid=", "streamid=\(stream)&streamid=\(stream)", "streamid=\(stream)&streamid=",
             "streamid=\(stream)%0A", "streamid=\(stream)%00", "streamid=a%20b", "streamid=" + String(repeating: "a", count: 513),
         ]
         for query in invalidQueries {
-            var body = attemptBody(attempt)
-            body["publishUrl"] = "srt://localhost:8890?\(query)"
-            await assertInvalidAttempt(body, attempt: attempt)
+            var body = valid
+            body["publishUrl"] = "srt://live.cloudflare.com:778?\(query)"
+            await assertInvalid(body)
         }
     }
 
-    /// Hosted: Cloudflare Stream's SRT URL carries Stream's own stream ID, not the relay's proof.
-    func testAttemptGrantAcceptsCloudflareStreamSRT() async throws {
-        let attempt = UUID()
-        var body = attemptBody(attempt)
-        body["publishUrl"] = "srt://live.cloudflare.com:778?passphrase=0123456789abcdef0123&streamid=f256e6ea9341d51eea64c9454659e576"
-        let access = try await client(body: body).publishAccess(recordingId: "recording-1", generation: 3,
-            publishingAttemptId: attempt, credential: credential)
-        XCTAssertEqual(access.publishingAttemptId, attempt)
-        XCTAssertEqual(access.publishUrl.host, "live.cloudflare.com")
-        XCTAssertEqual(access.publishUrl.port, 778)
+    private func publish(_ client: MatchHTTPClient) async throws -> PublishAccess {
+        try await client.publishAccess(recordingId: "recording-1", generation: 3, publishingAttemptId: attempt, credential: credential)
     }
 
-    func testAttemptGrantUsesDecodedQueryValueAndKeepsDestinationValidation() async throws {
-        let attempt = UUID()
-        var body = attemptBody(attempt)
-        body["publishUrl"] = "srt://[::1]:8890?pkt_size=1316&streamid=" + attemptStreamID(attempt).replacingOccurrences(of: ":", with: "%3A").replacingOccurrences(of: "=", with: "%3D")
-        let access = try await client(body: body).publishAccess(recordingId: "recording-1", generation: 3,
-            publishingAttemptId: attempt, credential: credential)
-        XCTAssertEqual(access.publishingAttemptId, attempt)
-        for destination in ["https://localhost:8890", "srt:///", "srt://localhost", "srt://localhost:0",
-                            "srt://localhost:65536", "srt://user:password@localhost:8890"] {
-            body["publishUrl"] = destination + "?streamid=" + attemptStreamID(attempt)
-            await assertInvalidAttempt(body, attempt: attempt)
-        }
-    }
-
-    func testLegacyAccessIgnoresUnrequestedAttemptAndNeedsNoProof() async throws {
-        var body = valid
-        body["publishingAttemptId"] = "not-an-attempt"
-        let access = try await client(body: body).publishAccess(recordingId: "recording-1", generation: 3, credential: credential)
-        XCTAssertNil(access.publishingAttemptId)
-    }
-
-    private func attemptStreamID(_ attempt: UUID) -> String {
-        "publish:scorebug-0123456789abcdef-0123456789abcdef0123456789abcdef:sbp1=\(attempt.uuidString.lowercased())." + String(repeating: "a", count: 64)
-    }
-
-    private func attemptBody(_ attempt: UUID) -> [String: Any] {
-        var body = valid
-        body["publishingAttemptId"] = attempt.uuidString.lowercased()
-        body["publishUrl"] = "srt://localhost:8890?streamid=" + attemptStreamID(attempt) + "&pkt_size=1316"
-        return body
-    }
-
-    private func assertInvalidAttempt(_ body: [String: Any], attempt: UUID, file: StaticString = #filePath, line: UInt = #line) async {
+    private func assertInvalid(_ body: [String: Any], file: StaticString = #filePath, line: UInt = #line) async {
         do {
-            _ = try await client(body: body).publishAccess(recordingId: "recording-1", generation: 3,
-                publishingAttemptId: attempt, credential: credential)
-            XCTFail("Must reject invalid attempt grant", file: file, line: line)
+            _ = try await publish(client(body: body))
+            XCTFail("Must reject the grant", file: file, line: line)
         } catch let error as MatchClientError { XCTAssertEqual(error, .invalidResponse, file: file, line: line) }
         catch { XCTFail("Unexpected error: \(error)", file: file, line: line) }
     }

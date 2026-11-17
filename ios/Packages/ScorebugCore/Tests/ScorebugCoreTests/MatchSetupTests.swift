@@ -55,7 +55,7 @@ final class MatchSetupTests: XCTestCase {
     }
 
     func testCreationMapsTeam1ToHomeAndOmitsUnsetOptions() throws {
-        var draft = NewMatchDraft(format: .bestOf5, style: .setCard, destinationId: "dest-1")
+        var draft = NewMatchDraft(format: .bestOf5, style: .setCard)
         draft.team1.setName(" Cascade 14 Black ")
         draft.team2.setName("Summit")
         draft.team2.color = "#F97316"
@@ -64,20 +64,13 @@ final class MatchSetupTests: XCTestCase {
         XCTAssertEqual(creation.teams.away, MatchTeam(name: "Summit", shortName: "SUMMIT", color: "#f97316"))
         XCTAssertEqual(creation.rules, MatchRules(bestOf: 5, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: nil))
         let streamed = try JSONSerialization.jsonObject(with: JSONEncoder().encode(creation)) as? [String: Any]
-        XCTAssertEqual(Set(try XCTUnwrap(streamed).keys), ["id", "deviceId", "teams", "rules", "scorebugStyle", "destinationId"])
+        XCTAssertEqual(Set(try XCTUnwrap(streamed).keys), ["id", "deviceId", "teams", "rules", "scorebugStyle"])
         XCTAssertEqual(streamed?["scorebugStyle"] as? String, "setCard")
 
         let recordOnly = draft.creation(id: "m1", deviceId: "d1", recordOnly: true)
         let body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(recordOnly)) as? [String: Any]
         XCTAssertEqual(Set(try XCTUnwrap(body).keys), ["id", "deviceId", "teams", "rules", "scorebugStyle", "recordOnly"])
         XCTAssertEqual(body?["recordOnly"] as? Bool, true)
-
-        var defaultDestination = draft
-        defaultDestination.destinationId = nil
-        let defaulted = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
-            defaultDestination.creation(id: "m1", deviceId: "d1", recordOnly: false))) as? [String: Any]
-        XCTAssertNil(defaulted?["destinationId"])
-        XCTAssertNil(defaulted?["recordOnly"])
     }
 
     func testPaletteContrast() {
@@ -89,7 +82,7 @@ final class MatchSetupTests: XCTestCase {
     }
 
     func testDraftPersistsAsJSON() throws {
-        var draft = NewMatchDraft(destinationId: "d", recordIn4K: true)
+        var draft = NewMatchDraft(recordIn4K: true)
         draft.team1.setName("Cascade")
         draft.team1.setShortName("CAS")
         let decoded = try JSONDecoder().decode(NewMatchDraft.self, from: JSONEncoder().encode(draft))

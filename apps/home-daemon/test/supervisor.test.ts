@@ -14,9 +14,9 @@ const input = (overrides: Partial<WorkerInput> = {}): WorkerInput => ({
   generation: 1,
   scoreRevision: 1,
   overlay: 'ONE',
-  readUrl: 'rtsp://relay/game',
-  sourceReady: true,
-  outputId: 'local',
+  readUrl: 'rtmps://stream.test/live/game',
+  outputId: 'youtube',
+  publishUrl: 'rtmps://youtube.test/live2/private-stream-key',
   ...overrides,
 });
 function rig(options: Record<string, unknown> = {}) {
@@ -56,7 +56,7 @@ function rig(options: Record<string, unknown> = {}) {
     load,
     writeScore,
     start,
-    outputId: 'local',
+    outputId: 'youtube',
     scoreFile: '/unused/score',
     now: () => Date.now(),
     onState: (state) => states.push(state),
@@ -115,7 +115,7 @@ describe('WorkerSupervisor', () => {
     const reported = r.supervisor.observation()!;
     expect(reported.state).toBe('producing_output');
     expect(reported.frame).toBe(12);
-    expect(JSON.stringify(reported)).not.toContain('relay');
+    expect(JSON.stringify(reported)).not.toMatch(/rtmps|stream-key/);
     reported.frame = 999;
     expect(r.supervisor.observation()!.frame).toBe(12);
     r.children[0]!.exit();
@@ -190,16 +190,12 @@ describe('WorkerSupervisor', () => {
     r.children[0]!.progress({ frame: 100, outTimeUs: 100 });
     expect(r.states.at(-1)?.state).not.toBe('producing_output');
   });
-  it('fails closed on output mismatch and waits for a missing source', async () => {
+  it('fails closed on output mismatch', async () => {
     const r = rig();
     r.set(input({ outputId: 'other' }));
     await r.supervisor.tick();
     expect(r.start).not.toHaveBeenCalled();
     expect(r.states.at(-1)?.state).toBe('failed');
-    r.set(input({ sourceReady: false }));
-    await r.supervisor.tick();
-    expect(r.start).not.toHaveBeenCalled();
-    expect(r.states.at(-1)?.state).toBe('waiting_source');
     r.set(input());
     await r.supervisor.tick();
     expect(r.start).toHaveBeenCalledTimes(1);
@@ -381,7 +377,7 @@ describe('WorkerSupervisor', () => {
     await r.supervisor.tick();
     expect(r.start).toHaveBeenCalledTimes(6);
   });
-  it('stops an active output on mismatched destination without replacing it', async () => {
+  it('stops an active output on a mismatched output without replacing it', async () => {
     const r = rig();
     await r.supervisor.tick();
     r.set(input({ outputId: 'other' }));

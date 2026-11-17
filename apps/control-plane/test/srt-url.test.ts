@@ -19,13 +19,13 @@ it('keeps ":" and "=" literal in values while escaping delimiters and percent si
 });
 
 it('escapes "=" in keys so values still split at the first "="', () => {
-  const url = new URL('srt://relay:8890');
+  const url = new URL('srt://ingest.test:778');
   url.searchParams.set('a=b', 'c=d');
   const formatted = formatSrtUrl(url);
-  expect(formatted).toBe('srt://relay:8890?a%3Db=c=d');
+  expect(formatted).toBe('srt://ingest.test:778?a%3Db=c=d');
   expect(new URL(formatted).searchParams.get('a=b')).toBe('c=d');
 });
 
 it('leaves a URL without a query unchanged', () => {
-  expect(formatSrtUrl(new URL('srt://relay:8890'))).toBe('srt://relay:8890');
+  expect(formatSrtUrl(new URL('srt://ingest.test:778'))).toBe('srt://ingest.test:778');
 });

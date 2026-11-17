@@ -3,33 +3,31 @@ export type PublishRequest = {
   deviceId: string;
   recordingId: string;
   generation: number;
-  publishingAttemptId?: string;
+  publishingAttemptId: string;
 };
 export type PublishAssignment = {
   gameId: string;
   generation: number;
   recordingId: string;
   publishUrl: string;
-  publishingAttemptId?: string;
+  publishingAttemptId: string;
 };
-/** What the ingest reports about the phone's feed. */
-export type SourceObservation = { ready: boolean; inboundBytes: number; tracks: string[] };
-export type WorkerIngestAssignment = {
+/** Where the worker reads the phone's video: the match's Stream input. */
+export type WorkerConnection = {
   gameId: string;
   generation: number;
   readUrl: string;
-  source: SourceObservation;
 };
-/** What the match routes need from an ingest. The hosted Worker's is `HostedMedia`. */
-export type IngestLifecycle = {
+/** What the match routes need from the match's media. The hosted Worker's is `HostedMedia`. */
+export type MediaLifecycle = {
   publish(request: PublishRequest): Promise<PublishAssignment>;
-  worker(workerId: string): Promise<WorkerIngestAssignment | null>;
+  worker(workerId: string): Promise<WorkerConnection | null>;
 };
 
-/** An ingest refusal with a stable, safe code. The match routes map it to an HTTP status. */
-export class RelayLifecycleError extends Error {
+/** A media refusal with a stable, safe code. The match routes map it to an HTTP status. */
+export class MediaLifecycleError extends Error {
   constructor(public readonly code: string) {
     super(code);
-    this.name = 'RelayLifecycleError';
+    this.name = 'MediaLifecycleError';
   }
 }

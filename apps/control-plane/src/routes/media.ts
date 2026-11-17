@@ -9,7 +9,7 @@ import type { RouteConfig } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
 import { MediaStoreError } from '../media-store.js';
 import { MediaStateError } from '../media-state.js';
-import { RelayLifecycleError, type IngestLifecycle } from '../media-lifecycle.js';
+import { MediaLifecycleError, type MediaLifecycle } from '../media-lifecycle.js';
 
 /** The phone's publishing attempt: a lowercase UUID it echoes back to match its publish URL. */
 const PUBLISHING_ATTEMPT_ID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
@@ -23,15 +23,8 @@ const report = z
     startedAt: z.iso.datetime({ offset: true }),
   })
   .strict();
-// The app may leave workerId/outputId out; the configured worker then takes the broadcast.
-const selection = z
-  .object({
-    workerId: id.optional(),
-    outputId: id.optional(),
-    captureDeviceId: id,
-    recordingId: id,
-  })
-  .strict();
+// The server fills in its worker and output.
+const selection = z.object({ captureDeviceId: id, recordingId: id }).strict();
 const command = z
   .object({
     commandId: id,
@@ -52,7 +45,7 @@ export function mediaRoutes(
   config: RouteConfig,
   matches: MatchStore,
   member: MiddlewareHandler,
-  ingest: IngestLifecycle,
+  lifecycle: MediaLifecycle,
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono<Env>();
@@ -89,21 +82,15 @@ export function mediaRoutes(
         .object({
           recordingId: id,
           generation: sequence.min(1),
-          publishingAttemptId: z
-            .string()
-            .length(36)
-            .regex(PUBLISHING_ATTEMPT_ID_PATTERN)
-            .optional(),
+          publishingAttemptId: z.string().regex(PUBLISHING_ATTEMPT_ID_PATTERN),
         })
         .strict(),
     ),
     async (c) => {
       const credential = c.get('credential');
       if (credential.role !== 'capture') return c.json({ error: 'forbidden' }, 403);
-      const { publishingAttemptId, ...request } = c.req.valid('json');
-      const result = await ingest.publish({
-        ...request,
-        ...(publishingAttemptId !== undefined ? { publishingAttemptId } : {}),
+      const result = await lifecycle.publish({
+        ...c.req.valid('json'),
         gameId: credential.gameId,
         deviceId: credential.deviceId,
       });
@@ -114,17 +101,17 @@ export function mediaRoutes(
         current.selection?.captureDeviceId !== credential.deviceId ||
         current.selection.recordingId !== result.recordingId
       )
-        throw new RelayLifecycleError('broadcast_changed');
+        throw new MediaLifecycleError('broadcast_changed');
       return c.json({ ...result, serverTime: new Date().toISOString() });
     },
   );
   app.post('/commands', member, zValidator('json', command), (c) => {
     const command = c.req.valid('json');
     if (command.gameId !== c.req.param('id')) return c.json({ error: 'forbidden' }, 403);
-    const configured = { workerId: config.workerId, outputId: config.outputId };
-    const outcome = matches.media.execute(command, (requested) =>
-      observations.selectWorker(requested, configured),
-    );
+    const outcome = matches.media.execute(command, {
+      workerId: config.workerId,
+      outputId: config.outputId,
+    });
     return c.json(outcome, outcome.accepted ? 200 : 409);
   });
   app.get('/commands/:commandId', member, (c) => {
@@ -133,7 +120,7 @@ export function mediaRoutes(
   });
   app.onError((error, c) => {
     if (error instanceof WorkerObservationError) return c.json({ error: error.code }, 409);
-    if (error instanceof RelayLifecycleError)
+    if (error instanceof MediaLifecycleError)
       return c.json(
         { error: error.code },
         error.code === 'capture_not_selected'
@@ -151,7 +138,7 @@ export function mediaRoutes(
 export function workerRoutes(
   config: RouteConfig,
   matches: MatchStore,
-  ingest: IngestLifecycle,
+  lifecycle: MediaLifecycle,
   observations = new WorkerObservations(matches.media),
 ) {
   const app = new Hono();
@@ -160,10 +147,8 @@ export function workerRoutes(
     await next();
   });
   app.use('*', bearer(config.workerToken, 'worker'));
-  app.post(
-    '/sessions',
-    zValidator('json', z.object({ workerId: id, runId: id, outputId: id.optional() }).strict()),
-    (c) => c.json(observations.register(c.req.valid('json'))),
+  app.post('/sessions', zValidator('json', z.object({ workerId: id, runId: id }).strict()), (c) =>
+    c.json(observations.register(c.req.valid('json'))),
   );
   app.post(
     '/observations',
@@ -222,7 +207,7 @@ export function workerRoutes(
     });
   });
   app.get('/connection', zValidator('query', z.object({ workerId: id }).strict()), async (c) => {
-    const connection = await ingest.worker(c.req.valid('query').workerId);
+    const connection = await lifecycle.worker(c.req.valid('query').workerId);
     if (connection) {
       const current = matches.media.workerAssignment(c.req.valid('query').workerId);
       if (
@@ -230,13 +215,13 @@ export function workerRoutes(
         current.match.id !== connection.gameId ||
         current.media.broadcast.generation !== connection.generation
       )
-        throw new RelayLifecycleError('broadcast_changed');
+        throw new MediaLifecycleError('broadcast_changed');
     }
     return c.json({ connection, serverTime: new Date().toISOString() });
   });
   app.onError((error, c) => {
     if (error instanceof WorkerObservationError) return c.json({ error: error.code }, 409);
-    if (error instanceof RelayLifecycleError)
+    if (error instanceof MediaLifecycleError)
       return c.json({ error: error.code }, error.code === 'broadcast_changed' ? 409 : 503);
     throw error;
   });

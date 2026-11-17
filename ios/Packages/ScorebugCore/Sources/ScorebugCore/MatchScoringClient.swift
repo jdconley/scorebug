@@ -1,7 +1,7 @@
 import Foundation
 
-/// The scoring operations shared by direct and companion transports. Setup and
-/// installation authority are deliberately outside this interface.
+/// The scoring operations the outbox (`MatchCommandCoordinator`) needs. Match creation and
+/// team-member routes are deliberately outside this interface.
 public protocol MatchScoringClient: Sendable {
     func snapshot(credential: MatchCredential) async throws -> MatchSnapshotResponse
 

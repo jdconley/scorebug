@@ -8,14 +8,6 @@ import type {
   SetResult,
 } from '@scorebug/protocol';
 
-export const defaultRules: MatchRules = {
-  bestOf: 3,
-  pointsToWin: 25,
-  decidingPointsToWin: 15,
-  winBy: 2,
-  pointCap: null,
-};
-
 export class ScoringError extends Error {
   constructor(public readonly code: string) {
     super(code);

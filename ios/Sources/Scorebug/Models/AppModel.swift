@@ -65,7 +65,6 @@ enum SignInBrowserError: Error { case cancelled, unavailable }
         self.browser = browser
         self.deviceName = deviceName
         self.newID = newID
-        for key in StoreKey.legacy { try? store.set(nil, for: key) }
         if let saved = try? store.value(String.self, for: StoreKey.deviceId) { deviceId = saved }
         else { deviceId = newID(); try? store.setValue(deviceId, for: StoreKey.deviceId) }
         account = try? store.value(Account.self, for: StoreKey.account)

@@ -1,10 +1,9 @@
 import Foundation
 
-/// A bounded drain allowance for the qualified relay/worker deployment.
+/// A bounded drain allowance for Cloudflare Stream's SRT ingest.
 /// An empty SRT send queue means no outstanding sender-buffer data; packets may
-/// also have been dropped. It does not acknowledge transport receipt or consumption.
-/// Other deployments must qualify or override the downstream allowance; this is
-/// not an end-to-end delivery acknowledgment.
+/// also have been dropped. It does not acknowledge transport receipt or consumption,
+/// so this is not an end-to-end delivery acknowledgment.
 public struct SRTStopPolicy: Sendable {
     public let totalBudget: Duration
     public let downstreamDrainAllowance: Duration
