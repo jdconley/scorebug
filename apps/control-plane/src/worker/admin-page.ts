@@ -158,34 +158,36 @@ export function adminRoutes() {
               >
               <button type="submit">Add</button>
             </form>
-            ${beta.length === 0
-              ? html`<p class="empty">Nobody yet.</p>`
-              : html`<table>
-                  <thead>
-                    <tr>
-                      <th>Email</th>
-                      <th>Can create teams</th>
-                      <th>Added</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${beta.map(
-                      (row) =>
-                        html`<tr>
-                          <td>${row.email}</td>
-                          <td>${row.canCreateTeams ? 'Yes' : 'No'}</td>
-                          <td>${date(row.addedAt)}</td>
-                          <td>
-                            <form method="post" action="/admin/beta/remove">
-                              <input type="hidden" name="email" value="${row.email}" />
-                              <button class="remove" type="submit">Remove</button>
-                            </form>
-                          </td>
-                        </tr>`,
-                    )}
-                  </tbody>
-                </table>`}
+            ${
+              beta.length === 0
+                ? html`<p class="empty">Nobody yet.</p>`
+                : html`<table>
+                    <thead>
+                      <tr>
+                        <th>Email</th>
+                        <th>Can create teams</th>
+                        <th>Added</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${beta.map(
+                        (row) =>
+                          html`<tr>
+                            <td>${row.email}</td>
+                            <td>${row.canCreateTeams ? 'Yes' : 'No'}</td>
+                            <td>${date(row.addedAt)}</td>
+                            <td>
+                              <form method="post" action="/admin/beta/remove">
+                                <input type="hidden" name="email" value="${row.email}" />
+                                <button class="remove" type="submit">Remove</button>
+                              </form>
+                            </td>
+                          </tr>`,
+                      )}
+                    </tbody>
+                  </table>`
+            }
             <p class="note">
               Removing an email stops new sign-ins only for people on no team. Existing sessions
               keep working.
@@ -193,31 +195,33 @@ export function adminRoutes() {
           </section>
           <section>
             <h2>Teams (${teams.length})</h2>
-            ${teams.length === 0
-              ? html`<p class="empty">No teams yet.</p>`
-              : html`<table>
-                  <thead>
-                    <tr>
-                      <th>Team</th>
-                      <th>Short name</th>
-                      <th>Members</th>
-                      <th>Owners</th>
-                      <th>Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${teams.map(
-                      (team) =>
-                        html`<tr>
-                          <td>${team.name}</td>
-                          <td>${team.shortName}</td>
-                          <td>${team.members}</td>
-                          <td>${team.owners}</td>
-                          <td>${date(team.createdAt)}</td>
-                        </tr>`,
-                    )}
-                  </tbody>
-                </table>`}
+            ${
+              teams.length === 0
+                ? html`<p class="empty">No teams yet.</p>`
+                : html`<table>
+                    <thead>
+                      <tr>
+                        <th>Team</th>
+                        <th>Short name</th>
+                        <th>Members</th>
+                        <th>Owners</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${teams.map(
+                        (team) =>
+                          html`<tr>
+                            <td>${team.name}</td>
+                            <td>${team.shortName}</td>
+                            <td>${team.members}</td>
+                            <td>${team.owners}</td>
+                            <td>${date(team.createdAt)}</td>
+                          </tr>`,
+                      )}
+                    </tbody>
+                  </table>`
+            }
           </section>`,
       ),
     );

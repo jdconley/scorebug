@@ -34,8 +34,7 @@ export type MediaSnapshot = {
 /** What a start command selects; the server fills in its worker and output. */
 export type BroadcastSelectionRequest = Pick<BroadcastSelection, 'captureDeviceId' | 'recordingId'>;
 export type BroadcastOperation =
-  | { type: 'start'; selection: BroadcastSelectionRequest }
-  | { type: 'stop' };
+  { type: 'start'; selection: BroadcastSelectionRequest } | { type: 'stop' };
 export type BroadcastCommand = {
   commandId: string;
   gameId: string;

@@ -1,10 +1,5 @@
 export type DecodedPtsInvalidReason =
-  | 'framing'
-  | 'numeric'
-  | 'ordinal'
-  | 'oversized'
-  | 'incomplete'
-  | 'callback';
+  'framing' | 'numeric' | 'ordinal' | 'oversized' | 'incomplete' | 'callback';
 
 /** Parses FFmpeg's per-frame `metadata=mode=print` records from the decoded side branch
  * (PTS at a fixed 1/90000 timebase). The scorebug overlay stamps its frames from these.

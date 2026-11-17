@@ -56,7 +56,7 @@ function detachParent() {
 }
 
 function disconnect() {
-  if (process.connected) process.disconnect();
+  if (process.connected) process.disconnect?.();
 }
 
 /** @param {Record<string, unknown>} message */
