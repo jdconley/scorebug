@@ -14,7 +14,8 @@ permissions:
 
 concurrency:
   group: native-${{ github.ref }}
-  cancel-in-progress: true
+  # A TestFlight upload on main is never cancelled halfway; pull requests keep only the latest run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   apple:
@@ -48,6 +49,62 @@ jobs:
           -configuration Debug -destination 'generic/platform=iOS Simulator'
           -derivedDataPath ios/DerivedData/NativeCI
           ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
+
+  # Every push to main that changes the app uploads a TestFlight build (as Pounce does). The
+  # internal group "Conley Chaos" has access to all builds, so testers get it once Apple has
+  # processed it; ITSAppUsesNonExemptEncryption in the Info.plists skips the compliance question.
+  testflight:
+    name: TestFlight upload
+    needs: apple
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 45
+    concurrency:
+      group: testflight
+      cancel-in-progress: false
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      TEAM_ID: B222J9J7B8
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - name: Check App Store Connect credentials
+        id: creds
+        run: |
+          # Until the API key secrets exist the upload is skipped, not failed.
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=TestFlight::ASC_KEY_ID, ASC_ISSUER_ID or ASC_KEY_P8 is unset, so the upload is skipped."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.creds.outputs.ready == 'true'
+        uses: actions/checkout@v6
+      - name: Archive and upload
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          brew install xcodegen
+          export ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          (umask 077; printenv ASC_KEY_P8 > "$ASC_KEY_PATH")
+          trap 'rm -f "$ASC_KEY_PATH"' EXIT
+          OUT_DIR="$RUNNER_TEMP/release" ios/release/testflight.sh
+      # The archive minted a development certificate on this throwaway runner. Revoke it, pass or
+      # fail, so runs don't pile them up until the team hits Apple's certificate limit.
+      - name: Revoke this runner's development certificate
+        if: always() && steps.creds.outputs.ready == 'true'
+        run: |
+          export ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          (umask 077; printenv ASC_KEY_P8 > "$ASC_KEY_PATH")
+          trap 'rm -f "$ASC_KEY_PATH" "$RUNNER_TEMP"/devcert*.pem' EXIT
+          security find-certificate -a -c "Apple Development" -p |
+            awk -v dir="$RUNNER_TEMP" '/BEGIN CERTIFICATE/ { n++ } n { print > (dir "/devcert" n ".pem") }'
+          serials=()
+          for pem in "$RUNNER_TEMP"/devcert*.pem; do
+            [ -e "$pem" ] && serials+=("$(openssl x509 -noout -serial -in "$pem" | cut -d= -f2)")
+          done
+          if [ ${#serials[@]} -eq 0 ]; then echo "no development certificate on this runner"; exit 0; fi
+          ios/release/certs.swift --revoke "${serials[@]}"
 
 # Real SRT delivery, Docker, Watch UI and on-device thermal behavior run on the
 # local lab or a phone. This hosted build is not evidence of those behaviors.

@@ -36,6 +36,8 @@ targets:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: Scorebug
+        # Only standard encryption (HTTPS, SRT's AES): TestFlight builds need no export-compliance answer.
+        ITSAppUsesNonExemptEncryption: false
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         UILaunchScreen:
@@ -94,6 +96,7 @@ targets:
       path: Resources/Watch-Info.plist
       properties:
         CFBundleDisplayName: Scorebug
+        ITSAppUsesNonExemptEncryption: false
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         WKApplication: true
