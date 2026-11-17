@@ -1,12 +1,14 @@
 import { loadConfig, videoProfiles } from './config.js';
 import { createLogger } from './logger.js';
 import { startPipeline } from './pipeline.js';
-import { allocatePipelineOutputs } from './output-recording.js';
 import { scoreFilePath } from './score-file.js';
 import { WorkerClient } from './worker-client.js';
 import { WorkerSupervisor } from './supervisor.js';
 import { WorkerReporter } from './worker-reporter.js';
 import { createWorkerStateLogger } from './worker-state-log.js';
+
+/** Well inside the control plane's five-second status lifetime. */
+const REPORT_INTERVAL_MS = 1000;
 
 const config = loadConfig();
 const log = createLogger(config.LOG_LEVEL);
@@ -34,24 +36,17 @@ const supervisor = new WorkerSupervisor({
     ? {}
     : { retryFreeAfterMs: config.RETRY_FREE_AFTER_MS }),
   start: (input, onProgress) => {
-    let outputs: ReturnType<typeof allocatePipelineOutputs>;
-    try {
-      outputs = allocatePipelineOutputs(config, input.publishUrl);
-    } catch (error) {
+    if (!input.publishUrl) {
       // Never log the URL itself: it contains the stream key.
-      if (error instanceof Error && error.message === 'missing_output_url')
-        log.error('worker_output_missing', { gameId: input.gameId });
-      throw error;
+      log.error('worker_output_missing', { gameId: input.gameId });
+      throw new Error('missing_output_url');
     }
     return startPipeline(
       {
         gameId: input.gameId,
         pullUrl: input.readUrl,
-        ...outputs,
+        publishUrl: input.publishUrl,
         scoreFile,
-        nvenc: false,
-        encoder: config.ENCODER,
-        decoderThreading: config.DECODER_THREADING,
         profile,
         ffmpegPath: config.FFMPEG_PATH,
         inputProbe: config.INPUT_PROBE,
@@ -84,7 +79,7 @@ const report = async () => {
     if (!reportingFailed) log.warn('worker_reporting_unavailable');
     reportingFailed = true;
   }
-  if (!stopping) reportTimer = setTimeout(() => void report(), config.WORKER_REPORT_INTERVAL_MS);
+  if (!stopping) reportTimer = setTimeout(() => void report(), REPORT_INTERVAL_MS);
 };
 const poll = async () => {
   try {
@@ -107,9 +102,6 @@ process.on('SIGTERM', () => void shutdown());
 log.info('worker_started', {
   workerId: config.WORKER_ID,
   outputId: config.OUTPUT_ID,
-  outputMode: config.OUTPUT_MODE,
-  encoder: config.ENCODER,
-  decoderThreading: config.DECODER_THREADING,
   profile: config.VIDEO_PROFILE,
   scoreDelayMs: config.SCORE_DELAY_MS,
   inputProbe: config.INPUT_PROBE,

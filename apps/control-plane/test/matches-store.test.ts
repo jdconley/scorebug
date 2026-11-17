@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { MatchCommand } from '@scorebug/protocol';
 import { MatchStore } from '../src/matches-store.js';
-import { openNodeSqlite } from '../src/sql-node.js';
+import { openNodeSqlite } from './sqlite.js';
 
 const teams = {
   home: { name: 'Home', shortName: 'H', color: '#112233' },
@@ -170,7 +170,7 @@ it('preserves a receipt after expiry and a later scorer takeover', () => {
   expect(db.execute(command())).toEqual(first);
   expect(db.get('game-1')?.scorer.deviceId).toBe('phone-b');
 });
-it('uses the same scoped credential after reopening with the installation key', () => {
+it('uses the same scoped credential after reopening with the server key', () => {
   const dir = mkdtempSync(join(tmpdir(), 'scorebug-credential-'));
   dirs.push(dir);
   const path = join(dir, 'match.sqlite');
@@ -279,4 +279,19 @@ it('drops the retired watch_pairings table from an existing database', () => {
     reopened.prepare("SELECT name FROM sqlite_master WHERE name='watch_pairings'").all(),
   ).toEqual([]);
   reopened.close();
+});
+it('refuses a newer schema', () => {
+  const db = openNodeSqlite(':memory:');
+  db.exec('CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT)');
+  db.run("INSERT INTO schema_meta(key,value) VALUES('version','6')");
+  expect(() => new MatchStore(db, 'qa-credential-key-not-production')).toThrow(
+    'unsupported_database_version',
+  );
+});
+
+it('records the schema version in schema_meta', () => {
+  const db = openNodeSqlite(':memory:');
+  const store = new MatchStore(db, 'qa-credential-key-not-production');
+  expect(db.get('SELECT value FROM schema_meta WHERE key=?', 'version')).toEqual({ value: '5' });
+  store.close();
 });

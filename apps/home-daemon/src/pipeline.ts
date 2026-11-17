@@ -8,22 +8,17 @@ import { overlayRegions } from './scorebug/layout.js';
 
 export type PipelineSpec = {
   gameId: string;
+  /** Cloudflare Stream's RTMPS playback of the match (a local file in tests). */
   pullUrl: string;
-  /** Full RTMPS URL **with** the stream key appended (`${RTMP_TARGET}/${streamKey}`). */
-  publishUrl?: string;
-  /** Fresh per-attempt local path; recording contains the final proxy overlay. */
-  recordingPath?: string;
+  /** Full RTMP(S) URL **with** the stream key; FFmpeg publishes FLV to it. */
+  publishUrl: string;
   /** Serialized ScorebugOverlay JSON; the overlay feed re-renders when it changes. */
   scoreFile: string;
-  nvenc: boolean;
-  encoder?: 'software' | 'videotoolbox' | 'nvenc';
-  /** Input decoder only; automatic preserves FFmpeg defaults. */
-  decoderThreading?: 'automatic' | 'slice';
   profile?: { width: number; height: number; fps: number; bitrateKbps: number };
   ffmpegPath?: string;
   /**
-   * Input probing. `fast` bounds FFmpeg's stream analysis for a known SRT/MPEG-TS source
-   * (H.264 + AAC from the phone): it saves several seconds per attempt through Stream.
+   * Input probing. `fast` bounds FFmpeg's stream analysis for the known Stream source
+   * (H.264 + AAC from the phone): it saves several seconds per attempt.
    */
   inputProbe?: 'default' | 'fast';
   /** Ends the attempt when the source sends nothing for this long (FFmpeg rw_timeout). */
@@ -46,37 +41,8 @@ export function overlaySize(spec: PipelineSpec): { width: number; height: number
     : { width: 1920, height: 1080 };
 }
 
-/** Shared initialization options for the live pipeline and local startup probe. */
-export function videoEncoderArgs(encoder: 'software' | 'videotoolbox' | 'nvenc'): string[] {
-  return encoder === 'videotoolbox'
-    ? ['-c:v', 'h264_videotoolbox', '-allow_sw', '0', '-realtime', '1', '-bf', '0']
-    : encoder === 'nvenc'
-      ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll']
-      : ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency'];
-}
-
 export function buildFfmpegArgs(spec: PipelineSpec): string[] {
-  if (!spec.publishUrl && !spec.recordingPath) throw new Error('missing_pipeline_output');
-  // delay_moov preserves unequal first A/V timestamps via edit lists. An empty
-  // initial moov would reset each track separately and destroy the audio lead.
-  const fragmentedMp4 = '+frag_keyframe+delay_moov+default_base_moof';
-  // Tee splits slave names with av_get_token; this is FFmpeg escaping, not shell quoting.
-  const teePath = (value: string) => value.replace(/[\\'|]/g, '\\$&');
-  const output = spec.recordingPath
-    ? spec.publishUrl
-      ? [
-          '-n',
-          '-flags',
-          '+global_header',
-          '-f',
-          'tee',
-          `[f=flv]${teePath(spec.publishUrl)}|[f=mp4:movflags=${fragmentedMp4}]${teePath(spec.recordingPath)}`,
-        ]
-      : ['-n', '-movflags', fragmentedMp4, '-f', 'mp4', spec.recordingPath]
-    : ['-f', 'flv', spec.publishUrl!];
-  const decoderThreading = spec.decoderThreading ?? 'automatic';
-  if (!['automatic', 'slice'].includes(decoderThreading))
-    throw new Error('invalid_decoder_threading');
+  if (!spec.publishUrl) throw new Error('missing_pipeline_output');
   const profile = spec.profile;
   if (
     profile &&
@@ -104,8 +70,7 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     (!Number.isSafeInteger(readTimeout) || readTimeout < 500 || readTimeout > 120_000)
   )
     throw new Error('invalid_input_read_timeout');
-  const encoder = spec.encoder ?? (spec.nvenc ? 'nvenc' : 'software');
-  const video = videoEncoderArgs(encoder);
+  const video = ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency'];
   video.push(
     '-b:v',
     `${profile?.bitrateKbps ?? 6000}k`,
@@ -177,8 +142,6 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     // state so decoded-frame ordinals and the source-FPS cap anchor cannot reset.
     // The legacy profile-less graph has no canvas normalization guarantee.
     ...(profile ? ['-reinit_filter:v:0', '0'] : []),
-    // Input-scoped: never changes the selected output encoder's threading.
-    ...(decoderThreading === 'slice' ? ['-thread_type:v:0', 'slice'] : []),
     ...(inputProbe === 'fast' ? FAST_PROBE_ARGS : []),
     // Microseconds. A read that waits this long fails the attempt, so an absent source
     // costs a short retry instead of a full output timeout.
@@ -207,7 +170,9 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     '44100',
     '-avoid_negative_ts',
     'make_zero',
-    ...output,
+    '-f',
+    'flv',
+    spec.publishUrl,
   ];
 }
 
@@ -326,7 +291,7 @@ export function startPipeline(
     }
   };
 
-  log.info('ffmpeg_spawning', { gameId: spec.gameId, nvenc: spec.nvenc });
+  log.info('ffmpeg_spawning', { gameId: spec.gameId });
   let overlay: OverlayFeed | undefined;
   try {
     // Guardian fd3 is IPC, fd4 carries FFmpeg's decoded-PTS fd3, and fd5 is handed

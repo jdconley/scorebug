@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
-import { createApp } from '../src/app.js';
+import { MatchStore } from '../src/matches-store.js';
 import { WorkerObservations } from '../src/worker-observations.js';
-import { testConfig } from './helpers.js';
+import { createTestApp, SERVER_SECRET } from './helpers.js';
+import { openNodeSqlite } from './sqlite.js';
 
 it('serves every field of the iOS worker-status fixture, plus the simple phase', async () => {
   const fixture = JSON.parse(
@@ -11,8 +12,7 @@ it('serves every field of the iOS worker-status fixture, plus the simple phase',
       'utf8',
     ),
   );
-  const config = testConfig();
-  const { matches } = createApp(config);
+  const matches = new MatchStore(openNodeSqlite(':memory:'), SERVER_SECRET);
   let now = Date.parse('2026-09-14T04:00:00.000Z');
   let monotonic = 0;
   const observations = new WorkerObservations(
@@ -20,7 +20,7 @@ it('serves every field of the iOS worker-status fixture, plus the simple phase',
     () => now,
     () => monotonic,
   );
-  const { app } = createApp(config, { matches, observations });
+  const { app } = createTestApp({ matches, observations });
   try {
     const team = { name: 'Team', shortName: 'T', color: '#123456' };
     matches.create({

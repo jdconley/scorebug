@@ -6,7 +6,7 @@ import {
   type PublishAssignment,
   type PublishRequest,
   type WorkerIngestAssignment,
-} from '../relay-lifecycle.js';
+} from '../media-lifecycle.js';
 import type { SqlDb } from '../sql.js';
 import { Channels } from './channels.js';
 import type { Env } from './env.js';
@@ -355,7 +355,6 @@ export class HostedMedia implements IngestLifecycle {
       HOME_TOKEN: WORKER_TOKEN,
       WORKER_ID,
       OUTPUT_ID,
-      ENCODER: 'software',
       VIDEO_PROFILE: env.VIDEO_PROFILE || '1080p30',
       LOG_LEVEL: 'info',
       // Tuning from the Stream + Container spike (docs/superpowers/specs).

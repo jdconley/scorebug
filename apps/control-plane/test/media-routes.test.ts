@@ -1,15 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createApp } from '../src/app.js';
-import { ownerToken, testConfig, phoneAuth } from './helpers.js';
+import { createTestApp, MEMBER_TOKEN, phoneAuth } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
-import type { Config } from '../src/config.js';
+import type { RouteConfig } from '../src/config.js';
 const stores: MatchStore[] = [];
 afterEach(() => stores.splice(0).forEach((store) => store.close()));
-async function fixture(overrides: Partial<Config> = {}) {
-  const config = testConfig(overrides);
-  const { app, matches } = createApp(config);
+async function fixture(overrides: Partial<RouteConfig> = {}) {
+  const { app, matches, config } = createTestApp({ config: overrides });
   stores.push(matches);
-  const owner = ownerToken(matches);
+  const owner = MEMBER_TOKEN;
   const team = { name: 'Team', shortName: 'T', color: '#123456' };
   const request = async (path: string, token: string, body?: unknown) =>
     app.request(path, {
@@ -70,7 +68,7 @@ it('requires scoped credentials for media reads and capture role for recording r
   expect(publicState.snapshot.recordings).toHaveLength(1);
   expect(JSON.stringify(publicState)).not.toContain(f.capture.token);
 });
-it('reserves broadcast mutation and receipts for installation access', async () => {
+it('reserves broadcast mutation and receipts for team members', async () => {
   const f = await fixture();
   await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
   expect(
@@ -123,14 +121,14 @@ it('gives the selected worker current match state on late attachment and stops a
   await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
   await f.request('/v1/matches/match/media/commands', f.owner, f.command);
   expect((await f.request('/v1/worker/snapshot?workerId=mac', f.scorer.token)).status).toBe(401);
-  expect((await f.request('/v1/worker/snapshot', f.config.HOME_TOKEN)).status).toBe(400);
+  expect((await f.request('/v1/worker/snapshot', f.config.workerToken)).status).toBe(400);
   const selected = await (
-    await f.request('/v1/worker/snapshot?workerId=mac', f.config.HOME_TOKEN)
+    await f.request('/v1/worker/snapshot?workerId=mac', f.config.workerToken)
   ).json();
   expect(selected.assignment.match.id).toBe('match');
   expect(selected.assignment.media.broadcast.selection.outputId).toBe('local-sink');
   expect(
-    (await (await f.request('/v1/worker/snapshot?workerId=other', f.config.HOME_TOKEN)).json())
+    (await (await f.request('/v1/worker/snapshot?workerId=other', f.config.workerToken)).json())
       .assignment,
   ).toBeNull();
   const issuedAt = new Date().toISOString();
@@ -144,7 +142,7 @@ it('gives the selected worker current match state on late attachment and stops a
     operation: { type: 'award_point', side: 'home' },
   });
   const refreshed = await (
-    await f.request('/v1/worker/snapshot?workerId=mac', f.config.HOME_TOKEN)
+    await f.request('/v1/worker/snapshot?workerId=mac', f.config.workerToken)
   ).json();
   expect(refreshed.assignment.match.score.home).toBe(1);
   await f.request('/v1/matches/match/commands', f.scorer.token, {
@@ -157,7 +155,7 @@ it('gives the selected worker current match state on late attachment and stops a
     operation: { type: 'end_match', reason: 'Finished' },
   });
   expect(
-    (await (await f.request('/v1/worker/snapshot?workerId=mac', f.config.HOME_TOKEN)).json())
+    (await (await f.request('/v1/worker/snapshot?workerId=mac', f.config.workerToken)).json())
       .assignment,
   ).toBeNull();
   expect(f.matches.media.get('match').recordings[0]?.status).toBe('recording');
@@ -178,27 +176,27 @@ describe('a start command without workerId/outputId', () => {
     return send(f, autoStart(f));
   };
   const register = (f: Fixture, workerId: string, outputId?: string) =>
-    f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+    f.request('/v1/worker/sessions', f.config.workerToken, {
       workerId,
       runId: `${workerId}-run`,
       ...(outputId ? { outputId } : {}),
     });
 
-  it('goes to the one connected worker and the output it registered', async () => {
+  it('goes to the configured worker and the output it registered', async () => {
     const f = await fixture();
-    expect((await register(f, 'home-1', 'youtube')).status).toBe(200);
+    expect((await register(f, 'match', 'youtube-2')).status).toBe(200);
     const outcome = await start(f);
     expect(outcome.accepted).toBe(true);
     expect(outcome.snapshot.broadcast.selection).toMatchObject({
-      workerId: 'home-1',
-      outputId: 'youtube',
+      workerId: 'match',
+      outputId: 'youtube-2',
     });
-    const worker = await f.request('/v1/worker/snapshot?workerId=home-1', f.config.HOME_TOKEN);
+    const worker = await f.request('/v1/worker/snapshot?workerId=match', f.config.workerToken);
     expect((await worker.json()).assignment.media.broadcast.generation).toBe(1);
   });
 
-  it('prefers the configured WORKER_ID/OUTPUT_ID, even before that worker connects', async () => {
-    const f = await fixture({ WORKER_ID: 'garage', OUTPUT_ID: 'youtube' });
+  it('uses the configured output before the configured worker connects', async () => {
+    const f = await fixture({ workerId: 'garage', outputId: 'youtube' });
     await register(f, 'other', 'elsewhere');
     const outcome = await start(f);
     expect(outcome.snapshot.broadcast.selection).toMatchObject({
@@ -207,29 +205,25 @@ describe('a start command without workerId/outputId', () => {
     });
   });
 
-  it('refuses when no worker, several workers or no known output', async () => {
-    const none = await fixture();
-    expect(await start(none)).toMatchObject({ accepted: false, error: 'no_worker' });
-
-    const many = await fixture();
-    await register(many, 'a', 'out');
-    await register(many, 'b', 'out');
-    expect(await start(many)).toMatchObject({ accepted: false, error: 'worker_ambiguous' });
-
-    // A worker from before outputId registration: polling alone names no output.
-    const unknown = await fixture();
-    await unknown.request('/v1/worker/snapshot?workerId=old', unknown.config.HOME_TOKEN);
-    expect(await start(unknown)).toMatchObject({ accepted: false, error: 'output_unknown' });
+  it('refuses a named worker with no known output', async () => {
+    const f = await fixture();
+    await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
+    const named = autoStart(f);
+    named.operation = {
+      type: 'start',
+      selection: { workerId: 'other', captureDeviceId: 'phone', recordingId: 'archive' },
+    } as typeof named.operation;
+    expect(await send(f, named)).toMatchObject({ accepted: false, error: 'output_unknown' });
   });
 
-  it('replays the first outcome on retry even if the workers changed', async () => {
+  it('replays the first outcome on retry even if the worker changed its output', async () => {
     const f = await fixture();
-    await register(f, 'home-1', 'youtube');
+    await register(f, 'match', 'youtube');
     await f.request('/v1/matches/match/media/recordings', f.capture.token, f.report);
     const body = autoStart(f, 'retry');
     const first = await send(f, body);
     expect(first.accepted).toBe(true);
-    await register(f, 'home-2', 'youtube');
+    await register(f, 'match', 'youtube-2');
     expect(await send(f, body)).toEqual(first);
   });
 });

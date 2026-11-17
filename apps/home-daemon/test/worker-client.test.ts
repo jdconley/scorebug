@@ -9,6 +9,7 @@ const selection = {
   recordingId: 'archive',
 };
 const broadcast = { desired: 'running', generation: 1, selection };
+const destination = 'rtmps://a.rtmp.youtube.com/live2/private-stream-key';
 const snapshot = () => ({
   assignment: {
     match: {
@@ -22,6 +23,10 @@ const snapshot = () => ({
       score: { home: 0, away: 0, set: 1, homeSets: 0, awaySets: 0 },
       broadcast: { desired: 'running', generation: 1 },
     },
+    output: { destinationId: 'youtube', publishUrl: destination } as {
+      destinationId: string | null;
+      publishUrl: string | null;
+    },
     media: { gameId: 'match', broadcast: structuredClone(broadcast) },
   },
 });
@@ -29,7 +34,7 @@ const connection = () => ({
   connection: {
     gameId: 'match',
     generation: 1,
-    readUrl: 'srt://localhost:8890?streamid=read:match&passphrase=private-key',
+    readUrl: 'rtmps://live.cloudflare.com:443/live/private-play-key',
     source: { ready: true, inboundBytes: 300, tracks: ['H264', 'MPEG-4 Audio'] },
   },
 });
@@ -91,8 +96,7 @@ it('loads source access between two snapshots and uses the latest authoritative 
     readUrl: connection().connection.readUrl,
     sourceReady: true,
     outputId: 'local-sink',
-    // Control planes from before destinations send no output: OUTPUT_URL applies.
-    publishUrl: null,
+    publishUrl: destination,
   });
   expect(f.requests.map((r) => r.path)).toEqual([
     '/prefix/v1/worker/snapshot?workerId=mac',
@@ -127,17 +131,17 @@ it.each(['generation', 'ended', 'worker', 'match', 'stopped'])(
     expect(await f.client.load()).toBeNull();
   },
 );
-it('accepts an RTMPS source (hosted Scorebug pulls Stream over RTMPS)', async () => {
-  const source = connection();
-  source.connection.readUrl = 'rtmps://live.cloudflare.com:443/live/playkey';
-  const f = await fixture((_path, index) => ({ body: index === 2 ? source : snapshot() }));
-  expect((await f.client.load())?.readUrl).toBe('rtmps://live.cloudflare.com:443/live/playkey');
-});
-it('rejects malformed response values and unsafe source transports', async () => {
-  const source = connection();
-  source.connection.readUrl = 'file:///private/file';
-  const f = await fixture((_path, index) => ({ body: index === 2 ? source : snapshot() }));
-  await expect(f.client.load()).rejects.toThrow('invalid_worker_response');
+it('rejects malformed response values and any source but Stream RTMPS playback', async () => {
+  for (const readUrl of [
+    'file:///private/file',
+    'srt://host:8890?streamid=read:match',
+    'rtmp://live.cloudflare.com/live/playkey',
+  ]) {
+    const source = connection();
+    source.connection.readUrl = readUrl;
+    const f = await fixture((_path, index) => ({ body: index === 2 ? source : snapshot() }));
+    await expect(f.client.load()).rejects.toThrow('invalid_worker_response');
+  }
   const bad = snapshot();
   bad.assignment.match.score.home = -1;
   const g = await fixture(() => ({ body: bad }));
@@ -186,21 +190,18 @@ it('carries the scorebug style, best-of and completed sets into the overlay', as
 
 it('takes the match destination from the latest snapshot and rejects non-RTMP outputs', async () => {
   const withOutput = (publishUrl: string | null) => {
-    const value = snapshot() as ReturnType<typeof snapshot> & {
-      assignment: { output?: { destinationId: string | null; publishUrl: string | null } };
-    };
+    const value = snapshot();
     value.assignment.output = { destinationId: publishUrl ? 'youtube' : null, publishUrl };
     return value;
   };
-  const destination = 'rtmps://a.rtmp.youtube.com/live2/private-stream-key';
   const f = await fixture((_path, index) => ({
     body: index === 2 ? connection() : withOutput(destination),
   }));
   expect((await f.client.load())?.publishUrl).toBe(destination);
-  const fallback = await fixture((_path, index) => ({
+  const none = await fixture((_path, index) => ({
     body: index === 2 ? connection() : withOutput(null),
   }));
-  expect((await fallback.client.load())?.publishUrl).toBeNull();
+  expect((await none.client.load())?.publishUrl).toBeNull();
   const unsafe = await fixture((_path, index) => ({
     body: index === 2 ? connection() : withOutput('file:///etc/passwd'),
   }));

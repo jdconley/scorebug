@@ -44,7 +44,7 @@ const assignmentSchema = z.object({
         scorebugStyle: z.enum(SCOREBUG_STYLES).optional().catch(undefined),
         broadcast: z.object({ desired, generation: integer }),
       }),
-      // Control planes from before destinations omit it: use OUTPUT_URL.
+      // The match's YouTube ingest; null until the match has a broadcast.
       output: z
         .object({
           destinationId: id.nullable(),
@@ -55,7 +55,7 @@ const assignmentSchema = z.object({
             .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol))
             .nullable(),
         })
-        .optional(),
+        .nullable(),
       media: z.object({
         gameId: id,
         broadcast: z.object({
@@ -78,7 +78,8 @@ const connectionSchema = z.object({
         .string()
         .max(4096)
         .url()
-        .refine((value) => ['srt:', 'rtmps:'].includes(new URL(value).protocol)),
+        // Cloudflare Stream's RTMPS playback of the match's live input.
+        .refine((value) => new URL(value).protocol === 'rtmps:'),
       source: z.object({
         ready: z.boolean(),
         inboundBytes: integer,

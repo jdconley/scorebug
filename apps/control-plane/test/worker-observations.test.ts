@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
-import { testConfig, phoneAuth } from './helpers.js';
+import { createTestApp, MEMBER_TOKEN, phoneAuth, SERVER_SECRET } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
 
 const stores: MatchStore[] = [];
@@ -10,11 +9,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 async function fixture() {
-  const config = testConfig();
-  const built = createApp(config);
-  const { app, matches } = built;
+  const built = createTestApp();
+  const { app, matches, config } = built;
   stores.push(matches);
-  const request = (path: string, token = config.HOME_TOKEN, body?: unknown) =>
+  const request = (path: string, token = config.workerToken, body?: unknown) =>
     app.request(path, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { ...phoneAuth(token), 'content-type': 'application/json' },
@@ -50,7 +48,7 @@ async function fixture() {
       },
     },
   });
-  const registration = await request('/v1/worker/sessions', config.HOME_TOKEN, {
+  const registration = await request('/v1/worker/sessions', config.workerToken, {
     workerId: 'mac',
     runId: 'run',
   });
@@ -66,7 +64,7 @@ async function fixture() {
     scoreRevision: 1,
   };
   const body = { workerId: 'mac', sessionId: session.sessionId, sequence: 1, observation };
-  const report = (value: unknown = body, token = config.HOME_TOKEN) =>
+  const report = (value: unknown = body, token = config.workerToken) =>
     request('/v1/worker/observations', token, value);
   const status = async () => (await request('/v1/matches/match/media/status', scorer.token)).json();
   return {
@@ -88,7 +86,7 @@ it('registers one current session per worker and retires replaced runs permanent
   expect(
     (
       await (
-        await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+        await f.request('/v1/worker/sessions', f.config.workerToken, {
           workerId: 'mac',
           runId: 'run',
         })
@@ -96,14 +94,14 @@ it('registers one current session per worker and retires replaced runs permanent
     ).sessionId,
   ).toBe(f.session.sessionId);
   expect((await f.report()).status).toBe(200);
-  const replaced = await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+  const replaced = await f.request('/v1/worker/sessions', f.config.workerToken, {
     workerId: 'mac',
     runId: 'replacement',
   });
   expect(replaced.status).toBe(200);
   expect((await f.status()).status.state).toBe('unknown');
   expect(await (await f.report()).json()).toEqual({ error: 'worker_session_retired' });
-  const retired = await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+  const retired = await f.request('/v1/worker/sessions', f.config.workerToken, {
     workerId: 'mac',
     runId: 'run',
   });
@@ -113,13 +111,13 @@ it('registers one current session per worker and retires replaced runs permanent
 it('uses scoped reads, worker-only writes, strict public telemetry and no durable mutations', async () => {
   const f = await fixture();
   const before = { match: f.matches.get('match'), media: f.matches.media.get('match') };
-  for (const token of [f.config.SERVER_SECRET, f.scorer.token, f.capture.token, 'bad']) {
+  for (const token of [SERVER_SECRET, MEMBER_TOKEN, f.scorer.token, f.capture.token, 'bad']) {
     expect((await f.report(f.body, token)).status).toBe(401);
     expect(
       (await f.request('/v1/worker/sessions', token, { workerId: 'mac', runId: 'other' })).status,
     ).toBe(401);
   }
-  for (const token of [f.config.SERVER_SECRET, f.config.HOME_TOKEN, 'bad'])
+  for (const token of [SERVER_SECRET, MEMBER_TOKEN, f.config.workerToken, 'bad'])
     expect((await f.request('/v1/matches/match/media/status', token)).status).toBe(401);
   expect((await f.request('/v1/matches/other/media/status', f.scorer.token)).status).toBe(401);
   expect((await f.request('/v1/matches/match/media/status', f.capture.token)).status).toBe(200);
@@ -152,7 +150,10 @@ it('rejects unknown sessions, wrong assignment or generation and unbounded/raw v
     expect(await response.json()).toEqual({ error: 'broadcast_changed' });
   }
   const otherSession = await (
-    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'other', runId: 'run' })
+    await f.request('/v1/worker/sessions', f.config.workerToken, {
+      workerId: 'other',
+      runId: 'run',
+    })
   ).json();
   expect(
     await (
@@ -230,7 +231,7 @@ it('rejects reordered and changed duplicate reports; permits counter resets only
 it('API restart forgets observations and a stop overrides the previous report', async () => {
   const f = await fixture();
   expect((await f.report()).status).toBe(200);
-  const restarted = createApp(f.config, { matches: f.matches });
+  const restarted = createTestApp({ matches: f.matches });
   expect(
     (
       await (
@@ -287,7 +288,7 @@ it('bounds sessions, sequences and required observation fields before accepting 
     { workerId: 'mac', runId: 'http://secret' },
     { workerId: 'mac', runId: 'run', token: 'secret' },
   ])
-    expect((await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, value)).status).toBe(400);
+    expect((await f.request('/v1/worker/sessions', f.config.workerToken, value)).status).toBe(400);
   for (const sequence of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1])
     expect((await f.report({ ...f.body, sequence })).status).toBe(400);
   const { reason: _, ...missingReason } = f.body.observation;

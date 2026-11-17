@@ -1,7 +1,0 @@
-{$CADDY_DOMAIN} {
-    # Empty by default: Caddy gets a public certificate automatically.
-    # install.sh sets CADDY_TLS="tls internal" for private test domains.
-    {$CADDY_TLS}
-    encode gzip
-    reverse_proxy control-plane:8787
-}

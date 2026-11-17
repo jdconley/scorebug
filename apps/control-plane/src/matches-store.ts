@@ -1,4 +1,11 @@
-import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomInt,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import type {
   CommandOutcome,
   InviteRedeemRequest,
@@ -19,7 +26,6 @@ import {
   INVITE_CODE_LENGTH,
   normalizeInviteCode,
 } from '@scorebug/protocol';
-import { AccountStore } from './account-store.js';
 import { canonical } from './canonical-json.js';
 import { MediaStore } from './media-store.js';
 import type { SqlDb } from './sql.js';
@@ -36,7 +42,6 @@ export type CreateMatch = {
   teams: Teams;
   rules: MatchRules;
   scorebugStyle?: ScorebugStyle | undefined;
-  destinationId?: string | undefined;
   recordOnly?: boolean | undefined;
 };
 const SCHEMA_VERSION = 5;
@@ -44,7 +49,7 @@ export const INVITE_TTL_MS = 6 * 60 * 60 * 1000;
 const NO_OUTPUT: MatchOutput = { destinationId: null, recordOnly: false };
 // Match rows are JSON documents: rows written before scorebugStyle existed lack
 // the field and read back as the default style, so no SQL migration is needed.
-// Rows from before destinations lack `output` and use the worker's OUTPUT_URL.
+// Rows from before match outputs lack `output` and read back as NO_OUTPUT.
 type StoredMatch = Omit<
   MatchSnapshot,
   | 'score'
@@ -70,8 +75,8 @@ type InviteRow = {
   revoked_at: number | null;
 };
 export type MatchStoreOptions = {
-  /** The worker's output for a match, when something other than an owner destination
-   * supplies it (the hosted team's YouTube ingest). Null falls back to destinations. */
+  /** The worker's output for a match: the team's YouTube ingest once the match has a
+   * broadcast. Null (or no option) means no output yet. */
   output?: (gameId: string) => WorkerOutputAssignment | null;
 };
 export class MatchStoreError extends Error {
@@ -106,7 +111,8 @@ function snapshot(match: StoredMatch): MatchSnapshot {
 /** Synchronous transactions serialize all commands, including competing processes. */
 export class MatchStore {
   readonly media: MediaStore;
-  readonly account: AccountStore;
+  /** Keys code hashes, so a copied database does not reveal short codes. */
+  private readonly codeKey: Buffer;
   constructor(
     private readonly db: SqlDb,
     private readonly credentialKey: string,
@@ -134,8 +140,8 @@ export class MatchStore {
           DROP TABLE IF EXISTS watch_pairings;
         `);
         MediaStore.migrate(this.db);
-        AccountStore.migrate(this.db);
         this.db.exec(`
+          CREATE TABLE IF NOT EXISTS server_keys(name TEXT PRIMARY KEY, value TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS match_invites(id TEXT PRIMARY KEY, game_id TEXT NOT NULL REFERENCES matches(id),
             code_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL, created_at INTEGER NOT NULL,
             expires_at INTEGER NOT NULL, revoked_at INTEGER);
@@ -146,12 +152,13 @@ export class MatchStore {
           "INSERT INTO schema_meta(key,value) VALUES('version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
           String(SCHEMA_VERSION),
         );
+        this.db.run(
+          "INSERT OR IGNORE INTO server_keys(name,value) VALUES('hmac',?)",
+          randomBytes(32).toString('base64url'),
+        );
       });
-      this.account = new AccountStore(this.db, {
-        transaction: (body) => this.transaction(body),
-        now: this.now,
-        destinationInUse: (id) => this.active()?.output.destinationId === id,
-      });
+      const key = db.get<{ value: string }>("SELECT value FROM server_keys WHERE name='hmac'")!;
+      this.codeKey = Buffer.from(key.value, 'base64url');
       this.media = new MediaStore(this.db, {
         transaction: (body) => this.transaction(body),
         match: (id) => this.get(id),
@@ -162,15 +169,7 @@ export class MatchStore {
           match.revision++;
           this.save(match);
         },
-        output: (id) => {
-          const supplied = options.output?.(id);
-          if (supplied) return supplied;
-          const output = this.get(id)?.output ?? NO_OUTPUT;
-          return {
-            destinationId: output.destinationId,
-            publishUrl: output.destinationId ? this.account.publishUrl(output.destinationId) : null,
-          };
-        },
+        output: (id) => options.output?.(id) ?? { destinationId: null, publishUrl: null },
         now: this.now,
       });
     } catch (error) {
@@ -183,6 +182,11 @@ export class MatchStore {
   }
   private transaction<T>(body: () => T): T {
     return this.db.transaction(body);
+  }
+  private codeHash(purpose: string, code: string): string {
+    return createHmac('sha256', this.codeKey)
+      .update(canonical([purpose, code]))
+      .digest('hex');
   }
   private load(id: string): StoredMatch {
     const row = this.db.get('SELECT data FROM matches WHERE id=?', id) as
@@ -222,16 +226,7 @@ export class MatchStore {
         return snapshot(match);
       }
       if (this.active()) throw new MatchStoreError('match_in_flight');
-      if (input.recordOnly && input.destinationId !== undefined)
-        throw new MatchStoreError('invalid_output');
-      if (input.destinationId !== undefined && !this.account.getDestination(input.destinationId))
-        throw new MatchStoreError('destination_not_found');
-      const output: MatchOutput = input.recordOnly
-        ? { destinationId: null, recordOnly: true }
-        : {
-            destinationId: input.destinationId ?? this.account.defaultDestinationId(),
-            recordOnly: false,
-          };
+      const output: MatchOutput = { destinationId: null, recordOnly: input.recordOnly === true };
       const match: StoredMatch = {
         id: input.id,
         createdAt: new Date(this.now()).toISOString(),
@@ -269,7 +264,7 @@ export class MatchStore {
     deviceId: string,
     role: MatchCredential['role'],
   ): MatchCredential {
-    // Existing installation-authorized joins retain their stable token domain.
+    // Deterministic per match, device and role, so a retried create or join gets the same token.
     const token = createHmac('sha256', this.credentialKey)
       .update(canonical(['scorebug-scoped-credential-v1', gameId, deviceId, role]))
       .digest('base64url');
@@ -328,7 +323,7 @@ export class MatchStore {
         let code = '';
         for (let i = 0; i < INVITE_CODE_LENGTH; i++)
           code += INVITE_CODE_ALPHABET[randomInt(INVITE_CODE_ALPHABET.length)];
-        const hash = this.account.codeHash('match-invite', code);
+        const hash = this.codeHash('match-invite', code);
         if (this.db.get('SELECT 1 FROM match_invites WHERE code_hash=?', hash)) continue;
         const id = randomUUID();
         this.db.run(
@@ -386,7 +381,7 @@ export class MatchStore {
     return this.transaction(() => {
       const code = normalizeInviteCode(input.code);
       if (!code) throw new MatchStoreError('invite_invalid');
-      const hash = this.account.codeHash('match-invite', code);
+      const hash = this.codeHash('match-invite', code);
       const row = this.db.get('SELECT * FROM match_invites WHERE code_hash=?', hash) as
         | InviteRow
         | undefined;

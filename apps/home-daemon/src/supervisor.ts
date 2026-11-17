@@ -10,7 +10,7 @@ export type WorkerInput = {
   readUrl: string;
   sourceReady: boolean;
   outputId: string;
-  /** The match's destination from the control plane (contains the stream key); null = OUTPUT_URL. */
+  /** The match's destination from the control plane (contains the stream key); null = none yet. */
   publishUrl?: string | null;
 };
 export type WorkerState = {
@@ -229,8 +229,8 @@ export class WorkerSupervisor {
       clearTimeout(this.timer);
       this.emit('stopping', reason, active.input);
       if (drain) {
-        // The relay rejects new admissions while the current publisher finishes.
-        // Keep consuming its tail; the process owner still bounds forced teardown.
+        // Let the current attempt publish the source's tail until it ends on its own;
+        // the drain timeout still bounds forced teardown.
         active.drainTimer = setTimeout(() => this.signalStop(active), this.drainTimeoutMs);
         active.drainTimer.unref?.();
       }

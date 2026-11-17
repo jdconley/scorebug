@@ -1,11 +1,9 @@
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { SqlDb, SqlValue } from './sql.js';
+import type { SqlDb, SqlValue } from '../src/sql.js';
 
-/** `node:sqlite` with the self-hosted server's durability PRAGMAs. */
+/** The stores' SQL surface on `node:sqlite`, for tests. A file path lets two connections
+ * share one database, as concurrent requests would. */
 export function openNodeSqlite(path: string): SqlDb {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   try {
     db.exec(

@@ -3,14 +3,12 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import type { MatchCredential } from '@scorebug/protocol';
-import { joinLink as protocolJoinLink, SCOREBUG_STYLES } from '@scorebug/protocol';
-import { bearerToken, ownerAuth, resolveOwner } from '../auth.js';
-import type { Config } from '../config.js';
+import { SCOREBUG_STYLES, type MatchCredential } from '@scorebug/protocol';
+import type { RouteConfig } from '../config.js';
 import { mediaRoutes } from './media.js';
-import { inviteRoutes } from './account.js';
+import { inviteRoutes } from './invites.js';
 import { defaultShortName } from '../scoring.js';
-import type { IngestLifecycle } from '../relay-lifecycle.js';
+import type { IngestLifecycle } from '../media-lifecycle.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
 const id = z
@@ -61,13 +59,16 @@ const create = z
     teams: z.object({ home: team, away: team }).strict(),
     rules,
     scorebugStyle: z.enum(SCOREBUG_STYLES).optional(),
-    /** Stream to this owner destination; omitted uses the default destination. */
-    destinationId: z.uuid().optional(),
+    /**
+     * Retired owner destinations. Released apps still have the field and leave it out; there
+     * are no destinations, so a value is refused as destination_not_found.
+     */
+    destinationId: z.uuid().nullish(),
     /** No broadcast at all: the phone only records. */
     recordOnly: z.boolean().optional(),
   })
   .strict()
-  .refine((value) => !(value.recordOnly && value.destinationId !== undefined), {
+  .refine((value) => !(value.recordOnly && value.destinationId != null), {
     message: 'recordOnly and destinationId are mutually exclusive',
   });
 const operation = z.discriminatedUnion('type', [
@@ -99,16 +100,15 @@ type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 
 /**
  * Who may create matches, read the active match and join one (bootstrap), who may mint
- * join codes, and what a join link looks like. The self-hosted server trusts enrolled owner
- * phones; the hosted TeamObject trusts the team member the Worker vouches for.
+ * join codes, and what a join link looks like. The TeamObject trusts the team member the
+ * Worker vouches for.
  */
 export type MatchAccess = {
   /** Guards create / active / join and broadcast commands; 401 if absent. */
   bootstrap: MiddlewareHandler;
-  /** Invite issuer for owner-level callers, else undefined. */
+  /** Invite issuer for member-level callers, else undefined. */
   issuer(c: Context): string | undefined;
-  /** Null when the server has no public URL to build links from. */
-  joinLink(code: string): string | null;
+  joinLink(code: string): string;
   /** Called after a join code is minted or revoked, so it can be routed elsewhere. */
   onInvite?: {
     issued(i: { inviteId: string; code: string; gameId: string; expiresAt: string }): Promise<void>;
@@ -116,23 +116,11 @@ export type MatchAccess = {
   };
 };
 
-/** Today's self-hosted behavior: owner device tokens and scorebug:// join links. */
-export function ownerAccess(config: Config, store: MatchStore): MatchAccess {
-  return {
-    bootstrap: ownerAuth(store.account),
-    issuer: (c) => {
-      const owner = resolveOwner(bearerToken(c), store.account);
-      return owner ? `device:${owner.deviceId}` : undefined;
-    },
-    joinLink: (code) => (config.PUBLIC_URL ? protocolJoinLink(config.PUBLIC_URL, code) : null),
-  };
-}
-
 export function matchesRoutes(
-  config: Config,
+  config: RouteConfig,
   store: MatchStore,
   access: MatchAccess,
-  relayLifecycle?: IngestLifecycle,
+  ingest: IngestLifecycle,
   observations?: WorkerObservations,
 ) {
   const app = new Hono<Env>();
@@ -149,7 +137,8 @@ export function matchesRoutes(
     await next();
   });
   app.post('/', bootstrap, zValidator('json', create), (c) => {
-    const body = c.req.valid('json');
+    const { destinationId, ...body } = c.req.valid('json');
+    if (destinationId != null) throw new MatchStoreError('destination_not_found');
     const snapshot = store.create(body);
     const credential = store.issueCredential(snapshot.id, body.deviceId, 'score');
     return c.json({ snapshot, credential, serverTime: new Date().toISOString() }, 201);
@@ -193,7 +182,7 @@ export function matchesRoutes(
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
   app.route('/:id/invites', inviteRoutes(store, access));
-  app.route('/:id/media', mediaRoutes(config, store, bootstrap, relayLifecycle, observations));
+  app.route('/:id/media', mediaRoutes(config, store, bootstrap, ingest, observations));
   app.onError((error, c) => {
     if (error instanceof MatchStoreError)
       return c.json(

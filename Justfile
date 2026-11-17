@@ -20,28 +20,16 @@ typecheck:
 test:
     pnpm test
 
-test-container:
-    pnpm test:container
-
-test-local:
-    pnpm test:local
-
-test-scoring:
-    pnpm test:scoring
-
-test-relay:
-    pnpm test:relay
+test-worker-container:
+    pnpm test:worker-container
 
 format:
     pnpm format
 
 # --- Apps ---
 
-api-dev:
-    pnpm dev:api
-
-control-plane-dev:
-    pnpm --filter @scorebug/control-plane dev
+worker-dev:
+    pnpm --filter @scorebug/control-plane dev:worker
 
 home-daemon-dev:
     pnpm --filter @scorebug/home-daemon dev

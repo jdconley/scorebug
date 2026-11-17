@@ -6,11 +6,11 @@ import {
   type WorkerObservationRequest,
   type WorkerObservationResponse,
 } from '@scorebug/protocol';
-import type { Config } from '../config.js';
+import type { RouteConfig } from '../config.js';
 import { MatchStore } from '../matches-store.js';
 import type { MediaStore } from '../media-store.js';
 import { RedeemGuard } from '../rate-limit.js';
-import { inviteRedeemRoutes } from '../routes/account.js';
+import { inviteRedeemRoutes } from '../routes/invites.js';
 import { matchesRoutes, type MatchAccess } from '../routes/matches.js';
 import { workerRoutes } from '../routes/media.js';
 import { durableObjectSql } from '../sql-durable.js';
@@ -168,14 +168,12 @@ export class TeamObject extends DurableObject<Env> {
     const observations = new HostedObservations(this.store.media, (gameId) =>
       hosted.onOutput(gameId),
     );
-    // Only the fields the match and worker routes read; the rest belong to the self-hosted
-    // server. One fixed worker per match container; the intercept is its authentication.
-    const config = {
-      PUBLIC_URL: env.PUBLIC_URL,
-      WORKER_ID,
-      OUTPUT_ID,
-      HOME_TOKEN: WORKER_TOKEN,
-    } as Config;
+    // One fixed worker per match container; the intercept is its authentication.
+    const config: RouteConfig = {
+      workerToken: WORKER_TOKEN,
+      workerId: WORKER_ID,
+      outputId: OUTPUT_ID,
+    };
     const inner = new Hono();
     inner.route(
       '/v1/matches',

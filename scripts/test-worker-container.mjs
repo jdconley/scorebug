@@ -37,7 +37,7 @@ try {
       name,
       '--network',
       'none',
-      // Same unprivileged settings as infra/vps: bundled fonts/assets must be readable.
+      // Run unprivileged: bundled fonts and assets must be readable.
       '--user',
       '1000:1000',
       '--cap-drop',
@@ -49,13 +49,9 @@ try {
       '-e',
       'HOME_TOKEN=qa-home-token-not-production',
       '-e',
-      'WORKER_ID=container-fixture',
+      'WORKER_ID=match',
       '-e',
-      'OUTPUT_ID=local-sink',
-      '-e',
-      'OUTPUT_URL=rtmp://127.0.0.1:1935/live/fixture',
-      '-e',
-      'ENCODER=software',
+      'OUTPUT_ID=youtube',
       image,
     ],
     'worker container startup',
@@ -85,7 +81,7 @@ try {
     import { createLogger } from './apps/home-daemon/dist/logger.js';
     const exec = promisify(execFile);
     const protocols = await exec('ffmpeg', ['-hide_banner', '-protocols']);
-    assert.match(protocols.stdout, /^\\s+srt\\s*$/m);
+    assert.match(protocols.stdout, /^\\s+rtmps\\s*$/m);
     await exec('ffmpeg', ['-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=30',
       '-f','lavfi','-i','sine=sample_rate=48000','-t','2','-c:v','libx264','-preset','ultrafast',
       '-c:a','aac','/tmp/source.mp4']);
@@ -99,15 +95,16 @@ try {
     // Pace the finite input like a live publisher. With copyts, a clip finishing
     // before the first periodic progress report may only report out_time_us=0.
     await writeFile('/tmp/ffmpeg-paced', '#!/bin/sh\\nexec ffmpeg -re "$@"\\n', { mode: 0o700 });
+    // The FLV FFmpeg would publish over RTMPS, written to a file to inspect.
     let progressed = false;
     const pipeline = startPipeline({ gameId:'image-fixture', pullUrl:'/tmp/source.mp4',
-      publishUrl:'/tmp/output.flv', recordingPath:'/tmp/overlay.mp4', scoreFile:'/tmp/scorebug.json', nvenc:false, encoder:'software',
+      publishUrl:'/tmp/output.flv', scoreFile:'/tmp/scorebug.json',
       profile:{width:1280,height:720,fps:30,bitrateKbps:3000}, ffmpegPath:'/tmp/ffmpeg-paced' }, createLogger('error'), {
         onProgress: p => { if (p.frame > 0 && p.outTimeUs > 0) progressed = true; }
       });
     const exited = await pipeline.waitExit();
     assert.equal(exited.code, 0); assert.ok(progressed);
-    for (const path of ['/tmp/output.flv', '/tmp/overlay.mp4']) {
+    const path = '/tmp/output.flv';
     const probe = JSON.parse((await exec('ffprobe', ['-v','error','-show_streams','-of','json',path])).stdout);
     assert.ok(probe.streams.some(s => s.codec_type === 'video' && s.width === 1280 && s.height === 720));
     assert.ok(probe.streams.some(s => s.codec_type === 'audio'));
@@ -118,7 +115,6 @@ try {
       const box = await exec('ffmpeg', ['-v','error',...position,'-i',path,'-vf','crop=40:30:300:56,format=gray',
         '-frames:v','1','-f','rawvideo','-'], { encoding: 'buffer' });
       assert.ok([...box.stdout].filter(v => v > 200).length > 600, 'scorebug missing from ' + path);
-    }
     }
     console.log('compiled_pipeline_decoded');
   `;

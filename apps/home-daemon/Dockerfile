@@ -1,5 +1,5 @@
-# Linux CPU image; no CUDA runtime is required for the default software encoder.
-# NVENC on other hosts still requires actual driver/toolkit and media qualification.
+# The hosted match container: `wrangler deploy` builds this image for the control
+# plane's per-match Cloudflare Container. Linux CPU image; FFmpeg encodes with x264.
 # No system fonts: the worker rasterizes the scorebug itself (resvg + the
 # Barlow Condensed files bundled in apps/home-daemon/assets/fonts, SIL OFL 1.1).
 #

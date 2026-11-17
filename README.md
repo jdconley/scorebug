@@ -15,7 +15,6 @@ iPhone app is on TestFlight. Access is invite-only, and accounts are added by ha
 
 The full path works in production: sign in with Google, connect a YouTube channel
 once, tap **Go live**, and the match appears on YouTube with the score drawn on it.
-The hosted service is the only one the current iPhone app supports.
 
 ## How it works
 
@@ -44,14 +43,12 @@ See [docs/architecture.md](docs/architecture.md) for details and
 
 ```text
 ios/                  iPhone and Apple Watch apps (filming, recording, scoring)
-apps/control-plane/   API: the Cloudflare Worker, plus a Node + SQLite build for self-hosting
-apps/home-daemon/     Broadcast worker: pulls the video, burns in the score, pushes RTMP(S)
+apps/control-plane/   API: the Cloudflare Worker (Hono, D1, Durable Objects)
+apps/home-daemon/     Broadcast worker: the match container that burns in the score
 packages/protocol/    Shared TypeScript contracts and JSON fixtures
-vendor/MediaMTX/      Pinned MediaMTX relay with two small patches (self-hosting)
 vendor/HaishinKit/    Pinned HaishinKit streaming library for the iPhone app
-infra/                Local fixture config and the self-hosted deployment
-scripts/              Integration tests run in CI
-docs/                 Architecture, API, development, field-test and self-hosting guides
+scripts/              Contract and container tests run in CI
+docs/                 Architecture, API, development and field-test guides
 ```
 
 ## Develop
@@ -64,35 +61,27 @@ pnpm install --frozen-lockfile
 pnpm test
 ```
 
-Run the API locally with a relay and a mock RTMP sink:
+Run the Worker locally:
 
 ```sh
-docker compose -f docker-compose.dev.yml build ingest   # first time only
-pnpm local:up
-pnpm dev:api                                            # http://127.0.0.1:18787
+cp apps/control-plane/.dev.vars.example apps/control-plane/.dev.vars
+pnpm --filter @scorebug/control-plane dev:worker          # http://localhost:8787
 ```
 
-See [docs/development.md](docs/development.md) for the worker, the iPhone apps, and
-the integration tests, and [ios/README.md](ios/README.md) for building the apps.
-
-## Self-hosting
-
-The repo also has a self-hosted server: a Node + SQLite API, a MediaMTX relay and the
-same broadcast worker, set up by one installer script. The current iPhone app can't
-connect to it, because the app signs in with Google and uses team routes only the
-hosted service serves. See [docs/self-hosting.md](docs/self-hosting.md).
+See [docs/development.md](docs/development.md) for local sign-in, going live, and
+the tests, and [ios/README.md](ios/README.md) for building the apps.
 
 ## Contributing
 
-Issues and pull requests are welcome. CI runs the TypeScript tests and the Docker
-images on every pull request, and the iPhone and Watch builds on pull requests that
+Issues and pull requests are welcome. CI runs the TypeScript tests and the match
+container image on every pull request, and the iPhone and Watch builds on pull requests that
 touch `ios/`.
 
 ## License
 
 [MIT](LICENSE) © Conley Chaos LLC.
 
-Vendored code keeps its own license: [MediaMTX](vendor/MediaMTX/LICENSE) (MIT) and
-[HaishinKit](vendor/HaishinKit/LICENSE.md) (BSD 3-Clause).
+Vendored [HaishinKit](vendor/HaishinKit/LICENSE.md) keeps its own license (BSD
+3-Clause).
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).

@@ -1,5 +1,5 @@
-/** The narrow synchronous SQL surface the stores need. Node's `node:sqlite` backs it in
- * tests and the self-hosted server; Durable Object SQLite backs it in production. */
+/** The narrow synchronous SQL surface the stores need. Durable Object SQLite backs it in
+ * production; Node's `node:sqlite` backs it in the Node tests (`test/sqlite.ts`). */
 export type SqlValue = string | number | null | Uint8Array;
 
 export interface SqlDb {
