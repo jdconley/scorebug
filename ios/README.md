@@ -25,12 +25,11 @@ The app talks to the hosted service at `https://scorebug.live`, the Worker in
 `apps/control-plane/src/worker`. The app never says home or away: the New match sheet and the
 scoring screens use Team 1, Team 2 and the team names.
 
-1. **Sign in.** **Sign in with Google** opens Google in a system sign-in sheet. Scorebug is in
-   private beta: an account that is not on the beta list and has no team invite sees "Scorebug is
-   in private beta". **Join with a code** scores one match without an account.
+1. **Sign in.** **Sign in with Google** opens Google in a system sign-in sheet. Any Google account
+   can sign in. **Join with a code** scores one match without an account.
 2. **Home.** Each of your teams, with its open match (**Film** or **Score**) and **New match**. Below
-   them: **Join with a code**, the last match and **Recordings**. Accounts allowed to create teams
-   see **Create team** (or **New team** once they have one). The gear opens Settings.
+   them: **Join with a code**, the last match and **Recordings**. With no team yet, Home shows
+   **Create team**; once you have one, **New team** is at the bottom. The gear opens Settings.
 3. **Team.** Tap a team on Home. The owner connects the team's YouTube channel once with **Connect a
    YouTube channel**, and can switch channels, **Reconnect YouTube**, or **Check again** while a new
    channel waits out YouTube's 24 hours before it can stream. Members go live on that channel with no
@@ -120,7 +119,7 @@ the phone.
 
 ### Screenshot tour against a local Worker
 
-`AppUITests/ScreenTourTests.swift` signs in, hits the private beta screen, creates a team, connects
+`AppUITests/ScreenTourTests.swift` signs in with a new account, creates a team, connects
 YouTube, invites a member, joins a second team by code, scores its match and goes live. It saves a
 screenshot of each screen. It runs against `AppUITests/LocalWorker`: the real Worker app with a
 stand-in Google that signs in as whoever `POST /dev/identity` (`{"email": …, "name": …}`) names, and
@@ -135,7 +134,6 @@ cd ios/AppUITests/LocalWorker
 W=../../../apps/control-plane/node_modules/.bin/wrangler
 rm -rf .state   # each tour starts from an empty database
 $W d1 migrations apply scorebug-dev --local --persist-to .state
-$W d1 execute scorebug-dev --local --persist-to .state --file seed.sql
 $W dev --ip 127.0.0.1 --port 8787 --persist-to .state
 ```
 

@@ -8,7 +8,8 @@ We aim to acknowledge reports within 72 hours.
 
 ## What the service assumes
 
-- People sign in with Google. Access is invite-only, by email, during the beta.
+- People sign in with Google. Any Google account with a verified email can sign
+  in and create teams; team data is visible only to that team's members.
 - YouTube access is granted per team through Google OAuth. Refresh tokens are
   encrypted at rest and never sent to the phone.
 - Each live match gets its own Cloudflare Stream input, deleted when the match

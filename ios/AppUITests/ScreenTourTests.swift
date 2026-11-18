@@ -49,18 +49,11 @@ final class ScreenTourTests: XCTestCase {
     }
 
     func testHostedTour() throws {
-        // Not on the beta list.
-        try identity("stranger@example.com", name: "Sam Stranger")
-        var app = launch(reset: true)
+        // JD: a new account, no team yet.
+        try identity("jd@example.com", name: "JD Conley")
+        let app = launch(reset: true)
         XCTAssertTrue(app.buttons["signIn.google"].waitForExistence(timeout: 15))
         shot(app, "01-sign-in")
-        signIn(app)
-        XCTAssertTrue(app.staticTexts["beta.title"].waitForExistence(timeout: 20))
-        shot(app, "02-private-beta")
-        app.buttons["Back"].tap()
-
-        // JD: on the beta list, can create teams, no team yet.
-        try identity("jd@example.com", name: "JD Conley")
         signIn(app)
         XCTAssertTrue(app.buttons["home.createTeam"].waitForExistence(timeout: 20))
         shot(app, "03-home-no-team")

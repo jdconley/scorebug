@@ -49,7 +49,7 @@ export const connectionView = (row: ConnectionRow): ConnectionView => ({
   updatedAt: iso(row.updated_at),
 });
 
-/** D1 access for YouTube connections, grants, team channels and the beta-wide live cap. */
+/** D1 access for YouTube connections, grants, team channels and the service-wide live cap. */
 export class Channels {
   constructor(
     private readonly db: D1Database,
@@ -230,7 +230,7 @@ export class Channels {
 
   /**
    * Claims (or renews) a live slot for the match. False when `cap` other matches already
-   * hold fresh slots: the beta cost guard.
+   * hold fresh slots: the service-wide live cap.
    */
   async claimSlot(gameId: string, teamId: string, cap: number): Promise<boolean> {
     const now = this.now();

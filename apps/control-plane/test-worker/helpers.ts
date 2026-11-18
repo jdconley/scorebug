@@ -84,14 +84,6 @@ export function harness() {
   return { app, google, clock, call, json, auth, callback, signIn };
 }
 
-export async function allow(email: string, canCreateTeams = true) {
-  await env.DB.prepare(
-    'INSERT INTO beta_access(email,can_create_teams,added_by,added_at) VALUES(?,?,?,?)',
-  )
-    .bind(email.trim().toLowerCase(), canCreateTeams ? 1 : 0, 'test', Date.now())
-    .run();
-}
-
 export async function count(table: string): Promise<number> {
   const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
   return row?.n ?? 0;
@@ -100,7 +92,6 @@ export async function count(table: string): Promise<number> {
 type Json = Record<string, unknown>;
 /** A signed-in owner with a team, for tests that need one. */
 export async function ownerWithTeam(h: Harness, email = 'owner@example.com', name = 'Wildcats') {
-  await allow(email);
   const owner = await h.signIn(email);
   const created = await h.json('/v1/teams', { name }, { headers: h.auth(owner.token) });
   if (created.status !== 201) throw new Error(`create team: ${created.status}`);

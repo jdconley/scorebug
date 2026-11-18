@@ -15,8 +15,6 @@ actor FakeScorebugServer {
         var team: Team
         var roles: [String: TeamRole] // personId → role
     }
-    /// Email → can create teams.
-    var beta: [String: Bool] = ["jd@example.com": true]
     var people: [String: Person] = [:] // personId → person
     var sessions: [String: String] = [:] // token → personId
     var revokedSessions: [String] = []
@@ -45,7 +43,6 @@ actor FakeScorebugServer {
         matches[snapshot.id] = Match(snapshot: snapshot)
         matchTeams[snapshot.id] = teamId
     }
-    func allow(_ email: String, canCreateTeams: Bool = false) { beta[email] = canCreateTeams }
     /// A signed-in person with a session token, on `teamId` if given.
     @discardableResult func signedIn(_ email: String, token: String, team teamId: String? = nil, role: TeamRole = .owner) -> Person {
         let person = person(for: email)
@@ -100,9 +97,6 @@ actor FakeScorebugServer {
         let challenge = items.first { $0.name == "challenge" }?.value ?? ""
         let invite = items.first { $0.name == "invite" }?.value.flatMap(TeamInviteCode.normalize)
         let link = invite.flatMap { teamInvites[$0] }.flatMap { $0.email == nil || $0.email == email ? $0 : nil }
-        let existing = people.values.first { $0.email == email }
-        let member = existing.map { person in teams.values.contains { $0.roles[person.id] != nil } } ?? false
-        guard beta[email] != nil || member || link != nil else { return URL(string: "scorebug://auth?status=not_in_beta")! }
         let person = person(for: email)
         if let link { addTeam(link.teamId, name: teams[link.teamId]?.team.name ?? "Team", member: person.id, role: teams[link.teamId]?.roles[person.id] ?? .member) }
         let ticket = String(repeating: "t", count: 40) + String(format: "%03d", tickets.count)
@@ -162,10 +156,9 @@ actor FakeScorebugServer {
             let mine = teams.values.sorted { $0.team.id < $1.team.id }.compactMap { team in
                 team.roles[person.id].map { TeamMembership(team: team.team, role: $0) }
             }
-            return (200, ["person": encode(person), "canCreateTeams": beta[person.email] ?? false, "teams": encode(mine), "serverTime": Self.now()])
+            return (200, ["person": encode(person), "teams": encode(mine), "serverTime": Self.now()])
         case ("POST", ["teams"]):
             guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
-            guard beta[person.email] == true else { return (403, ["error": "cannot_create_teams"]) }
             let id = "team-\(teams.count + 1)"
             addTeam(id, name: body["name"] as? String ?? "", member: person.id, role: .owner)
             return (201, ["team": encode(teams[id]!.team), "role": "owner", "serverTime": Self.now()])

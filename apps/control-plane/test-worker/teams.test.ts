@@ -1,14 +1,18 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
-import { allow, harness, invite, ownerWithTeam, type Harness } from './helpers.js';
+import { harness, invite, ownerWithTeam, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeEach(() => {
   h = harness();
 });
 
+async function expectNoTeams(token: string) {
+  const me = await h.call('/v1/me', { headers: h.auth(token) });
+  expect(((await me.json()) as { teams: unknown[] }).teams).toEqual([]);
+}
+
 it('owner creates a team', async () => {
-  await allow('owner@example.com');
   const { token } = await h.signIn('owner@example.com');
   const response = await h.json(
     '/v1/teams',
@@ -40,7 +44,6 @@ it('owner creates a team', async () => {
 });
 
 it('rejects invalid team fields', async () => {
-  await allow('owner@example.com');
   const { token } = await h.signIn('owner@example.com');
   for (const body of [
     { name: '' },
@@ -50,12 +53,11 @@ it('rejects invalid team fields', async () => {
     expect((await h.json('/v1/teams', body, { headers: h.auth(token) })).status).toBe(400);
 });
 
-it('person without can_create_teams cannot create', async () => {
-  await allow('parent@example.com', false);
+it('anyone signed in can create a team', async () => {
   const { token } = await h.signIn('parent@example.com');
-  const response = await h.json('/v1/teams', { name: 'Nope' }, { headers: h.auth(token) });
-  expect(response.status).toBe(403);
-  expect(await response.json()).toEqual({ error: 'cannot_create_teams' });
+  const response = await h.json('/v1/teams', { name: 'Club 12' }, { headers: h.auth(token) });
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({ team: { name: 'Club 12' }, role: 'owner' });
 });
 
 it('owner renames a team', async () => {
@@ -73,7 +75,6 @@ it('owner renames a team', async () => {
 
 it('non-member gets 404 for a team', async () => {
   const owner = await ownerWithTeam(h);
-  await allow('other@example.com');
   const other = await h.signIn('other@example.com');
   const response = await h.call(`/v1/teams/${owner.teamId}`, { headers: h.auth(other.token) });
   expect(response.status).toBe(404);
@@ -98,7 +99,7 @@ it('member cannot invite', async () => {
   expect(body.invites).toBeUndefined();
 });
 
-it('link invite lets an unlisted person in', async () => {
+it('link invite joins the team at sign-in', async () => {
   const owner = await ownerWithTeam(h);
   const created = await invite(h, owner.token, owner.teamId);
   expect(created.code).toMatch(/^[2-9A-Z]{4}-[2-9A-Z]{4}$/);
@@ -107,10 +108,7 @@ it('link invite lets an unlisted person in', async () => {
   expect(redirect.searchParams.get('status')).toBe('ok');
   const member = await h.signIn('parent@example.com');
   const me = await h.call('/v1/me', { headers: h.auth(member.token) });
-  expect(await me.json()).toMatchObject({
-    canCreateTeams: false,
-    teams: [{ id: owner.teamId, role: 'member' }],
-  });
+  expect(await me.json()).toMatchObject({ teams: [{ id: owner.teamId, role: 'member' }] });
   const detail = await h.call(`/v1/teams/${owner.teamId}`, { headers: h.auth(owner.token) });
   const body = (await detail.json()) as { invites: Record<string, unknown>[] };
   expect(body.invites).toHaveLength(1);
@@ -130,10 +128,9 @@ it('email invite auto-accepts on first sign-in', async () => {
 it('email invite rejects another email', async () => {
   const owner = await ownerWithTeam(h);
   const { code } = await invite(h, owner.token, owner.teamId, { email: 'parent@example.com' });
-  // A link carrying someone else's invite does not let a stranger in.
-  const { redirect } = await h.callback('stranger@example.com', { invite: code });
-  expect(redirect.searchParams.get('status')).toBe('not_in_beta');
-  await allow('other@example.com');
+  // A link carrying someone else's invite signs a stranger in without joining the team.
+  const stranger = await h.signIn('stranger@example.com', { invite: code });
+  await expectNoTeams(stranger.token);
   const other = await h.signIn('other@example.com');
   const response = await h.json(
     '/v1/team-invites/accept',
@@ -147,7 +144,6 @@ it('email invite rejects another email', async () => {
 it('accept joins an existing person and is idempotent', async () => {
   const owner = await ownerWithTeam(h);
   const { code } = await invite(h, owner.token, owner.teamId);
-  await allow('parent@example.com', false);
   const parent = await h.signIn('parent@example.com');
   for (let i = 0; i < 2; i++) {
     const response = await h.json(
@@ -177,9 +173,8 @@ it('revoked invite is invalid', async () => {
   expect(
     ((await revoked.json()) as { invite: { revokedAt: string | null } }).invite.revokedAt,
   ).not.toBeNull();
-  const { redirect } = await h.callback('parent@example.com', { invite: created.code });
-  expect(redirect.searchParams.get('status')).toBe('not_in_beta');
-  await allow('other@example.com');
+  const parent = await h.signIn('parent@example.com', { invite: created.code });
+  await expectNoTeams(parent.token);
   const other = await h.signIn('other@example.com');
   const response = await h.json(
     '/v1/team-invites/accept',
@@ -194,8 +189,8 @@ it('expired invite is invalid', async () => {
   const owner = await ownerWithTeam(h);
   const { code } = await invite(h, owner.token, owner.teamId, { expiresInDays: 1 });
   h.clock.now += 24 * 60 * 60 * 1000 + 1;
-  const { redirect } = await h.callback('parent@example.com', { invite: code });
-  expect(redirect.searchParams.get('status')).toBe('not_in_beta');
+  const parent = await h.signIn('parent@example.com', { invite: code });
+  await expectNoTeams(parent.token);
 });
 
 it('invite expiry must be 1-30 days', async () => {
@@ -234,11 +229,10 @@ it('member can leave', async () => {
   expect(
     (await h.call(`/v1/teams/${owner.teamId}`, { headers: h.auth(member.token) })).status,
   ).toBe(404);
-  // Leaving revokes the email invite: signing in again neither rejoins nor gets in.
-  const again = await h.callback('parent@example.com');
-  expect(again.redirect.searchParams.get('status')).toBe('not_in_beta');
-  const me = await h.call('/v1/me', { headers: h.auth(member.token) });
-  expect(((await me.json()) as { teams: unknown[] }).teams).toEqual([]);
+  // Leaving revokes the email invite: signing in again does not rejoin.
+  const again = await h.signIn('parent@example.com');
+  await expectNoTeams(again.token);
+  await expectNoTeams(member.token);
 });
 
 it('a member cannot remove someone else', async () => {

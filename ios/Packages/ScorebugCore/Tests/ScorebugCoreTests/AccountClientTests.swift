@@ -32,7 +32,6 @@ final class AccountClientTests: XCTestCase {
     func testSignInCallbackStatuses() throws {
         let ticket = String(repeating: "a", count: 40) + "_-Z"
         XCTAssertEqual(SignInCallback(url: try XCTUnwrap(URL(string: "scorebug://auth?status=ok&ticket=\(ticket)"))), .ok(ticket: ticket))
-        XCTAssertEqual(SignInCallback(url: try XCTUnwrap(URL(string: "scorebug://auth?status=not_in_beta"))), .notInBeta)
         XCTAssertEqual(SignInCallback(url: try XCTUnwrap(URL(string: "scorebug://auth?status=cancelled"))), .cancelled)
         XCTAssertEqual(SignInCallback(url: try XCTUnwrap(URL(string: "scorebug://auth?status=error"))), .error)
         XCTAssertEqual(SignInCallback(url: try XCTUnwrap(URL(string: "scorebug://auth?status=future"))), .error)
@@ -84,13 +83,12 @@ final class AccountClientTests: XCTestCase {
     }
 
     func testMeDecodesTeamsAndRoles() async throws {
-        let body = ##"{"person":\##(person),"canCreateTeams":true,"teams":[{"id":"t1","name":"Cascade 14 Black","shortName":"CASCADE","color":"#2563EB","role":"owner"}],"serverTime":"t"}"##
+        let body = ##"{"person":\##(person),"teams":[{"id":"t1","name":"Cascade 14 Black","shortName":"CASCADE","color":"#2563EB","role":"owner"}],"serverTime":"t"}"##
         let client = try client(status: 200, body: body) { request in
             XCTAssertEqual(request.url?.path, "/v1/me")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session")
         }
         let me = try await client.me(token: "session")
-        XCTAssertTrue(me.canCreateTeams)
         XCTAssertEqual(me.teams, [TeamMembership(id: "t1", name: "Cascade 14 Black", shortName: "CASCADE", color: "#2563EB", role: .owner)])
     }
 

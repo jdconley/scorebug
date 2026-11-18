@@ -79,10 +79,6 @@ export class Directory {
 
   // ----------------------------------------------------------------- people
 
-  personBySub(sub: string): Promise<PersonRow | null> {
-    return this.db.prepare('SELECT * FROM people WHERE google_sub=?').bind(sub).first<PersonRow>();
-  }
-
   async person(id: string): Promise<Person | null> {
     const row = await this.db
       .prepare('SELECT * FROM people WHERE id=?')
@@ -111,50 +107,6 @@ export class Directory {
       )
       .first<PersonRow>();
     return personView(row!);
-  }
-
-  // ------------------------------------------------------------ beta access
-
-  async betaAccess(email: string): Promise<{ canCreateTeams: boolean } | null> {
-    // Rows added by hand (wrangler d1 execute) may not be normalized; compare normalized.
-    const row = await this.db
-      .prepare(
-        'SELECT can_create_teams FROM beta_access WHERE lower(trim(email))=? ORDER BY can_create_teams DESC LIMIT 1',
-      )
-      .bind(normalizeEmail(email))
-      .first<{ can_create_teams: number }>();
-    return row ? { canCreateTeams: row.can_create_teams === 1 } : null;
-  }
-
-  async listBeta(): Promise<
-    { email: string; canCreateTeams: boolean; addedBy: string; addedAt: string }[]
-  > {
-    const { results } = await this.db
-      .prepare('SELECT * FROM beta_access ORDER BY added_at DESC, email')
-      .all<{ email: string; can_create_teams: number; added_by: string; added_at: number }>();
-    return results.map((r) => ({
-      email: r.email,
-      canCreateTeams: r.can_create_teams === 1,
-      addedBy: r.added_by,
-      addedAt: iso(r.added_at),
-    }));
-  }
-
-  async addBeta(email: string, canCreateTeams: boolean, addedBy: string): Promise<void> {
-    await this.db
-      .prepare(
-        `INSERT INTO beta_access(email,can_create_teams,added_by,added_at) VALUES(?,?,?,?)
-        ON CONFLICT(email) DO UPDATE SET can_create_teams=excluded.can_create_teams`,
-      )
-      .bind(normalizeEmail(email), canCreateTeams ? 1 : 0, addedBy, this.now())
-      .run();
-  }
-
-  async removeBeta(email: string): Promise<void> {
-    await this.db
-      .prepare('DELETE FROM beta_access WHERE lower(trim(email))=?')
-      .bind(normalizeEmail(email))
-      .run();
   }
 
   // --------------------------------------------------------------- sessions
@@ -244,15 +196,6 @@ export class Directory {
   }
 
   // ------------------------------------------------------------------ teams
-
-  async hasMembership(personId: string): Promise<boolean> {
-    return (
-      (await this.db
-        .prepare('SELECT 1 AS x FROM memberships WHERE person_id=? LIMIT 1')
-        .bind(personId)
-        .first()) !== null
-    );
-  }
 
   async teamsFor(personId: string): Promise<(Team & { role: TeamRole })[]> {
     const { results } = await this.db

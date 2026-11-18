@@ -41,8 +41,6 @@ enum SignInBrowserError: Error { case cancelled, unavailable }
     @Published var pendingLink: PendingLink?
     @Published private(set) var busy = false
     @Published var error: String?
-    /// Signed in with Google, but not let in: the private beta screen.
-    @Published private(set) var notInBeta = false
     /// The server everything goes to: scorebug.live, or the Debug override.
     @Published private(set) var server: ScoringEndpoint
 
@@ -95,10 +93,10 @@ enum SignInBrowserError: Error { case cancelled, unavailable }
     // MARK: Sign in
 
     /// Google sign-in in a browser sheet, then the one-time ticket for a session token.
-    /// `invite` is a team invite code: it lets a person in who isn't on the beta list.
+    /// `invite` is a team invite code: signing in with it joins that team.
     func signIn(invite: String? = nil) async {
         guard !busy else { return }
-        busy = true; error = nil; notInBeta = false
+        busy = true; error = nil
         defer { busy = false }
         let pkce = PKCE.make()
         let callback: URL
@@ -125,8 +123,6 @@ enum SignInBrowserError: Error { case cancelled, unavailable }
             } catch {
                 self.error = FriendlyError.message(error)
             }
-        case .notInBeta?:
-            notInBeta = true
         case .cancelled?:
             return
         case .error?, nil:
@@ -147,9 +143,7 @@ enum SignInBrowserError: Error { case cancelled, unavailable }
         if activeSession == nil { route = .signIn }
     }
 
-    func dismissNotInBeta() { notInBeta = false }
-
-    /// The person, their teams and whether they can create teams. A revoked token signs out.
+    /// The person and their teams. A revoked token signs out.
     func refreshMe() async {
         guard let account else { return }
         do {

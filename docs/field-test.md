@@ -10,8 +10,7 @@ You need the filming iPhone on a tripod, its paired Apple Watch, and a second ph
 
 - [ ] Filming iPhone: install **Scorebug** from TestFlight. Install it on the Watch too, from the
       Watch app on the iPhone if it doesn't appear by itself.
-- [ ] **Sign in with Google.** Home appears. If it says "Scorebug is in private beta", the account
-      isn't on the beta list yet.
+- [ ] **Sign in with Google.** Home appears.
 - [ ] Team: tap **Create team**, or open the invite link from your team owner. Tap the team on Home
       to open the team screen.
 - [ ] YouTube (team owner): **Connect a YouTube channel** and finish Google's YouTube consent. The

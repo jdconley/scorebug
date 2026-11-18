@@ -21,7 +21,7 @@ struct HomeView: View {
                     if app.me == nil, !home.loaded {
                         ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
                     } else if app.teams.isEmpty {
-                        NoTeamCard(canCreate: app.me?.canCreateTeams == true) { creatingTeam = true }
+                        NoTeamCard { creatingTeam = true }
                     }
                     ForEach(app.teams) { team in
                         TeamBlock(team: team, match: home.activeMatches[team.id], watchLink: home.watchLinks[team.id],
@@ -46,7 +46,7 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("home.recordings")
-                    if app.me?.canCreateTeams == true, !app.teams.isEmpty {
+                    if !app.teams.isEmpty {
                         Button { creatingTeam = true } label: { Label("New team", systemImage: "plus") }
                             .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.muted)
                             .frame(minHeight: 44)
@@ -221,20 +221,15 @@ private struct ActiveMatchCard: View {
 }
 
 private struct NoTeamCard: View {
-    let canCreate: Bool
     let create: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(canCreate ? "Set up your team" : "You're not on a team yet").font(Theme.score(26))
-            Text(canCreate
-                 ? "Create your team, then invite the parents and scorers who help at matches."
-                 : "Open the invite link your team owner sent you. To help score one match, join it with a code.")
+            Text("Set up your team").font(Theme.score(26))
+            Text("Create your team, then invite the parents and scorers who help at matches. Joining someone else's team? Open the invite link they sent you.")
                 .font(.subheadline).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
-            if canCreate {
-                Button(action: create) { Label("Create team", systemImage: "plus") }
-                    .buttonStyle(BigButtonStyle())
-                    .accessibilityIdentifier("home.createTeam")
-            }
+            Button(action: create) { Label("Create team", systemImage: "plus") }
+                .buttonStyle(BigButtonStyle())
+                .accessibilityIdentifier("home.createTeam")
         }
         .padding(16)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))

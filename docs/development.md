@@ -30,8 +30,7 @@ It listens on `http://localhost:8787`.
 
 - **Sign-in.** Google sign-in needs the real `GOOGLE_CLIENT_SECRET`, and the Google OAuth client
   must allow `<PUBLIC_URL>/v1/auth/google/callback`.
-- **Beta list.** Only accounts on the beta list can sign in. Add yourself at `/admin`, which signs
-  in the emails in `ADMIN_EMAILS`.
+- **Admin.** `/admin` lists every team. It signs in only the emails in `ADMIN_EMAILS`.
 - **Go live.** Local containers are off (`dev.enable_containers` is `false` in
   `apps/control-plane/wrangler.jsonc`), so Go live answers `container_unavailable`. To go live
   locally, set it to `true`, run Docker, and put a real `STREAM_API_TOKEN` (Stream:Edit on the

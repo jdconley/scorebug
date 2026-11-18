@@ -10,8 +10,9 @@ video and sends it to your team's YouTube channel.
 
 ## Status
 
-Scorebug is in a free private beta at [scorebug.live](https://scorebug.live). The
-iPhone app is on TestFlight. Access is invite-only, and accounts are added by hand.
+Scorebug is a free service at [scorebug.live](https://scorebug.live), open to anyone
+with a Google account. The iPhone app is headed to the App Store; until then, builds
+go to an internal TestFlight group.
 
 The full path works in production: sign in with Google, connect a YouTube channel
 once, tap **Go live**, and the match appears on YouTube with the score drawn on it.

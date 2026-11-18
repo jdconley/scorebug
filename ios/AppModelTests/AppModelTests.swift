@@ -57,7 +57,6 @@ import XCTest
         XCTAssertEqual(app.account?.person.email, "jd@example.com")
         XCTAssertEqual(try store.value(Account.self, for: StoreKey.account), app.account, "the token lives in the Keychain")
         XCTAssertEqual(app.teams.map(\.name), ["Cascade 14 Black"])
-        XCTAssertEqual(app.me?.canCreateTeams, true)
 
         let start = try XCTUnwrap(browser.opened.first)
         XCTAssertEqual(start.host, "scorebug.live")
@@ -76,16 +75,15 @@ import XCTest
         XCTAssertEqual(relaunched.deviceId, app.deviceId, "one device ID per install")
     }
 
-    func testNotInBetaShowsThePrivateBetaScreenAndStoresNothing() async {
+    func testAnyGoogleAccountSignsInWithoutATeam() async throws {
         browser.email = "stranger@example.com"
         let app = makeApp()
         await app.signIn()
-        XCTAssertTrue(app.notInBeta)
-        XCTAssertNil(app.account)
-        XCTAssertEqual(app.route, .signIn)
-        XCTAssertNil(try store.value(Account.self, for: StoreKey.account))
-        app.dismissNotInBeta()
-        XCTAssertFalse(app.notInBeta)
+        XCTAssertNil(app.error)
+        XCTAssertEqual(app.route, .home)
+        XCTAssertEqual(app.account?.person.email, "stranger@example.com")
+        XCTAssertEqual(try store.value(Account.self, for: StoreKey.account), app.account)
+        XCTAssertEqual(app.teams, [])
     }
 
     func testClosingTheSignInSheetIsNotAnError() async {
@@ -94,7 +92,6 @@ import XCTest
         await app.signIn()
         XCTAssertNil(app.error)
         XCTAssertNil(app.account)
-        XCTAssertFalse(app.notInBeta)
     }
 
     func testAReplayedTicketOrWrongVerifierIsRefused() async throws {
@@ -152,7 +149,7 @@ import XCTest
     func testTeamInviteLinkWhenSignedOutSignsInWithTheInvite() async {
         await server.addTeam("t1", name: "Cascade 14 Black", member: "p-jd", role: .owner)
         await server.addTeamInvite(code: "ABCD2345", teamId: "t1")
-        browser.email = "mom@example.com" // not on the beta list: the invite lets her in
+        browser.email = "mom@example.com"
         let app = makeApp()
         XCTAssertTrue(app.open("https://scorebug.live/invite/ABCD-2345"))
         XCTAssertEqual(app.pendingLink, .teamInvite(code: "ABCD2345"), "a link never joins without a tap")
@@ -331,15 +328,14 @@ import XCTest
         XCTAssertEqual(filmValue?.recordOnly, false)
     }
 
-    func testCreateTeamNeedsPermission() async {
+    func testCreateTeamTrimsTheNameAndMakesYouTheOwner() async {
         let home = makeHome()
         let id = await home.createTeam(name: "  Cascade 15 Blue ", app: app)
         XCTAssertNotNil(id)
         XCTAssertTrue(app.teams.contains { $0.name == "Cascade 15 Blue" && $0.role == .owner })
-        await server.allow("jd@example.com", canCreateTeams: false)
-        let refused = await home.createTeam(name: "Another", app: app)
-        XCTAssertNil(refused)
-        XCTAssertEqual(home.error, "Your account can't create teams yet.")
+        let another = await home.createTeam(name: "Cascade 16 Red", app: app)
+        XCTAssertNotNil(another, "anyone can create another team")
+        XCTAssertNil(home.error)
     }
 }
 

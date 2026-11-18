@@ -6,7 +6,7 @@ import { sweep } from '../src/worker/sweep.js';
 import { mediaAdapters } from '../src/worker/media-adapters.js';
 import { inputName } from '../src/worker/stream.js';
 import { resetFakes, type Fakes } from './fake-media.js';
-import { allow, harness, invite, ownerWithTeam, type Harness } from './helpers.js';
+import { harness, invite, ownerWithTeam, type Harness } from './helpers.js';
 
 type Json = Record<string, any>;
 type Credential = { gameId: string; deviceId: string; role: string; token: string };
@@ -135,7 +135,6 @@ it('connects a channel with incremental, offline consent on the existing redirec
 
 it('only the person who started a connection can claim it, once', async () => {
   const owner = await ownerWithTeam(h);
-  await allow('other@example.com');
   const other = await h.signIn('other@example.com');
   const started = await body(
     await h.json('/v1/youtube/connect', {}, { headers: h.auth(owner.token) }),
@@ -430,7 +429,7 @@ it('a revoked grant puts the team in needs-reconnecting', async () => {
   expect(view.youtube.status).toBe('needs_reconnect');
 });
 
-it('caps concurrent live matches across the beta with a busy refusal', async () => {
+it('caps concurrent live matches service-wide with a busy refusal', async () => {
   const owner = await liveReadyTeam();
   await filming(owner);
   const now = Date.now();

@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
 import fixture from '../../../packages/protocol/fixtures/match-v1.json';
-import { allow, harness, invite, ownerWithTeam, type Harness } from './helpers.js';
+import { harness, invite, ownerWithTeam, type Harness } from './helpers.js';
 
 type Credential = { gameId: string; deviceId: string; role: string; token: string };
 let h: Harness;
@@ -101,7 +101,6 @@ it('match id taken by another team', async () => {
 it('non-member cannot see a team active match', async () => {
   const owner = await ownerWithTeam(h);
   await createMatch(owner.token, owner.teamId);
-  await allow('other@example.com');
   const other = await h.signIn('other@example.com');
   const response = await h.call(`/v1/teams/${owner.teamId}/matches/active`, {
     headers: h.auth(other.token),
@@ -114,7 +113,6 @@ it('non-member cannot see a team active match', async () => {
 it('spoofed member header is overwritten', async () => {
   const owner = await ownerWithTeam(h);
   await createMatch(owner.token, owner.teamId);
-  await allow('other@example.com');
   const other = await h.signIn('other@example.com');
   const spoofed = await h.call(`/v1/teams/${owner.teamId}/matches/active`, {
     headers: { ...h.auth(other.token), 'x-scorebug-member': owner.personId },

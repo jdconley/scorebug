@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
-import { allow, count, harness, pkce, type Harness } from './helpers.js';
+import { count, harness, pkce, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeEach(() => {
@@ -8,7 +8,6 @@ beforeEach(() => {
 });
 
 it('full sign-in issues a session', async () => {
-  await allow('coach@example.com');
   const { verifier, challenge } = await pkce();
   const start = await h.call(`/v1/auth/google/start?challenge=${challenge}`);
   expect(start.status).toBe(302);
@@ -40,37 +39,28 @@ it('full sign-in issues a session', async () => {
   expect(me.headers.get('cache-control')).toBe('no-store');
   expect(await me.json()).toMatchObject({
     person: { email: 'coach@example.com' },
-    canCreateTeams: true,
     teams: [],
   });
 });
 
-it('allowlist matches case-insensitively', async () => {
-  await env.DB.prepare(
-    "INSERT INTO beta_access(email,can_create_teams,added_by,added_at) VALUES(' JD.Conley@Gmail.com ',1,'t',0)",
-  ).run();
-  const { redirect } = await h.callback('jd.conley@gmail.com');
+it('any verified Google account signs in, with no invite', async () => {
+  const { redirect } = await h.callback('stranger@example.com');
   expect(redirect.searchParams.get('status')).toBe('ok');
+  expect(redirect.searchParams.get('ticket')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(await count('people')).toBe(1);
 });
 
-it('stored mixed-case Google emails still match the allowlist', async () => {
-  await allow('parent@example.com');
+it('stores mixed-case Google emails normalized', async () => {
   const { redirect } = await h.callback('  Parent@Example.COM');
   expect(redirect.searchParams.get('status')).toBe('ok');
-  expect((await h.signIn('Parent@Example.com')).token).toBeTruthy();
+  const { token } = await h.signIn('Parent@Example.com');
+  const me = await h.call('/v1/me', { headers: h.auth(token) });
+  expect(await me.json()).toMatchObject({ person: { email: 'parent@example.com' } });
 });
 
 it('rejects unverified email', async () => {
-  await allow('coach@example.com');
   const { redirect } = await h.callback('coach@example.com', { emailVerified: false });
-  expect(redirect.searchParams.get('status')).toBe('not_in_beta');
-  expect(redirect.searchParams.has('ticket')).toBe(false);
-  expect(await count('people')).toBe(0);
-});
-
-it('not in beta stores nothing', async () => {
-  const { redirect } = await h.callback('stranger@example.com');
-  expect(redirect.toString()).toBe('scorebug://auth?status=not_in_beta');
+  expect(redirect.toString()).toBe('scorebug://auth?status=error');
   expect(await count('people')).toBe(0);
   expect(await count('auth_tickets')).toBe(0);
 });
@@ -84,7 +74,6 @@ it('cancelled consent redirects to app', async () => {
 });
 
 it('tampered state is rejected', async () => {
-  await allow('coach@example.com');
   const start = await h.call(`/v1/auth/google/start?challenge=${(await pkce()).challenge}`);
   const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
   const [payload, mac] = state.split('.');
@@ -101,7 +90,6 @@ it('start rejects a malformed challenge', async () => {
 });
 
 it('ticket is single use', async () => {
-  await allow('coach@example.com');
   const { verifier, challenge } = await pkce();
   const { redirect } = await h.callback('coach@example.com', { challenge });
   const ticket = redirect.searchParams.get('ticket');
@@ -113,7 +101,6 @@ it('ticket is single use', async () => {
 });
 
 it('ticket needs the matching verifier', async () => {
-  await allow('coach@example.com');
   const { challenge } = await pkce();
   const other = await pkce();
   const { redirect } = await h.callback('coach@example.com', { challenge });
@@ -127,7 +114,6 @@ it('ticket needs the matching verifier', async () => {
 });
 
 it('ticket expires after 2 minutes', async () => {
-  await allow('coach@example.com');
   const { verifier, challenge } = await pkce();
   const { redirect } = await h.callback('coach@example.com', { challenge });
   h.clock.now += 121_000;
@@ -140,7 +126,6 @@ it('ticket expires after 2 minutes', async () => {
 });
 
 it('sign out revokes the token', async () => {
-  await allow('coach@example.com');
   const { token } = await h.signIn('coach@example.com');
   const out = await h.call('/v1/auth/session', { method: 'DELETE', headers: h.auth(token) });
   expect(out.status).toBe(204);
@@ -154,7 +139,6 @@ it('me needs a session', async () => {
 });
 
 it('a returning person keeps one people row', async () => {
-  await allow('coach@example.com');
   const first = await h.signIn('coach@example.com');
   const second = await h.signIn('coach@example.com');
   expect(second.personId).toBe(first.personId);

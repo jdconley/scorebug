@@ -41,8 +41,7 @@ export const isAdmin = (env: Env, email: string) =>
 
 export const callbackUrl = (env: Env) => `${env.PUBLIC_URL}/v1/auth/google/callback`;
 
-export type SignInOutcome =
-  { status: 'ok'; person: Person } | { status: 'not_in_beta' | 'cancelled' | 'error' };
+export type SignInOutcome = { status: 'ok'; person: Person } | { status: 'cancelled' | 'error' };
 
 export type SignInState = Exclude<OAuthState, { purpose: 'youtube' }>;
 /** What the callback does with a signed-in admin browser; set up by the admin page. */
@@ -58,9 +57,9 @@ export type YouTubeCallback = (
 ) => Promise<Response>;
 
 /**
- * The private beta gate. A verified identity gets in if its email is on the beta list, it is
- * already on a team, it has a live invite bound to its email, or `invite` is a live team
- * invite it may accept. Only then is anything stored: the person, and every invite accepted.
+ * Signs in a Google-verified identity: stores the person and accepts every live invite bound
+ * to its email, plus `invite` when it is a live team invite this person may accept. An admin
+ * sign-in stores nothing for an account that is not an admin.
  */
 async function admit(
   c: Parameters<MiddlewareHandler<AppEnv>>[0],
@@ -71,19 +70,13 @@ async function admit(
   if (!identity.emailVerified) return null;
   const dir = c.var.directory;
   const email = normalizeEmail(identity.email);
-  const [existing, beta, emailInvites] = await Promise.all([
-    dir.personBySub(identity.sub),
-    dir.betaAccess(email),
-    dir.emailInvites(email),
-  ]);
+  if (admin && !isAdmin(c.env, email)) return null;
   const code = invite ? normalizeTeamInviteCode(invite) : null;
-  const linkRow = code
-    ? await dir.liveInviteByHash(routeCodeHash(c.env.SERVER_SECRET, 'team-invite', code))
-    : null;
+  const [emailInvites, linkRow] = await Promise.all([
+    dir.emailInvites(email),
+    code ? dir.liveInviteByHash(routeCodeHash(c.env.SERVER_SECRET, 'team-invite', code)) : null,
+  ]);
   const link = linkRow && (linkRow.email === null || linkRow.email === email) ? linkRow : null;
-  const member = existing ? await dir.hasMembership(existing.id) : false;
-  if (!beta && !member && emailInvites.length === 0 && !link && !(admin && isAdmin(c.env, email)))
-    return null;
   const person = await dir.upsertPerson({ ...identity, email });
   const teams = new Set([...emailInvites, ...(link ? [link] : [])].map((row) => row.team_id));
   for (const teamId of teams) await dir.join(teamId, person.id);
@@ -157,7 +150,7 @@ export function authRoutes(google: GoogleOAuth, admin?: AdminCallback, youtube?:
       throw cause;
     }
     const person = await admit(c, identity, state.invite, state.purpose === 'admin');
-    return finish(person ? { status: 'ok', person } : { status: 'not_in_beta' });
+    return finish(person ? { status: 'ok', person } : { status: 'error' });
   });
 
   const redeem = z
@@ -192,14 +185,9 @@ export function meRoutes() {
   const app = new Hono<PersonEnv>();
   app.get('/', requirePerson(), async (c) => {
     const person = c.var.person;
-    const dir = c.var.directory;
-    const [beta, teams] = await Promise.all([
-      dir.betaAccess(person.email),
-      dir.teamsFor(person.id),
-    ]);
+    const teams = await c.var.directory.teamsFor(person.id);
     return c.json({
       person,
-      canCreateTeams: beta?.canCreateTeams ?? false,
       teams: teams.map(({ id, name, shortName, color, role }) => ({
         id,
         name,

@@ -52,7 +52,7 @@ struct JoinSheet: View {
     private var isValid: Bool { InviteCode.normalize(code) != nil || isTeamCode }
 
     private func submit(_ text: String) async {
-        if await app.join(text: text) || app.notInBeta { dismiss() }
+        if await app.join(text: text) { dismiss() }
     }
 
     private func paste() {
