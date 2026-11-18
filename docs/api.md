@@ -50,12 +50,11 @@ Sign-in is a server redirect with a ticket and a verifier. The app makes a rando
 `challenge = base64url(SHA-256(verifier))`.
 
 1. The app opens `GET /v1/auth/google/start?challenge=<challenge>` in
-   `ASWebAuthenticationSession`. Optional `invite=<team invite code>` lets a person
-   who is not yet in the beta in through that invite. The response is a 302 to
-   Google.
+   `ASWebAuthenticationSession`. Optional `invite=<team invite code>` joins that
+   team at sign-in. The response is a 302 to Google.
 2. Google returns to `GET /v1/auth/google/callback`, which redirects to
    `scorebug://auth?status=<status>[&ticket=<ticket>]`. `status` is `ok`,
-   `not_in_beta`, `cancelled` or `error`. A ticket comes only with `ok`; it is
+   `cancelled` or `error`. A ticket comes only with `ok`; it is
    single use and expires after 2 minutes. The signed state expires after 10
    minutes.
 3. `POST /v1/auth/session`
@@ -67,14 +66,14 @@ Sign-in is a server redirect with a ticket and a verifier. The app makes a rando
 
 `DELETE /v1/auth/session` revokes the bearer session → `204`.
 
-The beta gate admits a verified Google account when its email is on the beta list,
-it is already on a team, it has a live team invite bound to its email, or the
-`invite` passed at start is a live invite it may accept. Every email-bound invite
-for that address is accepted at sign-in.
+Any Google account with a verified email signs in; an unverified one gets
+`error`. At sign-in the person joins every team with a live invite bound to
+their email, and the team of the `invite` passed at start when it is live and
+not bound to another email.
 
 `/admin` is a server-rendered page for the emails in `ADMIN_EMAILS`. It signs in
-through the same callback (`purpose=admin`) with a cookie-held verifier, and
-manages the beta list with form posts to `/admin/beta` and `/admin/beta/remove`.
+through the same callback (`purpose=admin`) with a cookie-held verifier, stores
+nothing for an account that is not an admin, and lists every team.
 
 ## Me
 
@@ -83,26 +82,23 @@ manages the beta list with form posts to `/admin/beta` and `/admin/beta/remove`.
 ```json
 {
     "person": { "id": "…", "email": "…", "name": "…", "picture": "…" },
-    "canCreateTeams": true,
     "teams": [{ "id": "…", "name": "…", "shortName": "…", "color": "#2563EB", "role": "owner" }],
     "serverTime": "…"
 }
 ```
-
-`canCreateTeams` comes from the person's beta list entry.
 
 ## Teams
 
 All team routes need a session token. Non-members get `404 team_not_found`;
 members calling an owner route get `403 owner_required`.
 
-| Method | Path                                  | Who              | Body                                | Response                                                 |
-| ------ | ------------------------------------- | ---------------- | ----------------------------------- | -------------------------------------------------------- |
-| POST   | `/v1/teams`                           | `canCreateTeams` | `{ name, shortName?, color? }`      | `201 { team, role: "owner" }`; `403 cannot_create_teams` |
-| GET    | `/v1/teams/:teamId`                   | member           |                                     | `{ team, role, members, youtube, invites? }`             |
-| PATCH  | `/v1/teams/:teamId`                   | owner            | any of `name`, `shortName`, `color` | `{ team }`                                               |
-| PUT    | `/v1/teams/:teamId/youtube`           | owner            | `{ connectionId: uuid \| null }`    | `{ youtube }`; `404 connection_not_found`                |
-| DELETE | `/v1/teams/:teamId/members/:personId` | self, or owner   |                                     | `204`; `404 member_not_found`; `409 last_owner`          |
+| Method | Path                                  | Who            | Body                                | Response                                        |
+| ------ | ------------------------------------- | -------------- | ----------------------------------- | ----------------------------------------------- |
+| POST   | `/v1/teams`                           | anyone         | `{ name, shortName?, color? }`      | `201 { team, role: "owner" }`                   |
+| GET    | `/v1/teams/:teamId`                   | member         |                                     | `{ team, role, members, youtube, invites? }`    |
+| PATCH  | `/v1/teams/:teamId`                   | owner          | any of `name`, `shortName`, `color` | `{ team }`                                      |
+| PUT    | `/v1/teams/:teamId/youtube`           | owner          | `{ connectionId: uuid \| null }`    | `{ youtube }`; `404 connection_not_found`       |
+| DELETE | `/v1/teams/:teamId/members/:personId` | self, or owner |                                     | `204`; `404 member_not_found`; `409 last_owner` |
 
 - `team` is `{ id, name, shortName, color, createdAt }`. `name` is 1–80 characters,
   `shortName` (the scorebug label) at most 8 characters and defaults from the name,

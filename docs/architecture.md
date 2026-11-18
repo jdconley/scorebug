@@ -33,9 +33,8 @@ and served at `scorebug.live`. It handles:
   `/v1/auth/google/start` with a PKCE-style challenge. After Google, the callback
   redirects to `scorebug://auth` with a single-use ticket, and the app trades the
   ticket plus its verifier for a long-lived session token (`auth-routes.ts`).
-- **Private beta.** Sign-in is invite-only by email. A Google account gets in if
-  its email is on the beta list, it is already on a team, or it holds a live team
-  invite. Admins (the `ADMIN_EMAILS` secret) manage the beta list at `/admin`, a
+- **Open sign-in.** Any Google account with a verified email can sign in and
+  create teams. Admins (the `ADMIN_EMAILS` secret) see every team at `/admin`, a
   server-rendered page (`admin-page.ts`).
 - **Teams.** Teams have owners and members. Owners mint team invites (an 8-character
   code and a `https://scorebug.live/invite/<code>` link, optionally bound to one
@@ -51,9 +50,10 @@ and served at `scorebug.live`. It handles:
   `match_index`.
 - **Match join codes.** `POST /v1/invites/redeem` routes a 6-character code to its
   team through D1's `match_codes` and needs no account.
-- **Public pages.** The home page, `/privacy`, `/terms`, the `/invite/:code` and
+- **Public pages.** The home page, `/support`, `/privacy`, `/terms`, the `/invite/:code` and
   `/join/:code` landing pages, and the Apple app site association file for
-  universal links (`site.ts`, `site-legal.ts`). Fonts and icons are static assets
+  universal links (`site.ts`, `site-legal.ts`). The App Store buttons use the
+  `APP_STORE_URL` var and say "Coming soon" while it is empty. Fonts and icons are static assets
   in `apps/control-plane/public`.
 - **Rate limits.** Cloudflare rate-limit bindings: 20 requests a minute per client
   IP on `/v1/auth/*`, and 10 a minute on match code redemption and team invite
@@ -65,7 +65,7 @@ and served at `scorebug.live`. It handles:
 
 ### D1 (`apps/control-plane/migrations`)
 
-D1 holds everything that crosses teams: people, the beta list, session tokens
+D1 holds everything that crosses teams: people, session tokens
 (SHA-256 hashes only), sign-in tickets, teams, memberships, team invites (keyed
 hashes of the codes), `match_index`, `match_codes`, YouTube grants and connections,
 and `live_slots`. Each team's matches do not live in D1.

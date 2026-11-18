@@ -246,7 +246,7 @@ export class HostedMedia implements MediaLifecycle {
 
   /**
    * Everything a start command needs before the store accepts it: the team channel, the
-   * Stream input, the match's one YouTube broadcast and a beta live slot. Null when ready.
+   * Stream input, the match's one YouTube broadcast and a service-wide live slot. Null when ready.
    * Record-only and ended matches are left for the store to reject.
    */
   async prepareGoLive(gameId: string, timeZone: string | null): Promise<GoLiveRefusal | null> {

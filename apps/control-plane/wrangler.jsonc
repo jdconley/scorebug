@@ -17,11 +17,13 @@
   "vars": {
     "PUBLIC_URL": "https://scorebug.live",
     "APP_AUTH_REDIRECT": "scorebug://auth",
+    // The app's App Store page, for the site's buttons. Empty shows "Coming soon".
+    "APP_STORE_URL": "",
     // A public value: Google shows it on every consent screen.
     "GOOGLE_CLIENT_ID": "131849544690-5snpsg1pqgf798tpd6igbdpq9sc09hcr.apps.googleusercontent.com",
     // Owns the per-match Stream live inputs.
     "CF_ACCOUNT_ID": "7663a29f39aae38f68c8bc109f605079",
-    // Beta cost guard: concurrent live matches across every team.
+    // Service-wide live cap: concurrent live matches across every team, to bound the bill.
     "LIVE_MATCH_CAP": "5",
     // The match container holds score changes this long (Stream's measured intake delay).
     "SCORE_DELAY_MS": "1100",

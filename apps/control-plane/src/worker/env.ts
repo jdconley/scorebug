@@ -15,6 +15,8 @@ export interface Env {
   PUBLIC_URL: string;
   /** scorebug://auth */
   APP_AUTH_REDIRECT: string;
+  /** The app's App Store page. Empty until it's live: the site then says "Coming soon". */
+  APP_STORE_URL: string;
   /** Comma-separated emails that may open /admin. A secret, so no address is committed. */
   ADMIN_EMAILS: string;
   GOOGLE_CLIENT_ID: string;
@@ -26,7 +28,7 @@ export interface Env {
   CF_ACCOUNT_ID: string;
   /** Stream:Edit API token. A secret. */
   STREAM_API_TOKEN: string;
-  /** Beta cost guard: concurrent live matches across every team. */
+  /** Service-wide live cap: concurrent live matches across every team, to bound the bill. */
   LIVE_MATCH_CAP: string;
   /** Hold score changes this long in the match container (Stream intake delay). */
   SCORE_DELAY_MS: string;

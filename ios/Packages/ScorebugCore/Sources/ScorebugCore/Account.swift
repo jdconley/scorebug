@@ -59,11 +59,10 @@ public struct TeamMembership: Codable, Equatable, Sendable, Identifiable {
 /// `GET /v1/me`.
 public struct Me: Codable, Equatable, Sendable {
     public var person: Person
-    public var canCreateTeams: Bool
     public var teams: [TeamMembership]
 
-    public init(person: Person, canCreateTeams: Bool, teams: [TeamMembership]) {
-        self.person = person; self.canCreateTeams = canCreateTeams; self.teams = teams
+    public init(person: Person, teams: [TeamMembership]) {
+        self.person = person; self.teams = teams
     }
 }
 
@@ -177,8 +176,6 @@ public struct PKCE: Equatable, Sendable {
 /// Where Google sign-in lands: `scorebug://auth?status=ok&ticket=…`.
 public enum SignInCallback: Equatable, Sendable {
     case ok(ticket: String)
-    /// Signed in with Google, but not on the beta list and no invite.
-    case notInBeta
     case cancelled
     case error
 
@@ -197,7 +194,6 @@ public enum SignInCallback: Equatable, Sendable {
         case "ok":
             guard let ticket = value("ticket"), Self.isTicket(ticket) else { self = .error; return }
             self = .ok(ticket: ticket)
-        case "not_in_beta": self = .notInBeta
         case "cancelled": self = .cancelled
         default: self = .error
         }

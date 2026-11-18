@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from 'vitest';
-import { harness, ownerWithTeam, type Harness } from './helpers.js';
+import { count, harness, ownerWithTeam, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeEach(() => {
@@ -32,18 +32,13 @@ async function adminCookie(email = 'admin@example.com') {
   return `sb_admin=${cookieValue(response.headers.get('set-cookie') ?? '', 'sb_admin')}`;
 }
 
-const form = (cookie: string, body: Record<string, string>, origin = 'https://scorebug.live') =>
-  h.call('/admin/beta', {
-    method: 'POST',
-    headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(body).toString(),
-  });
-
 it('non-admin is refused', async () => {
   const response = await adminSignIn('someone@example.com');
   expect(response.status).toBe(403);
   expect(response.headers.get('set-cookie') ?? '').not.toContain('sb_admin=');
   expect((await h.call('/admin', { headers: { cookie: 'sb_admin=forged' } })).status).toBe(302);
+  // An admin sign-in by anyone else stores nothing.
+  expect(await count('people')).toBe(0);
 });
 
 it('admin sign-in needs the browser that started it', async () => {
@@ -57,55 +52,17 @@ it('an app session token is not an admin cookie', async () => {
   expect((await h.call('/admin', { headers: { cookie: `sb_admin=${token}` } })).status).toBe(302);
 });
 
-it('admin adds an email', async () => {
+it('admin sees every team, escaped', async () => {
+  await ownerWithTeam(h, 'coach@example.com', 'Wildcats <b>');
   const cookie = await adminCookie();
-  const added = await form(cookie, { email: ' New.Coach@Example.com ', canCreateTeams: 'on' });
-  expect(added.status).toBe(303);
-  expect(added.headers.get('location')).toBe('/admin');
   const page = await h.call('/admin', { headers: { cookie } });
   expect(page.status).toBe(200);
   expect(page.headers.get('content-type')).toContain('text/html');
   const html = await page.text();
-  expect(html).toContain('new.coach@example.com');
-  const { redirect } = await h.callback('new.coach@example.com');
-  expect(redirect.searchParams.get('status')).toBe('ok');
-});
-
-it('admin removes an email and sees teams', async () => {
-  const owner = await ownerWithTeam(h, 'coach@example.com', 'Wildcats <b>');
-  const cookie = await adminCookie();
-  const before = await (await h.call('/admin', { headers: { cookie } })).text();
-  expect(before).toContain('Wildcats &lt;b&gt;');
-  expect(before).not.toContain('Wildcats <b>');
-  const removed = await h.call('/admin/beta/remove', {
-    method: 'POST',
-    headers: {
-      cookie,
-      origin: 'https://scorebug.live',
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    body: 'email=coach%40example.com',
-  });
-  expect(removed.status).toBe(303);
-  const after = await (await h.call('/admin', { headers: { cookie } })).text();
-  expect(after).not.toContain('<td>coach@example.com</td>');
-  // Still a team member, so the person keeps getting in.
-  expect(owner.teamId).toBeTruthy();
-  const { redirect } = await h.callback('coach@example.com');
-  expect(redirect.searchParams.get('status')).toBe('ok');
-});
-
-it('cross-origin post is refused', async () => {
-  const cookie = await adminCookie();
-  const response = await form(cookie, { email: 'x@example.com' }, 'https://evil.example');
-  expect(response.status).toBe(403);
-  const missing = await h.call('/admin/beta', {
-    method: 'POST',
-    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-    body: 'email=x%40example.com',
-  });
-  expect(missing.status).toBe(403);
-  expect((await form('sb_admin=nope', { email: 'x@example.com' })).status).toBe(403);
+  expect(html).toContain('<h1>Scorebug admin</h1>');
+  expect(html).toContain('Teams (1)');
+  expect(html).toContain('Wildcats &lt;b&gt;');
+  expect(html).not.toContain('Wildcats <b>');
 });
 
 it('cookie is scoped to /admin', async () => {
@@ -119,9 +76,10 @@ it('cookie is scoped to /admin', async () => {
   expect(admin).toContain('Max-Age=43200');
 });
 
-it('the page keeps the Origin header on its own form posts', async () => {
+it('the page sends its security headers', async () => {
   const cookie = await adminCookie();
   const page = await h.call('/admin', { headers: { cookie } });
-  // no-referrer would make browsers send `Origin: null` on the form posts.
-  expect(page.headers.get('referrer-policy')).toBe('same-origin');
+  expect(page.headers.get('content-security-policy')).toContain("default-src 'none'");
+  expect(page.headers.get('cache-control')).toBe('no-store');
+  expect(page.headers.get('referrer-policy')).toBe('no-referrer');
 });

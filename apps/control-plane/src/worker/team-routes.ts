@@ -61,10 +61,7 @@ export function teamRoutes() {
   app.post('/', async (c) => {
     const input = await readJson(c, create);
     if (!input) return invalid(c);
-    const dir = c.var.directory;
-    if (!(await dir.betaAccess(c.var.person.email))?.canCreateTeams)
-      return c.json({ error: 'cannot_create_teams' }, 403);
-    const team = await dir.createTeam(c.var.person.id, {
+    const team = await c.var.directory.createTeam(c.var.person.id, {
       name: input.name,
       shortName: input.shortName ?? defaultShortName(input.name),
       color: input.color ?? DEFAULT_TEAM_COLOR,

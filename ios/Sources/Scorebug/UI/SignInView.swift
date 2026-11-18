@@ -10,12 +10,10 @@ struct SignInView: View {
     @State private var developer = false
 
     var body: some View {
-        Group {
-            if app.notInBeta { PrivateBetaView(app: app) } else { signIn }
-        }
-        .sheet(isPresented: $joining) { JoinSheet(app: app) }
-        .sheet(isPresented: $developer) { DeveloperServerSheet(app: app) }
-        .onAppear { OrientationLock.set(.portrait, rotateTo: .portrait) }
+        signIn
+            .sheet(isPresented: $joining) { JoinSheet(app: app) }
+            .sheet(isPresented: $developer) { DeveloperServerSheet(app: app) }
+            .onAppear { OrientationLock.set(.portrait, rotateTo: .portrait) }
     }
 
     private var signIn: some View {
@@ -61,43 +59,6 @@ struct SignInView: View {
                 .foregroundStyle(Theme.secondary).frame(minHeight: 44)
                 .accessibilityIdentifier("signIn.developer")
                 #endif
-            }
-        }
-        .padding(.horizontal, 24).padding(.bottom, 24)
-        .frame(maxWidth: 520).frame(maxWidth: .infinity)
-    }
-}
-
-/// Signed in with Google, but not on the beta list and no team invite.
-struct PrivateBetaView: View {
-    @ObservedObject var app: AppModel
-    @Environment(\.openURL) private var openURL
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 40)
-            VStack(spacing: 18) {
-                Image(systemName: "lock.fill").font(.system(size: 40, weight: .semibold)).foregroundStyle(Theme.text)
-                    .frame(width: 88, height: 88).background(Theme.surface, in: Circle())
-                    .accessibilityHidden(true)
-                Text("Scorebug is in private beta").font(Theme.score(34)).multilineTextAlignment(.center)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("beta.title")
-                Text("That Google account isn't on the beta list yet. Ask for access, or open the team invite link your team owner sent you.")
-                    .font(.body).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 40)
-            VStack(spacing: 14) {
-                Button { openURL(ScorebugService.url) } label: { Text("Ask for access") }
-                    .buttonStyle(BigButtonStyle())
-                    .accessibilityIdentifier("beta.ask")
-                Button { Task { await app.signIn() } } label: { Text("Use another Google account") }
-                    .buttonStyle(BigButtonStyle(kind: .surface, height: 52))
-                    .disabled(app.busy)
-                    .accessibilityIdentifier("beta.retry")
-                Button("Back") { app.dismissNotInBeta() }
-                    .foregroundStyle(Theme.muted).frame(minHeight: 44)
             }
         }
         .padding(.horizontal, 24).padding(.bottom, 24)

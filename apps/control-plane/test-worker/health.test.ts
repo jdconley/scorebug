@@ -14,7 +14,6 @@ it('applies the D1 schema', async () => {
   ).all<{ name: string }>();
   expect(results.map((r) => r.name)).toEqual([
     'auth_tickets',
-    'beta_access',
     'live_slots',
     'match_codes',
     'match_index',

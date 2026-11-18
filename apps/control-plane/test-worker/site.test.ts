@@ -14,20 +14,62 @@ async function htmlPage(path: string, status = 200) {
   return { response, body: await response.text() };
 }
 
+const APP_STORE_URL = 'https://apps.apple.com/app/scorebug/id1234567890';
+
+/** The site as served once APP_STORE_URL is set. */
+async function withAppStore(path: string) {
+  const live = { ...env, APP_STORE_URL };
+  const app = createWorkerApp({ env: live, google: new FakeGoogle() });
+  return (await app.fetch(new Request(`https://scorebug.live${path}`), live)).text();
+}
+
+const BETA_WORDS = /beta|invite-only|request access|testflight/i;
+
 describe('home page', () => {
   it('says what Scorebug is and links to the policies', async () => {
     const { body } = await htmlPage('/');
-    expect(body).toContain('Private beta');
+    expect(body).toContain('Scorebug is free');
     expect(body).toContain('Film on your iPhone');
     expect(body).toMatch(/Apple Watch/);
     expect(body).toMatch(/YouTube/);
     // Google verification follows these links from the home page.
     expect(body).toContain('href="/privacy"');
     expect(body).toContain('href="/terms"');
-    expect(body).toContain('href="mailto:jd.conley@gmail.com?subject=Scorebug%20beta%20access"');
-    expect(body).toContain('Request access');
+    expect(body).toContain('href="/support"');
     expect(body).toContain('href="/favicon.ico"');
     expect(body).toContain('href="/apple-touch-icon.png"');
+    expect(body).not.toMatch(BETA_WORDS);
+  });
+
+  it('says Coming soon until the App Store link is set', async () => {
+    const { body } = await htmlPage('/');
+    expect(body).toContain('Coming soon to the App Store');
+    expect(body).not.toContain('apps.apple.com');
+  });
+
+  it('links to the App Store once it is set', async () => {
+    const body = await withAppStore('/');
+    expect(body).toContain(
+      `<a class="button" href="${APP_STORE_URL}">Get Scorebug on the App Store</a>`,
+    );
+    expect(body).not.toContain('Coming soon');
+  });
+});
+
+describe('support page', () => {
+  it('answers what you need, second-phone scoring, deletion and contact', async () => {
+    const { body } = await htmlPage('/support');
+    expect(body).toContain('Support');
+    expect(body).toMatch(/iPhone/);
+    expect(body).toMatch(/Apple Watch/);
+    expect(body).toMatch(/up to 24 hours/);
+    expect(body).toContain('href="https://www.youtube.com/features"');
+    expect(body).toContain('Invite scorer');
+    expect(body).toContain('Join with a code');
+    expect(body).toMatch(/within 30\s+days/);
+    expect(body).toContain('href="https://myaccount.google.com/permissions"');
+    expect(body).toContain('mailto:jd.conley@gmail.com');
+    expect(body).not.toMatch(BETA_WORDS);
   });
 });
 
@@ -45,14 +87,19 @@ describe('privacy policy', () => {
     expect(body).toContain('Limited Use');
     expect(body).toMatch(/doesn't record or store the video/);
     expect(body).toContain('mailto:jd.conley@gmail.com');
+    expect(body).toContain('Last updated November 18, 2026');
+    expect(body).not.toMatch(BETA_WORDS);
   });
 });
 
 describe('terms of service', () => {
-  it('covers the beta, the right to stream, YouTube terms, use and termination', async () => {
+  it('covers the free service, the right to stream, YouTube terms, use and termination', async () => {
     const { body } = await htmlPage('/terms');
     expect(body).toContain('Terms of service');
-    expect(body).toMatch(/free, invite-only beta/);
+    expect(body).toContain('Scorebug is free.');
+    expect(body).toMatch(/may change, break, or stop/);
+    expect(body).toMatch(/post the new version on this page/);
+    expect(body).not.toMatch(BETA_WORDS);
     expect(body).toMatch(/"as is"/);
     expect(body).toMatch(/right to film and stream/);
     expect(body).toMatch(/minors/);
@@ -63,12 +110,13 @@ describe('terms of service', () => {
 });
 
 describe('link pages', () => {
-  it('shows a team invite with its code, TestFlight and request access', async () => {
+  it('shows a team invite with its code and where to get the app', async () => {
     const { response, body } = await htmlPage('/invite/abcd-efgh');
     expect(body).toContain('Open in the Scorebug app');
     expect(body).toContain('ABCD-EFGH');
-    expect(body).toContain('https://apps.apple.com/app/testflight/id899247664');
-    expect(body).toContain('Request access');
+    expect(body).toContain('Coming soon to the App Store');
+    expect(body).not.toMatch(BETA_WORDS);
+    expect(await withAppStore('/invite/abcd-efgh')).toContain('Get Scorebug on the App Store');
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     expect(response.headers.get('x-robots-tag')).toBe('noindex');
@@ -79,6 +127,7 @@ describe('link pages', () => {
     expect(body).toContain('Open in the Scorebug app');
     expect(body).toContain('ABC-DEF');
     expect(body).toContain('Keep score for a match');
+    expect(await withAppStore('/join/ABCDEF')).toContain(`href="${APP_STORE_URL}"`);
   });
 
   it('says a malformed link is incomplete, without echoing it', async () => {
@@ -138,7 +187,7 @@ it('keeps the existing routes', async () => {
 it('serves the public pages even when SERVER_SECRET is missing', async () => {
   const weak = { ...env, SERVER_SECRET: '' };
   const app = createWorkerApp({ env: weak, google: new FakeGoogle() });
-  for (const path of ['/', '/privacy', '/terms', '/invite/ABCDEFGH'])
+  for (const path of ['/', '/support', '/privacy', '/terms', '/invite/ABCDEFGH'])
     expect((await app.fetch(new Request(`https://scorebug.live${path}`), weak)).status).toBe(200);
   const me = await app.fetch(new Request('https://scorebug.live/v1/me'), weak);
   expect(me.status).toBe(503);

@@ -203,7 +203,7 @@ export class TeamObject extends DurableObject<Env> {
   }
 
   /**
-   * Go Live and stop. A start is checked against the team channel, Stream and the beta cap
+   * Go Live and stop. A start is checked against the team channel, Stream and the service-wide live cap
    * before the store sees it (a refusal is a 409 outcome the store never records, so a retry
    * can succeed); the container follows the store's accepted outcome.
    */

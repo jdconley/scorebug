@@ -35,7 +35,6 @@ extension MatchHTTPClient {
 
     // MARK: Teams
 
-    /// Needs "can create teams" on the beta list (403 `cannot_create_teams` otherwise).
     public func createTeam(name: String, token: String) async throws -> TeamJoined {
         struct Request: Encodable { let name: String }
         return try await send(root: ["teams"], path: [], method: "POST", token: token,

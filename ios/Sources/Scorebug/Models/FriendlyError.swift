@@ -49,7 +49,6 @@ enum FriendlyError {
         case "device_id_taken": return "This phone is already part of that match."
         case "match_in_flight": return "Your team already has a match open."
         case "team_not_found": return "You're not on that team anymore."
-        case "cannot_create_teams": return "Your account can't create teams yet."
         case "record_only_match": return "This match is record only."
         case "tied_set": return "A set can't end tied."
         case "set_not_won": return "Nobody has won this set yet."

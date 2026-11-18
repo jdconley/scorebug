@@ -1,6 +1,7 @@
-// Scorebug's public web pages on https://scorebug.live: the home page, the privacy policy and
-// terms (both needed for Google's OAuth verification), landing pages for team invite and match
-// join links, and the apple-app-site-association file that makes those links open the app.
+// Scorebug's public web pages on https://scorebug.live: the home page, support, the privacy
+// policy and terms (both needed for Google's OAuth verification), landing pages for team invite
+// and match join links, and the apple-app-site-association file that makes those links open the
+// app.
 // Server-rendered, no client JS. Fonts and icons are static assets in ../../public.
 import { formatInviteCode, normalizeInviteCode } from '@scorebug/protocol';
 import { Hono, type Context } from 'hono';
@@ -12,9 +13,8 @@ import { normalizeTeamInviteCode } from './state.js';
 
 export const CONTACT_EMAIL = 'jd.conley@gmail.com';
 export const APP_ID = 'B222J9J7B8.live.scorebug.app';
-/** Beta testers install through Apple's TestFlight app after JD adds them. */
-export const TESTFLIGHT_URL = 'https://apps.apple.com/app/testflight/id899247664';
-const REQUEST_ACCESS = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Scorebug beta access')}`;
+const YOUTUBE_FEATURES = 'https://www.youtube.com/features';
+const GOOGLE_PERMISSIONS = 'https://myaccount.google.com/permissions';
 
 type Body = HtmlEscapedString | Promise<HtmlEscapedString>;
 
@@ -56,12 +56,6 @@ const STYLE = raw(`
   .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none;
     font: 700 26px/1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; }
   .brand img { width: 34px; height: 34px; border-radius: 8px; }
-  .badge { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px;
-    border: 1px solid var(--line); border-radius: 999px; background: var(--raised);
-    font: 700 14px/1 var(--display); letter-spacing: 0.12em; text-transform: uppercase;
-    color: var(--muted); white-space: nowrap; }
-  .badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--live); }
-  header.site .badge { margin-left: auto; }
   main { padding: 36px 0 56px; }
   h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05;
     letter-spacing: 0.01em; margin: 0; }
@@ -76,6 +70,7 @@ const STYLE = raw(`
     text-decoration: none; font: 700 22px/1 var(--display); letter-spacing: 0.06em;
     text-transform: uppercase; }
   .button.secondary { background: var(--raised); color: var(--text); border: 1px solid var(--line); }
+  .button.soon { color: var(--secondary); }
   .actions { display: grid; gap: 12px; margin: 24px 0 12px; }
   @media (min-width: 560px) { .actions { grid-template-columns: 1fr 1fr; } }
   .bug { background: var(--raised); border: 1px solid var(--line); border-radius: 18px;
@@ -99,6 +94,7 @@ const STYLE = raw(`
     font: 700 38px/1 var(--display); letter-spacing: 0.14em; }
   .legal h1 { font-size: clamp(36px, 10vw, 52px); margin-bottom: 6px; }
   .legal h2 { font-size: 26px; margin-top: 32px; }
+  .faq h2 { font-size: 26px; margin-top: 32px; }
   footer.site { border-top: 1px solid var(--line); padding: 24px 0 40px; color: var(--secondary);
     font-size: 15px; }
   footer.site nav { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-bottom: 10px; }
@@ -132,15 +128,14 @@ function page(c: Context, opts: { title: string; description: string; path: stri
             <a class="brand" href="/"
               ><img src="/icon-192.png" alt="" width="34" height="34" />Scorebug</a
             >
-            <span class="badge">Private beta</span>
           </div>
         </header>
         <main><div class="wrap">${body}</div></main>
         <footer class="site">
           <div class="wrap">
             <nav>
-              <a href="/">Home</a><a href="/privacy">Privacy policy</a><a href="/terms">Terms</a
-              ><a href="mailto:${CONTACT_EMAIL}">Contact</a>
+              <a href="/">Home</a><a href="/support">Support</a><a href="/privacy">Privacy policy</a
+              ><a href="/terms">Terms</a><a href="mailto:${CONTACT_EMAIL}">Contact</a>
             </nav>
             <div>© 2026 Conley Chaos LLC</div>
           </div>
@@ -149,7 +144,15 @@ function page(c: Context, opts: { title: string; description: string; path: stri
     </html>`;
 }
 
-const home = (c: Context) =>
+/** The App Store button, or "Coming soon" until APP_STORE_URL is set. */
+function appStoreButton(c: Context<AppEnv>) {
+  const url = c.env.APP_STORE_URL?.trim();
+  return url
+    ? html`<a class="button" href="${url}">Get Scorebug on the App Store</a>`
+    : html`<span class="button secondary soon">Coming soon to the App Store</span>`;
+}
+
+const home = (c: Context<AppEnv>) =>
   page(
     c,
     {
@@ -202,17 +205,15 @@ const home = (c: Context) =>
           </div>
         </li>
       </ol>
-      <h2>Private beta</h2>
+      <h2>Get Scorebug</h2>
       <p>
-        Scorebug is free while it's in private beta, and it's invite-only. Email to ask for access;
-        you'll get the iPhone app through TestFlight.
+        Scorebug is free. You need an iPhone, a Google account, and a YouTube channel that can live
+        stream. An Apple Watch is optional.
       </p>
-      <div class="actions">
-        <a class="button" href="${REQUEST_ACCESS}">Request access</a>
-      </div>
+      <div class="actions">${appStoreButton(c)}</div>
       <p class="muted">
-        Read the <a href="/privacy">privacy policy</a> and the
-        <a href="/terms">terms of service</a>.
+        Questions? See <a href="/support">support</a>, the <a href="/privacy">privacy policy</a> and
+        the <a href="/terms">terms of service</a>.
       </p>`,
   );
 
@@ -234,7 +235,7 @@ const LINK_COPY: Record<LinkKind, { title: string; what: string; invalid: string
 const formatCode = (kind: LinkKind, code: string) =>
   kind === 'join' ? formatInviteCode(code) : `${code.slice(0, 4)}-${code.slice(4)}`;
 
-function linkPage(c: Context, kind: LinkKind, code: string | null) {
+function linkPage(c: Context<AppEnv>, kind: LinkKind, code: string | null) {
   const copy = LINK_COPY[kind];
   const body = code
     ? html`<h1>Open in the Scorebug app</h1>
@@ -245,14 +246,8 @@ function linkPage(c: Context, kind: LinkKind, code: string | null) {
         </p>
         <div class="code">${formatCode(kind, code)}</div>
         <h2>Don't have the app?</h2>
-        <p>
-          Scorebug is in private beta on iPhone. Testers install it with Apple's TestFlight app
-          after they're added. Request access, then come back to this link.
-        </p>
-        <div class="actions">
-          <a class="button" href="${TESTFLIGHT_URL}">Get TestFlight</a>
-          <a class="button secondary" href="${REQUEST_ACCESS}">Request access</a>
-        </div>`
+        <p>Scorebug is free on iPhone. Install it, then come back to this link.</p>
+        <div class="actions">${appStoreButton(c)}</div>`
     : html`<h1>Open in the Scorebug app</h1>
         <p class="lede">${copy.invalid}</p>
         <div class="actions"><a class="button secondary" href="/">About Scorebug</a></div>`;
@@ -263,9 +258,76 @@ function linkPage(c: Context, kind: LinkKind, code: string | null) {
   );
 }
 
+const support = (c: Context<AppEnv>) =>
+  page(
+    c,
+    {
+      title: 'Support · Scorebug',
+      description:
+        'What you need to stream with Scorebug, how a second phone keeps score, and how to delete your data.',
+      path: '/support',
+    },
+    html`<article class="faq">
+      <h1>Support</h1>
+      <p class="lede">
+        Answers to common questions. For anything else, email
+        <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.
+      </p>
+
+      <h2>What do I need?</h2>
+      <ul>
+        <li>An iPhone to film, on a tripod courtside.</li>
+        <li>A Google account to sign in.</li>
+        <li>
+          A YouTube channel with live streaming turned on. Turn it on at
+          <a href="${YOUTUBE_FEATURES}">youtube.com/features</a> well before your first match: the
+          first time, YouTube can take up to 24 hours to enable it.
+        </li>
+        <li>An Apple Watch, if you want to keep score from your wrist. It's optional.</li>
+      </ul>
+
+      <h2>Does it cost anything?</h2>
+      <p>Scorebug is free. See the <a href="/terms">terms</a>.</p>
+
+      <h2>Who can see the stream?</h2>
+      <p>
+        Matches go live on the YouTube channel your team picks, as unlisted broadcasts: anyone with
+        the link can watch. You can change a broadcast's visibility in YouTube Studio.
+      </p>
+
+      <h2>How does a second phone keep score?</h2>
+      <p>
+        On the phone that's filming, tap <strong>Invite scorer</strong>. It shows a QR code and a
+        short match code. Point the second phone's camera at the QR code, or open Scorebug on it,
+        tap <strong>Join with a code</strong> and type the code. Scoring someone's match with a code
+        needs no account, and the code works only for that match.
+      </p>
+
+      <h2>How do I add people to my team?</h2>
+      <p>
+        Team owners invite people from the team screen in the app, by email or with an invite link.
+        People you invite can film, score and go live with the team.
+      </p>
+
+      <h2>How do I delete my account and data?</h2>
+      <p>
+        Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> from the address you sign in
+        with. We delete your account and its data, including any stored YouTube tokens, within 30
+        days, and confirm by email. You can also remove Scorebug's access to your Google account and
+        YouTube channel at any time at
+        <a href="${GOOGLE_PERMISSIONS}">myaccount.google.com/permissions</a>. The
+        <a href="/privacy">privacy policy</a> has the details.
+      </p>
+
+      <h2>Contact</h2>
+      <p>Conley Chaos LLC · <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></p>
+    </article>`,
+  );
+
 export function siteRoutes() {
   const site = new Hono<AppEnv>();
   site.get('/', (c) => c.html(home(c), 200, PUBLIC_HEADERS));
+  site.get('/support', (c) => c.html(support(c), 200, PUBLIC_HEADERS));
   site.get('/privacy', (c) =>
     c.html(
       page(
@@ -287,7 +349,7 @@ export function siteRoutes() {
         c,
         {
           title: 'Terms of service · Scorebug',
-          description: 'The terms for using the Scorebug private beta.',
+          description: 'The terms for using Scorebug.',
           path: '/terms',
         },
         html`<article class="legal">${termsBody(CONTACT_EMAIL)}</article>`,

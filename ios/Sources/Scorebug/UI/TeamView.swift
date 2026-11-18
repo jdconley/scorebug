@@ -102,7 +102,7 @@ struct TeamView: View {
             }
             .buttonStyle(BigButtonStyle())
             .accessibilityIdentifier("team.invite")
-            Text("People you invite can film, score and go live with the team. They sign in with Google, no beta list needed.")
+            Text("People you invite can film, score and go live with the team. They sign in with Google.")
                 .font(.footnote).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             if !model.invites.isEmpty {
                 VStack(spacing: 0) {

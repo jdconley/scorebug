@@ -2,7 +2,7 @@
 // handling changes (what's stored, who processes it, how long it's kept), update these too.
 import { html } from 'hono/html';
 
-export const LEGAL_UPDATED = 'November 16, 2026';
+export const LEGAL_UPDATED = 'November 18, 2026';
 
 const GOOGLE_PRIVACY = 'https://policies.google.com/privacy';
 const GOOGLE_PERMISSIONS = 'https://myaccount.google.com/permissions';
@@ -99,7 +99,7 @@ export const privacyBody = (contact: string) => html`
   <h2>Security and changes</h2>
   <p>
     Data is encrypted in transit, and sign-in tokens are stored only as hashes. If this policy
-    changes, we'll update the date above, and tell beta users by email about significant changes.
+    changes, we'll post the new version on this page and update the date above.
   </p>
 
   <h2>Contact</h2>
@@ -115,12 +115,12 @@ export const termsBody = (contact: string) => html`
     license; these terms are about the hosted service.
   </p>
 
-  <h2>A free private beta</h2>
+  <h2>A free service</h2>
   <p>
-    Scorebug is a free, invite-only beta. It may change, break, or stop at any time, including in
-    the middle of a match. It's provided "as is" and "as available", without warranties of any kind,
-    express or implied, including fitness for a particular purpose. Don't rely on it for anything
-    you can't afford to miss.
+    Scorebug is free. It may change, break, or stop at any time, including in the middle of a match.
+    It's provided "as is" and "as available", without warranties of any kind, express or implied,
+    including fitness for a particular purpose. Don't rely on it for anything you can't afford to
+    miss.
   </p>
 
   <h2>Your account</h2>
@@ -159,7 +159,7 @@ export const termsBody = (contact: string) => html`
   <h2>Ending access</h2>
   <p>
     You can stop using Scorebug at any time and ask us to delete your data. We can suspend or end
-    your access at any time, for example for breaking these terms, or by ending the beta.
+    your access at any time, for example for breaking these terms, or by ending the service.
   </p>
 
   <h2>Liability</h2>
@@ -171,8 +171,8 @@ export const termsBody = (contact: string) => html`
 
   <h2>Changes</h2>
   <p>
-    We may update these terms. We'll change the date above, and tell beta users by email about
-    significant changes. Using Scorebug after a change means you accept it.
+    We may update these terms. We'll post the new version on this page and change the date above.
+    Using Scorebug after a change means you accept it.
   </p>
 
   <h2>Contact</h2>
