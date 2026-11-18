@@ -151,6 +151,18 @@ actor FakeScorebugServer {
             guard let token, sessions.removeValue(forKey: token) != nil else { return (401, ["error": "unauthorized"]) }
             revokedSessions.append(token)
             return (204, [:])
+        case ("DELETE", ["me"]):
+            guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
+            sessions = sessions.filter { $0.value != person.id }
+            people[person.id] = nil
+            connections = connections.filter { $0.value.personId != person.id }
+            for (id, var team) in teams {
+                team.roles[person.id] = nil
+                if team.roles.isEmpty { teams[id] = nil; continue }
+                if !team.roles.values.contains(.owner), let heir = team.roles.keys.sorted().first { team.roles[heir] = .owner }
+                teams[id] = team
+            }
+            return (204, [:])
         case ("GET", ["me"]):
             guard let person = signedInPerson(token) else { return (401, ["error": "unauthorized"]) }
             let mine = teams.values.sorted { $0.team.id < $1.team.id }.compactMap { team in

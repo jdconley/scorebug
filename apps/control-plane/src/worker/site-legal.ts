@@ -83,9 +83,16 @@ export const privacyBody = (contact: string) => html`
       reach your channel.
     </li>
     <li>
-      To delete your Scorebug account and its data, email
-      <a href="mailto:${contact}">${contact}</a> from the address you sign in with. We delete it,
-      including any stored YouTube tokens, within 30 days, and confirm by email.
+      Delete your Scorebug account in the app: Settings, then <strong>Delete account</strong>. It
+      happens right away. We delete your account, sign you out on every device, revoke and delete
+      your YouTube connections, and stop any match streaming to your channel. Teams only you are on
+      are deleted with their matches; on teams with other people you're removed, and if you were the
+      only owner, the longest-standing member becomes owner. Recordings on your iPhone stay there
+      until you delete them.
+    </li>
+    <li>
+      Can't use the app? Email <a href="mailto:${contact}">${contact}</a> from the address you sign
+      in with. We delete your account the same way within 30 days, and confirm by email.
     </li>
   </ul>
 

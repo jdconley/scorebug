@@ -137,6 +137,24 @@ enum SignInBrowserError: Error { case cancelled, unavailable }
         forgetAccount()
     }
 
+    /// Deletes the account on the server, then forgets it here like sign-out. Recordings stay.
+    /// False (with `error` set) when the server didn't confirm; the account is kept.
+    func deleteAccount() async -> Bool {
+        guard activeSession == nil, let account, !busy else { return false }
+        busy = true; error = nil
+        defer { busy = false }
+        do {
+            try await client.deleteAccount(token: account.token)
+        } catch MatchClientError.unauthorized {
+            // The token is already gone; nothing more this phone can delete.
+        } catch {
+            self.error = FriendlyError.message(error)
+            return false
+        }
+        forgetAccount()
+        return true
+    }
+
     private func forgetAccount() {
         try? store.setValue(Account?.none, for: StoreKey.account)
         account = nil; me = nil

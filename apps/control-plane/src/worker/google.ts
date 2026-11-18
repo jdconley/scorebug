@@ -36,10 +36,13 @@ export interface GoogleOAuth {
     code: string,
     redirectUri: string,
   ): Promise<{ refreshToken: string | null; scopes: string[] }>;
+  /** Revokes a refresh token, and with it the grant. Throws GoogleOAuthError. */
+  revoke(refreshToken: string): Promise<void>;
 }
 
 const AUTHORIZE = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN = 'https://oauth2.googleapis.com/token';
+const REVOKE = 'https://oauth2.googleapis.com/revoke';
 const ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
 
 function decodeJwtPayload(jwt: string): Record<string, unknown> {
@@ -115,6 +118,20 @@ export function realGoogle(
         refreshToken: body.refresh_token ?? null,
         scopes: (body.scope ?? '').split(' ').filter(Boolean),
       };
+    },
+    async revoke(refreshToken) {
+      let response: Response;
+      try {
+        response = await fetcher(REVOKE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: refreshToken }),
+        });
+      } catch {
+        throw new GoogleOAuthError('google_unreachable');
+      }
+      // 400 invalid_token: already revoked or expired, which is the goal.
+      if (!response.ok && response.status !== 400) throw new GoogleOAuthError('revoke_failed');
     },
   };
 

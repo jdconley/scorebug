@@ -149,6 +149,11 @@ final class ScreenTourTests: XCTestCase {
         app.buttons["home.settings"].tap()
         XCTAssertTrue(app.buttons["settings.signOut"].waitForExistence(timeout: 5))
         shot(app, "14-settings")
+        app.buttons["settings.deleteAccount"].tap()
+        let confirm = app.alerts.buttons["settings.deleteAccount.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        shot(app, "14b-delete-account")
+        app.alerts.buttons["Cancel"].tap()
         app.buttons["Done"].tap()
         let newMatch = app.buttons["home.newMatch"].firstMatch
         XCTAssertTrue(newMatch.waitForExistence(timeout: 10))

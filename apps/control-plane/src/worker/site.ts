@@ -311,10 +311,12 @@ const support = (c: Context<AppEnv>) =>
 
       <h2>How do I delete my account and data?</h2>
       <p>
+        In the app, open Settings and tap <strong>Delete account</strong>. Your account, your
+        YouTube connections and teams only you are on are deleted right away; teams with other
+        people keep going without you. Recordings on your iPhone stay there. Can't use the app?
         Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> from the address you sign in
-        with. We delete your account and its data, including any stored YouTube tokens, within 30
-        days, and confirm by email. You can also remove Scorebug's access to your Google account and
-        YouTube channel at any time at
+        with, and we delete it within 30 days. You can also remove Scorebug's access to your Google
+        account and YouTube channel at any time at
         <a href="${GOOGLE_PERMISSIONS}">myaccount.google.com/permissions</a>. The
         <a href="/privacy">privacy policy</a> has the details.
       </p>

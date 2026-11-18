@@ -66,6 +66,7 @@ describe('support page', () => {
     expect(body).toContain('href="https://www.youtube.com/features"');
     expect(body).toContain('Invite scorer');
     expect(body).toContain('Join with a code');
+    expect(body).toContain('<strong>Delete account</strong>');
     expect(body).toMatch(/within 30\s+days/);
     expect(body).toContain('href="https://myaccount.google.com/permissions"');
     expect(body).toContain('mailto:jd.conley@gmail.com');
@@ -86,6 +87,8 @@ describe('privacy policy', () => {
     expect(body).toContain('href="https://www.youtube.com/t/terms"');
     expect(body).toContain('Limited Use');
     expect(body).toMatch(/doesn't record or store the video/);
+    expect(body).toContain('<strong>Delete account</strong>');
+    expect(body).toMatch(/longest-standing member becomes owner/);
     expect(body).toContain('mailto:jd.conley@gmail.com');
     expect(body).toContain('Last updated November 18, 2026');
     expect(body).not.toMatch(BETA_WORDS);

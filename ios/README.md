@@ -61,7 +61,8 @@ scoring screens use Team 1, Team 2 and the team names.
    shows **Take over**.
 9. **Recordings.** Each recording with its teams and result, date, length, resolution and size.
    **Play**, **Save to Photos** and **Share**. Recordings stay on the phone.
-10. **Settings.** Name and email, and **Sign out**.
+10. **Settings.** Name and email, **Sign out**, and **Delete account**, which asks first, deletes
+    the account on the server (`DELETE /v1/me`) and then signs out. Recordings stay on the phone.
 
 Debug builds can use another server: the **Server** button on the sign-in screen, Settings →
 Developer, or the `SCOREBUG_TEST_API_URL` environment variable. Changing the server signs you out.
@@ -156,7 +157,8 @@ Every push to `main` that changes `ios/**`, `vendor/HaishinKit/**` or `native.ym
 `release/testflight.sh` with an App Store Connect API key from the `ASC_KEY_ID`, `ASC_ISSUER_ID` and
 `ASC_KEY_P8` secrets; without them the upload is skipped with a notice. Afterwards it revokes the
 development certificate the archive created on the runner (`release/certs.swift`). The internal
-TestFlight group gets every build once Apple has processed it.
+TestFlight group gets every build once Apple has processed it, and any build can be submitted for
+App Store review from App Store Connect.
 
 `release/testflight.sh` does the same by hand. It needs an Admin App Store Connect API key at
 `~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8` (or `ASC_KEY_PATH`):

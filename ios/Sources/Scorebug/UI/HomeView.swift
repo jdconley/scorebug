@@ -328,6 +328,8 @@ struct SettingsSheet: View {
     @ObservedObject var app: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var confirmSignOut = false
+    @State private var confirmDelete = false
+    @State private var deleteError: String?
     @State private var developer = false
 
     var body: some View {
@@ -342,6 +344,19 @@ struct SettingsSheet: View {
                         .accessibilityIdentifier("settings.signOut")
                 } footer: {
                     Text("Recordings stay on this phone. Sign in again any time.")
+                }
+                Section {
+                    Button(role: .destructive) { confirmDelete = true } label: {
+                        if app.busy { ProgressView() } else { Text("Delete account") }
+                    }
+                    .disabled(app.busy)
+                    .accessibilityIdentifier("settings.deleteAccount")
+                } footer: {
+                    if let error = deleteError {
+                        Text(error).foregroundStyle(Theme.warn).accessibilityIdentifier("settings.deleteAccount.error")
+                    } else {
+                        Text("Deletes your Scorebug account and its data for good.")
+                    }
                 }
                 #if DEBUG
                 Section("Developer") {
@@ -360,7 +375,31 @@ struct SettingsSheet: View {
             .confirmationDialog("Sign out of Scorebug?", isPresented: $confirmSignOut, titleVisibility: .visible) {
                 Button("Sign out", role: .destructive) { Task { dismiss(); await app.signOut() } }
             }
+            .alert("Delete your Scorebug account?", isPresented: $confirmDelete) {
+                Button("Delete account", role: .destructive) { Task { await deleteAccount() } }
+                    .accessibilityIdentifier("settings.deleteAccount.confirm")
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(Self.deleteMessage)
+            }
             .sheet(isPresented: $developer) { DeveloperServerSheet(app: app) }
         }
+    }
+
+    /// Exactly what DELETE /v1/me removes (apps/control-plane/src/worker/account.ts).
+    static let deleteMessage = """
+        This can't be undone. Scorebug deletes your account, signs you out on every device, \
+        and removes your YouTube channel connections and Scorebug's access to them. A match \
+        streaming to your channel stops.
+
+        Teams only you are on are deleted with their matches. You leave teams with other people; \
+        if you're the only owner, the longest-standing member becomes owner.
+
+        Recordings stay on this iPhone.
+        """
+
+    private func deleteAccount() async {
+        deleteError = nil
+        if await app.deleteAccount() { dismiss() } else { deleteError = app.error ?? "Couldn't delete your account. Try again." }
     }
 }

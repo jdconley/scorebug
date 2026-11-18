@@ -118,6 +118,52 @@ import XCTest
         XCTAssertEqual(revoked, [token])
     }
 
+    func testDeleteAccountDeletesOnTheServerAndForgetsTheAccount() async throws {
+        await server.addTeam("t1", name: "Cascade 14 Black", member: "p-jd", role: .owner)
+        let app = makeApp()
+        await app.signIn()
+        let token = try XCTUnwrap(app.account?.token)
+        let deleted = await app.deleteAccount()
+        XCTAssertTrue(deleted)
+        XCTAssertNil(app.error)
+        XCTAssertEqual(app.route, .signIn)
+        XCTAssertNil(app.account)
+        XCTAssertNil(app.me)
+        XCTAssertNil(try store.value(Account.self, for: StoreKey.account))
+        let request = await server.requests.last
+        XCTAssertEqual(request?.method, "DELETE")
+        XCTAssertEqual(request?.path, "/v1/me")
+        let stillSignedIn = await server.sessions[token]
+        XCTAssertNil(stillSignedIn)
+        let team = await server.teams["t1"]
+        XCTAssertNil(team, "a team only they were on is gone")
+    }
+
+    func testDeleteAccountKeepsTheAccountWhenTheServerFails() async throws {
+        let app = makeApp()
+        await app.signIn()
+        await server.set(failNextWith: .notConnectedToInternet)
+        let deleted = await app.deleteAccount()
+        XCTAssertFalse(deleted)
+        XCTAssertNotNil(app.error)
+        XCTAssertNotNil(app.account)
+        XCTAssertEqual(app.route, .home)
+        XCTAssertNotNil(try store.value(Account.self, for: StoreKey.account))
+    }
+
+    func testDeleteAccountIsRefusedMidMatch() async {
+        let app = makeApp()
+        await app.signIn()
+        app.begin(MatchSession(kind: .scoring, endpoint: "https://scorebug.live",
+                               credential: MatchCredential(gameId: "m1", deviceId: "d", role: .score, token: "t"),
+                               recordOnly: true, layout: CourtLayout(), startedAt: Date(), teamId: "t1"))
+        let deleted = await app.deleteAccount()
+        XCTAssertFalse(deleted)
+        XCTAssertNotNil(app.account)
+        let requests = await server.requests
+        XCTAssertFalse(requests.contains { $0.method == "DELETE" && $0.path == "/v1/me" })
+    }
+
     func testARevokedTokenSignsOutOnTheNextRefresh() async throws {
         let app = makeApp()
         await app.signIn()

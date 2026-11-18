@@ -87,6 +87,22 @@ nothing for an account that is not an admin, and lists every team.
 }
 ```
 
+`DELETE /v1/me` (session) deletes the account for good → `204`. In order:
+
+1. Teams with no other member are deleted: every open match's media is torn down
+   (container, Stream input, YouTube broadcast), then the team object's storage,
+   and the team's invites, match routing and membership rows.
+2. On every other team, each match broadcasting to one of the person's YouTube
+   connections is stopped, its broadcast ended and forgotten; the next Go Live
+   needs the team's new channel (`youtube_not_set` until an owner picks one).
+3. Google grants for the person's connections and unclaimed grants are revoked
+   (best effort).
+4. In one D1 transaction: on teams they owned alone, the longest-standing member
+   becomes owner; then their memberships, invites bound to their email, YouTube
+   connections (teams streaming to one lose their channel) and grants, sign-in
+   tickets, sessions and the person are deleted. Every token they held gets `401`
+   afterwards.
+
 ## Teams
 
 All team routes need a session token. Non-members get `404 team_not_found`;

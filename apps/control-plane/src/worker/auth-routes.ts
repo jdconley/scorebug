@@ -1,6 +1,7 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { z } from 'zod';
+import { deleteAccount } from './account.js';
 import type { Person } from './directory.js';
 import type { AppEnv, Env, PersonEnv } from './env.js';
 import { GoogleOAuthError, type GoogleIdentity, type GoogleOAuth } from './google.js';
@@ -181,7 +182,7 @@ export function authRoutes(google: GoogleOAuth, admin?: AdminCallback, youtube?:
   return app;
 }
 
-export function meRoutes() {
+export function meRoutes(google: GoogleOAuth) {
   const app = new Hono<PersonEnv>();
   app.get('/', requirePerson(), async (c) => {
     const person = c.var.person;
@@ -197,6 +198,11 @@ export function meRoutes() {
       })),
       serverTime: serverTime(),
     });
+  });
+  /** Deletes the account for good: see account.ts. */
+  app.delete('/', requirePerson(), async (c) => {
+    await deleteAccount(c, google);
+    return c.body(null, 204);
   });
   return app;
 }
