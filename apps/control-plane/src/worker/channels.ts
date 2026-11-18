@@ -197,6 +197,34 @@ export class Channels {
     return row.ingest_enc ? open(this.secret, INGEST_URL, row.ingest_enc) : Promise.resolve(null);
   }
 
+  /** Every Google refresh token held for a person (connections and unclaimed grants), so
+   * deleting the account can revoke them. Tokens that no longer decrypt are skipped. */
+  async refreshTokensFor(personId: string): Promise<string[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT refresh_token_enc FROM youtube_connections WHERE person_id=?1
+        UNION ALL SELECT refresh_token_enc FROM youtube_grants WHERE person_id=?1`,
+      )
+      .bind(personId)
+      .all<{ refresh_token_enc: string }>();
+    const tokens = await Promise.all(
+      results.map((row) => open(this.secret, REFRESH_TOKEN, row.refresh_token_enc)),
+    );
+    return tokens.filter((token): token is string => token !== null);
+  }
+
+  /** Teams streaming to one of the person's connections, whether or not they're on the team. */
+  async teamsOnConnectionsOf(personId: string): Promise<string[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT teams.id FROM teams JOIN youtube_connections c ON c.id=teams.youtube_connection_id
+        WHERE c.person_id=?`,
+      )
+      .bind(personId)
+      .all<{ id: string }>();
+    return results.map((row) => row.id);
+  }
+
   // ------------------------------------------------------------ team channel
 
   async teamConnection(teamId: string): Promise<ConnectionRow | null> {

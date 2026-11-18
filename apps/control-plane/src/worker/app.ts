@@ -48,7 +48,7 @@ export function createWorkerApp(deps: WorkerDeps): Hono<AppEnv> {
     youtubeRoutes(deps.google, () => deps.youtube ?? mediaAdapters(deps.env).youtube, callbackUrl),
   );
   app.route('/admin', adminRoutes());
-  app.route('/v1/me', meRoutes());
+  app.route('/v1/me', meRoutes(deps.google));
   app.route('/', matchForwardingRoutes());
   app.route('/v1/teams', teamRoutes());
   app.route('/v1/team-invites', teamInviteRoutes());

@@ -34,7 +34,9 @@ and served at `scorebug.live`. It handles:
   redirects to `scorebug://auth` with a single-use ticket, and the app trades the
   ticket plus its verifier for a long-lived session token (`auth-routes.ts`).
 - **Open sign-in.** Any Google account with a verified email can sign in and
-  create teams. Admins (the `ADMIN_EMAILS` secret) see every team at `/admin`, a
+  create teams. `DELETE /v1/me` deletes the account from the app's Settings
+  (`account.ts`): teams with no one else go with it, and on the rest the
+  longest-standing member becomes owner if needed. Admins (the `ADMIN_EMAILS` secret) see every team at `/admin`, a
   server-rendered page (`admin-page.ts`).
 - **Teams.** Teams have owners and members. Owners mint team invites (an 8-character
   code and a `https://scorebug.live/invite/<code>` link, optionally bound to one
@@ -117,6 +119,9 @@ match's live slot, and applies the guards:
   Stream input and ends the YouTube broadcast. A broadcast that never went live is
   deleted instead.
 - **Time limit.** A match is torn down 4 hours after it first went live.
+- **Account deletion.** Matches of a deleted team are torn down. A match on a
+  surviving team that streams to the deleted person's channel stops and forgets
+  its broadcast.
 - **Idle.** With no fresh output for 10 minutes, the container is parked. It starts
   again when Stream reports the phone connected, or when the phone asks for its
   publish URL.

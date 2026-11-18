@@ -71,8 +71,10 @@ type HostedRow = {
   containerStartedAt: number | null;
   lastOutputAt: number | null;
   ended: boolean;
-  endReason: 'match_ended' | 'time_limit' | null;
+  endReason: TeardownReason | null;
 };
+/** Why a match's media was torn down: it ended, it hit the 4-hour cap, or its team was deleted. */
+type TeardownReason = 'match_ended' | 'time_limit' | 'team_deleted';
 
 export type HostedMediaDeps = {
   sql: SqlDb;
@@ -473,25 +475,28 @@ export class HostedMedia implements MediaLifecycle {
     await this.startContainer(gameId);
   }
 
-  /** End of match (or the 4-hour cap): nothing for this match keeps billing. */
-  async teardown(gameId: string, reason: 'match_ended' | 'time_limit'): Promise<void> {
+  /** Records a stop in the match store, as if a member tapped it, when the match is live. */
+  private stopInStore(gameId: string, why: string): void {
+    const broadcast = this.deps.store.media.get(gameId).broadcast;
+    if (broadcast.desired !== 'running') return;
+    this.deps.store.media.execute(
+      {
+        commandId: `${why}-${broadcast.generation}`,
+        gameId,
+        expectedGeneration: broadcast.generation,
+        issuedAt: new Date(this.now()).toISOString(),
+        operation: { type: 'stop' },
+      },
+      { workerId: WORKER_ID, outputId: OUTPUT_ID },
+    );
+  }
+
+  /** End of match, the 4-hour cap, or a deleted team: nothing for this match keeps billing. */
+  async teardown(gameId: string, reason: TeardownReason): Promise<void> {
     await this.locked(`teardown:${gameId}`, async () => {
       const row = this.row(gameId);
       if (!row || row.ended) return;
-      if (reason === 'time_limit') {
-        const broadcast = this.deps.store.media.get(gameId).broadcast;
-        if (broadcast.desired === 'running')
-          this.deps.store.media.execute(
-            {
-              commandId: `time-limit-${broadcast.generation}`,
-              gameId,
-              expectedGeneration: broadcast.generation,
-              issuedAt: new Date(this.now()).toISOString(),
-              operation: { type: 'stop' },
-            },
-            { workerId: WORKER_ID, outputId: OUTPUT_ID },
-          );
-      }
+      if (reason === 'time_limit') this.stopInStore(gameId, 'time-limit');
       await this.stopContainer(gameId, 'stopped');
       if (row.input) {
         try {
@@ -510,6 +515,34 @@ export class HostedMedia implements MediaLifecycle {
       });
       console.log('match_media_torn_down', gameId, reason);
     });
+  }
+
+  /** The team is being deleted: tear down every open match. */
+  async teardownAll(): Promise<void> {
+    for (const row of this.openRows()) await this.teardown(row.gameId, 'team_deleted');
+  }
+
+  /**
+   * These YouTube connections are going away (their owner deleted the account). Every match
+   * broadcasting to one stops, its broadcast ends while the token still works, and the match
+   * forgets it: a later Go Live needs the team's new channel.
+   */
+  async releaseConnections(connectionIds: string[]): Promise<void> {
+    const ids = new Set(connectionIds);
+    for (const open of this.openRows()) {
+      if (!open.broadcast || !ids.has(open.broadcast.connectionId)) continue;
+      await this.locked(`broadcast:${open.gameId}`, async () => {
+        const row = this.row(open.gameId);
+        if (!row?.broadcast || !ids.has(row.broadcast.connectionId)) return;
+        this.stopInStore(row.gameId, 'channel-removed');
+        await this.stopContainer(row.gameId, 'stopped');
+        await this.endBroadcast(row.broadcast);
+        this.update(row.gameId, (next) => {
+          next.broadcast = null;
+        });
+        console.log('match_channel_released', row.gameId);
+      });
+    }
   }
 
   private async endBroadcast(broadcast: NonNullable<HostedRow['broadcast']>): Promise<void> {

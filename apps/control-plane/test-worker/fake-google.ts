@@ -6,6 +6,9 @@ export class FakeGoogle implements GoogleOAuth {
   private readonly grants = new Map<string, GoogleGrant>();
   private next = 0;
   readonly authorizeCalls: Parameters<GoogleOAuth['authorizeUrl']>[0][] = [];
+  readonly revoked: string[] = [];
+  /** Makes every revoke fail, as when Google is unreachable. */
+  revokeFails = false;
 
   grant(identity: Partial<GoogleIdentity> & { email: string }): string {
     const code = `code-${++this.next}`;
@@ -48,6 +51,11 @@ export class FakeGoogle implements GoogleOAuth {
   async exchangeForRefreshToken(code: string) {
     const grant = await this.exchange(code);
     return { refreshToken: grant.refreshToken, scopes: grant.scopes };
+  }
+
+  async revoke(refreshToken: string) {
+    if (this.revokeFails) throw new GoogleOAuthError('google_unreachable');
+    this.revoked.push(refreshToken);
   }
 
   async exchange(code: string): Promise<GoogleGrant> {

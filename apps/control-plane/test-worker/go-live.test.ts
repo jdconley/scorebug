@@ -528,3 +528,64 @@ it('the daily sweep deletes Stream inputs no open match uses', async () => {
   expect(fakes.stream.inputs.has(stranger)).toBe(true);
   expect(fakes.container.running).toBe(true);
 });
+
+// ------------------------------------------------------------------- account deletion
+
+const deleteAccount = (token: string) =>
+  h.call('/v1/me', { method: 'DELETE', headers: h.auth(token) });
+
+it('deleting the account ends its live match, deletes its only team and revokes Google', async () => {
+  const owner = await liveReadyTeam();
+  await filming(owner);
+  expect((await body(await start(owner))).accepted).toBe(true);
+  expect(fakes.container.running).toBe(true);
+
+  expect((await deleteAccount(owner.token)).status).toBe(204);
+  expect(fakes.container.running).toBe(false);
+  expect(fakes.stream.inputs.size).toBe(0);
+  expect([...fakes.youtube.broadcasts.values()][0]!.state).not.toBe('ready');
+  expect(h.google.revoked).toEqual(['refresh-owner']);
+  for (const table of ['youtube_connections', 'youtube_grants', 'live_slots', 'teams', 'people'])
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first('n')).toBe(0);
+});
+
+it("a team that stays stops streaming to the deleted owner's channel and needs a new one", async () => {
+  const owner = await liveReadyTeam();
+  const { code } = await invite(h, owner.token, owner.teamId);
+  const member = await h.signIn('parent@example.com', { invite: code });
+  const { capture } = await filming(owner);
+  expect((await body(await start(owner))).accepted).toBe(true);
+
+  expect((await deleteAccount(owner.token)).status).toBe(204);
+  expect(fakes.container.running).toBe(false);
+  expect(fakes.youtube.calls).toContain('endBroadcast');
+  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM live_slots').first('n')).toBe(0);
+  // The match carries on, stopped and without the old broadcast.
+  const read = await body(await h.call('/v1/matches/game-1', { headers: h.auth(capture.token) }));
+  expect(read.youtube).toBeNull();
+  expect(read.snapshot.status).toBe('active');
+  const detail = await body(
+    await h.call(`/v1/teams/${owner.teamId}`, { headers: h.auth(member.token) }),
+  );
+  expect(detail).toMatchObject({ role: 'owner', youtube: null });
+  // The new owner's Go Live asks for a channel; once there is one, it goes live there.
+  const refused = await start({ token: member.token, teamId: owner.teamId }, 2);
+  expect(await body(refused)).toMatchObject({ accepted: false, error: 'youtube_not_set' });
+  const { claimed } = await connect(member.token, { refreshToken: 'refresh-parent' });
+  const { connection } = await body(claimed);
+  await h.call(`/v1/teams/${owner.teamId}/youtube`, {
+    method: 'PUT',
+    headers: { ...h.auth(member.token), 'content-type': 'application/json' },
+    body: JSON.stringify({ connectionId: connection.id }),
+  });
+  const again = await body(await start({ token: member.token, teamId: owner.teamId }, 2));
+  expect(again.accepted).toBe(true);
+  expect(fakes.youtube.broadcasts.size).toBe(2);
+});
+
+it('a failed Google revoke does not stop the deletion', async () => {
+  const owner = await liveReadyTeam();
+  h.google.revokeFails = true;
+  expect((await deleteAccount(owner.token)).status).toBe(204);
+  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM youtube_connections').first('n')).toBe(0);
+});

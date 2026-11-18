@@ -33,6 +33,12 @@ extension MatchHTTPClient {
         try await send(root: ["me"], path: [], token: token)
     }
 
+    /// Deletes the account for good: the person, every session, their YouTube connections, and
+    /// teams no one else is on. Teams with other people keep going without them.
+    public func deleteAccount(token: String) async throws {
+        let _: NoContent = try await send(root: ["me"], path: [], method: "DELETE", token: token)
+    }
+
     // MARK: Teams
 
     public func createTeam(name: String, token: String) async throws -> TeamJoined {

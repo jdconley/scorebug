@@ -216,10 +216,8 @@ export class Directory {
     const now = this.now();
     await this.db.batch([
       this.db
-        .prepare(
-          'INSERT INTO teams(id,name,short_name,color,created_by,created_at) VALUES(?,?,?,?,?,?)',
-        )
-        .bind(id, fields.name, fields.shortName, fields.color, personId, now),
+        .prepare('INSERT INTO teams(id,name,short_name,color,created_at) VALUES(?,?,?,?,?)')
+        .bind(id, fields.name, fields.shortName, fields.color, now),
       this.db
         .prepare("INSERT INTO memberships(team_id,person_id,role,created_at) VALUES(?,?,'owner',?)")
         .bind(id, personId, now),
@@ -298,6 +296,75 @@ export class Directory {
       return 'removed';
     }
     return (await this.membership(teamId, personId)) ? 'last_owner' : 'not_found';
+  }
+
+  /** The person's teams, with how many members and owners each has. */
+  async membershipsWithCounts(
+    personId: string,
+  ): Promise<{ teamId: string; role: TeamRole; members: number; owners: number }[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT m.team_id, m.role,
+          (SELECT COUNT(*) FROM memberships x WHERE x.team_id=m.team_id) AS members,
+          (SELECT COUNT(*) FROM memberships x WHERE x.team_id=m.team_id AND x.role='owner') AS owners
+        FROM memberships m WHERE m.person_id=?`,
+      )
+      .bind(personId)
+      .all<{ team_id: string; role: TeamRole; members: number; owners: number }>();
+    return results.map((r) => ({
+      teamId: r.team_id,
+      role: r.role,
+      members: r.members,
+      owners: r.owners,
+    }));
+  }
+
+  /**
+   * Deletes a person and everything D1 holds about them, in one transaction: their sessions,
+   * sign-in tickets, YouTube grants and connections (teams streaming to one lose their channel),
+   * invites bound to their email, and their memberships. `eraseTeams` (teams with no one else on
+   * them) go too, with their invites and match routing. On every other team they owned alone,
+   * the longest-standing member becomes the owner.
+   */
+  async deletePerson(person: Person, eraseTeams: string[]): Promise<void> {
+    const db = this.db;
+    const id = person.id;
+    const erase = eraseTeams.flatMap((teamId) => [
+      db.prepare('DELETE FROM team_invites WHERE team_id=?').bind(teamId),
+      db.prepare('DELETE FROM match_codes WHERE team_id=?').bind(teamId),
+      db.prepare('DELETE FROM match_index WHERE team_id=?').bind(teamId),
+      db.prepare('DELETE FROM live_slots WHERE team_id=?').bind(teamId),
+      db.prepare('DELETE FROM memberships WHERE team_id=?').bind(teamId),
+      db.prepare('DELETE FROM teams WHERE id=?').bind(teamId),
+    ]);
+    await db.batch([
+      ...erase,
+      db
+        .prepare(
+          `UPDATE memberships SET role='owner'
+          WHERE person_id=(SELECT heir.person_id FROM memberships heir
+            WHERE heir.team_id=memberships.team_id AND heir.person_id<>?1
+            ORDER BY heir.created_at, heir.person_id LIMIT 1)
+          AND team_id IN (SELECT mine.team_id FROM memberships mine
+            WHERE mine.person_id=?1 AND mine.role='owner' AND NOT EXISTS(
+              SELECT 1 FROM memberships other WHERE other.team_id=mine.team_id
+              AND other.role='owner' AND other.person_id<>?1))`,
+        )
+        .bind(id),
+      db.prepare('DELETE FROM memberships WHERE person_id=?').bind(id),
+      db.prepare('DELETE FROM team_invites WHERE email=?').bind(normalizeEmail(person.email)),
+      db
+        .prepare(
+          `UPDATE teams SET youtube_connection_id=NULL WHERE youtube_connection_id IN
+          (SELECT id FROM youtube_connections WHERE person_id=?)`,
+        )
+        .bind(id),
+      db.prepare('DELETE FROM youtube_connections WHERE person_id=?').bind(id),
+      db.prepare('DELETE FROM youtube_grants WHERE person_id=?').bind(id),
+      db.prepare('DELETE FROM auth_tickets WHERE person_id=?').bind(id),
+      db.prepare('DELETE FROM sessions WHERE person_id=?').bind(id),
+      db.prepare('DELETE FROM people WHERE id=?').bind(id),
+    ]);
   }
 
   async teamsWithCounts(): Promise<(Team & { members: number; owners: number })[]> {

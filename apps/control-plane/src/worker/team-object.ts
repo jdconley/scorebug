@@ -282,6 +282,21 @@ export class TeamObject extends DurableObject<Env> {
     await this.media.alarm();
   }
 
+  /** Account deletion: every match broadcasting to these YouTube connections stops and
+   * forgets its broadcast. */
+  async releaseConnections(teamId: string, connectionIds: string[]): Promise<void> {
+    this.team ??= teamId;
+    await this.media.releaseConnections(connectionIds);
+  }
+
+  /** The team is being deleted: tear down every match's media, then drop all its storage. */
+  async erase(teamId: string): Promise<void> {
+    this.team ??= teamId;
+    await this.media.teardownAll();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+  }
+
   /** The daily sweep: guards, orphaned container, and the Stream inputs still in use. */
   async sweep(teamId: string): Promise<{ inputs: string[] }> {
     this.team ??= teamId;

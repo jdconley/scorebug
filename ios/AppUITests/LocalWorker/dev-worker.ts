@@ -31,6 +31,7 @@ const google: GoogleOAuth = {
     // FakeYouTube accepts refresh tokens that start with "refresh-".
     return { refreshToken: 'refresh-' + email, scopes: ['openid', 'email', 'profile', youtubeScope] };
   },
+  async revoke() {},
 };
 
 export default {

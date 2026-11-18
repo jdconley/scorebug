@@ -82,6 +82,16 @@ final class AccountClientTests: XCTestCase {
         try await client.deleteSession(token: "session")
     }
 
+    func testDeleteAccountSendsTheSessionToken() async throws {
+        let client = MatchHTTPClient(endpoint: try ScoringEndpoint("http://localhost:8787"), transport: { request in
+            XCTAssertEqual(request.url?.path, "/v1/me")
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session")
+            return (Data(), HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!)
+        })
+        try await client.deleteAccount(token: "session")
+    }
+
     func testMeDecodesTeamsAndRoles() async throws {
         let body = ##"{"person":\##(person),"teams":[{"id":"t1","name":"Cascade 14 Black","shortName":"CASCADE","color":"#2563EB","role":"owner"}],"serverTime":"t"}"##
         let client = try client(status: 200, body: body) { request in
