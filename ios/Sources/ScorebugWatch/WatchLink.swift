@@ -15,11 +15,13 @@ import WatchKit
     @Published private(set) var sending = false
     private var newest: Double = 0
     private var lastUpdate = Date.distantPast
+    /// Showing a fixed match for App Store screenshots: no phone, nothing to refresh.
+    private var demo = false
 
     /// While the app is on screen: ask the phone again whenever nothing fresh has arrived,
     /// so a missed push or a phone app that opened later never leaves the Watch stale.
     func keepFresh() async {
-        while !Task.isCancelled {
+        while !Task.isCancelled, !demo {
             let session = WCSession.default
             if session.activationState == .activated {
                 connection = session.isReachable ? .reachable : .phoneAway
@@ -30,6 +32,16 @@ import WatchKit
     }
 
     func activate() {
+        #if DEBUG && targetEnvironment(simulator)
+        // App Store screenshots (ios/AppStore/capture-watch.sh): a match state as JSON, no phone.
+        if let json = ProcessInfo.processInfo.environment["SCOREBUG_WATCH_STATE"],
+           let demo = try? JSONDecoder().decode(WatchRemote.State.self, from: Data(json.utf8)) {
+            state = demo
+            connection = .reachable
+            self.demo = true
+            return
+        }
+        #endif
         guard WCSession.isSupported() else { connection = .phoneAway; return }
         WCSession.default.delegate = self
         if WCSession.default.activationState == .activated { refresh() } else { WCSession.default.activate() }
@@ -37,6 +49,7 @@ import WatchKit
 
     /// Ask the phone for the current match (on launch and when it comes back in range).
     func refresh() {
+        guard !demo else { return }
         let session = WCSession.default
         apply(session.receivedApplicationContext)
         connection = session.isReachable ? .reachable : .phoneAway

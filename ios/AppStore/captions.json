@@ -1,0 +1,8 @@
+[
+  { "shot": "live", "title": "Go live on YouTube", "line": "The score is on the video, for everyone watching" },
+  { "shot": "scorer", "title": "Score from the stands", "line": "A second phone keeps score while you film" },
+  { "shot": "invite-scorer", "title": "Hand off scoring", "line": "They scan the code. No account needed" },
+  { "shot": "new-match", "title": "Set up in seconds", "line": "Teams, colors, best of 3 or 5" },
+  { "shot": "team", "title": "Your team, your channel", "line": "Coaches and parents can film or score" },
+  { "shot": "final", "title": "Every set, saved", "line": "Recorded on the phone in 1080p or 4K" }
+]

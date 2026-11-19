@@ -1,0 +1,23 @@
+Scorebug films a volleyball match on an iPhone, keeps score, and streams the video to the team's YouTube channel with the score drawn on the video.
+
+SIGNING IN
+Tap "Sign in with Google" and use any Google account. No demo account is needed: every account can create a team. Scorebug uses Google sign-in because its core feature streams to the user's own YouTube channel, which needs their Google account; Sign in with Apple cannot grant access to a YouTube channel. Scorebug sees only the name and email, and asks for YouTube access separately, only when a team owner connects a channel.
+
+TRYING IT WITHOUT A YOUTUBE CHANNEL
+YouTube only lets channels with live streaming turned on go live, and turning it on can take YouTube up to 24 hours. To see everything else:
+1. Sign in, tap Create team and name it.
+2. On the home screen tap New match, type an opponent name, and choose "Record only, don't stream".
+3. Turn the phone to landscape. Tap the left or right half of the screen to score points; Undo and Swap sides are at the bottom. At 25 points Scorebug asks before ending the set.
+4. Tap Invite scorer to see the QR code and match code a second phone uses to keep score (on a second device: Join with a code, no account needed).
+5. Tap End to finish; the recording is saved under Recordings on the home screen.
+
+WITH A YOUTUBE CHANNEL
+On the team screen tap "Connect a YouTube channel" and approve access, then New match and Go Live. The broadcast is unlisted; Watch link shares it.
+
+APPLE WATCH
+With a match open on the iPhone, the Watch app shows the score; tap a team to add a point, and confirm set ends from the wrist.
+
+DELETING AN ACCOUNT
+Settings (gear on the home screen) > Delete account deletes the account and its data on our server.
+
+Support: https://scorebug.live/support

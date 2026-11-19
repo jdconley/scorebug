@@ -32,6 +32,8 @@ targets:
       - path: Resources/Assets.xcassets
       - path: Resources/Fonts
         buildPhase: resources
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     info:
       path: Resources/Info.plist
       properties:
@@ -173,3 +175,5 @@ schemes:
         SCOREBUG_TEST_API_URL: $(SCOREBUG_TEST_API_URL)
         SCOREBUG_TEST_LINK: $(SCOREBUG_TEST_LINK)
         SCOREBUG_TEST_TOUR: $(SCOREBUG_TEST_TOUR)
+        SCOREBUG_STORE_MEDIA: $(SCOREBUG_STORE_MEDIA)
+        SCOREBUG_STORE_PREVIEW: $(SCOREBUG_STORE_PREVIEW)

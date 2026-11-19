@@ -1,3 +1,4 @@
+import AVFoundation
 import ScorebugCore
 import SwiftUI
 import UIKit
@@ -248,9 +249,19 @@ private struct CameraLayer: View {
 }
 
 #if DEBUG && targetEnvironment(simulator)
-/// Simulator stand-in for the camera: a court seen from the stands.
+/// Simulator stand-in for the camera: the staged clip the capture source reads
+/// (SCOREBUG_TEST_FILE_CAPTURE), or else a court seen from the stands.
 private struct SimulatedCourt: View {
     var body: some View {
+        if ProcessInfo.processInfo.environment["SCOREBUG_TEST_FILE_CAPTURE"] == "1" {
+            FixtureClipView(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Scorebug/QA/input.mov"))
+        } else {
+            drawnCourt
+        }
+    }
+
+    private var drawnCourt: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             ZStack(alignment: .topLeading) {
@@ -262,6 +273,27 @@ private struct SimulatedCourt: View {
                 Rectangle().fill(Color.white.opacity(0.85)).frame(width: w * 0.7, height: 3).offset(x: w * 0.15, y: h * 0.34)
                 Text("Simulator camera").font(.caption2).foregroundStyle(Theme.secondary)
                     .offset(x: w - 130, y: h - 26)
+            }
+        }
+    }
+}
+
+/// A frame of the staged clip, filling the screen like the camera preview (a tripod barely moves).
+private struct FixtureClipView: View {
+    let url: URL
+    @State private var frame: UIImage?
+    var body: some View {
+        GeometryReader { geo in
+            if let frame {
+                Image(uiImage: frame).resizable().scaledToFill().frame(width: geo.size.width, height: geo.size.height).clipped()
+            } else {
+                Color.black
+            }
+        }
+        .task {
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            if let image = try? await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image {
+                frame = UIImage(cgImage: image)
             }
         }
     }
