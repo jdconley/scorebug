@@ -14,8 +14,9 @@ Every claim in the copy is something the app does today.
 | `capture.sh` | Raw screenshots from a simulator (`StoreMediaTests`), live against the local Worker |
 | `capture-watch.sh` | Raw Apple Watch screenshots, from match states passed to the Watch app |
 | `frame.swift`, `captions.json` | Captioned, framed store screenshots from the raw ones |
-| `preview.sh` | The App Store preview video and the website's clip |
-| `screenshots/`, `preview/` | What was uploaded |
+| `preview.sh` | The App Store preview video |
+| `creative.sh` | The header and search result art (3840x1646, 3840x2560) |
+| `screenshots/`, `preview/`, `creative/` | What was uploaded |
 
 ## Listing
 
@@ -84,10 +85,12 @@ cuts 1920x886 H.264 with a quiet stereo room-tone track (previews need audio), 1
 node ios/AppStore/upload-media.mjs
 ```
 
-The privacy label is answered in App Store Connect (App Privacy); the API can't set it.
+The privacy label is answered in App Store Connect (App Privacy), and the header and search
+result art (`creative/`, made by `creative.sh`) is uploaded on the version page under Header and
+Search Results; the API sets neither.
 
 ## The website
 
 `scripts/build-site-media.sh` makes scorebug.live's images and clips from the same raw captures
 and preview, plus the scorebug styles drawn by the match container's own renderer
-(`apps/home-daemon/scripts/render-sample.ts`), into `apps/control-plane/public/media`.
+(`pnpm --filter @scorebug/home-daemon render-scorebug <dir> --media`), into `apps/control-plane/public/media`.

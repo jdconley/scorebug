@@ -39,8 +39,11 @@ import XCTest
     private func tick(_ model: CaptureStreamingModel, bufferMs: Int = 100, retransmits: Int64 = 0, drops: Int64 = 0) async {
         guard let publisher = publishers.last else { return }
         publisher.advance(bufferMs: bufferMs, retransmits: retransmits, drops: drops)
-        await eventually { model.status != .live || publisher.statisticsReads > publisher.lastObservedReads + 1 }
-        publisher.lastObservedReads = publisher.statisticsReads
+        // The session's health loop reads, stores, sleeps and reads again. Once two reads have
+        // started since the advance, the first of them has stored the new counters; counting from
+        // before the advance could poll a stale snapshot on a slow machine.
+        let reads = publisher.statisticsReads
+        await eventually { model.status != .live || publisher.statisticsReads >= reads + 2 }
         model.pollLocalHealth()
         await settle(model)
     }
@@ -362,7 +365,6 @@ final class LadderTestPublisher: MediaPublisher, @unchecked Sendable {
     private var applied: [PublishingVideoProfile] = []
     private var stats = PublishingTransportStatistics(sampledAt: 0, sentPackets: 0, retransmittedPackets: 0,
         droppedPackets: 0, senderBufferMilliseconds: 100, rttMilliseconds: 30, sendRateMbps: 3)
-    var lastObservedReads = 0
     var stops: Int { lock.withLock { stopCount } }
     var statisticsReads: Int { lock.withLock { reads } }
     var appliedProfiles: [PublishingVideoProfile] { lock.withLock { applied } }

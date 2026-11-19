@@ -28,7 +28,7 @@ image "$IPHONE/live.png" app-live 640
 image "$IPHONE/scorer.png" app-scorer 220
 magick "$WATCH/score.png" -strip "$OUT/watch.png"; cwebp -quiet -q 85 "$OUT/watch.png" -o "$OUT/watch.webp"
 
-pnpm --dir "$ROOT" --filter @scorebug/home-daemon exec tsx scripts/render-sample.ts "$TMP/overlay" >/dev/null
+pnpm --dir "$ROOT" --filter @scorebug/home-daemon render-scorebug "$TMP/overlay" --media >/dev/null
 for style in bar lowerThird setCard; do
   magick "$ROOT/ios/AppStore/gym.jpg" -resize 1920x1080! "$TMP/overlay/style-$style.png" -composite "$TMP/style-$style.png"
   image "$TMP/style-$style.png" "style-$style" 320
