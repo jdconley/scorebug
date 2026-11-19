@@ -19,7 +19,7 @@ const GOOGLE_PERMISSIONS = 'https://myaccount.google.com/permissions';
 type Body = HtmlEscapedString | Promise<HtmlEscapedString>;
 
 const CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; " +
+  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self'; font-src 'self'; " +
   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const PUBLIC_HEADERS = {
@@ -73,19 +73,25 @@ const STYLE = raw(`
   .button.soon { color: var(--secondary); }
   .actions { display: grid; gap: 12px; margin: 24px 0 12px; }
   @media (min-width: 560px) { .actions { grid-template-columns: 1fr 1fr; } }
-  .bug { background: var(--raised); border: 1px solid var(--line); border-radius: 18px;
-    padding: 14px 18px; margin: 8px 0 32px; box-shadow: 0 18px 40px rgba(0,0,0,0.45);
-    max-width: 420px; position: relative; }
-  .bug .row { display: flex; align-items: center; gap: 14px; height: 64px; }
-  .bug .chip { width: 10px; height: 44px; border-radius: 5px; }
-  .bug .name { flex: 1; font: 700 30px/1 var(--display); letter-spacing: 0.04em; }
-  .bug .score { font: 700 56px/1 var(--display); font-variant-numeric: tabular-nums; }
-  .bug .row.dim .name, .bug .row.dim .score { color: var(--secondary); }
-  .bug .live { position: absolute; top: -9px; right: -9px; width: 24px; height: 24px;
-    border-radius: 50%; background: var(--live); box-shadow: 0 0 18px rgba(229,55,44,0.75); }
+  figure { margin: 0 0 28px; }
+  figure img, figure video { display: block; width: 100%; height: auto; border-radius: 16px;
+    border: 1px solid var(--line); background: var(--surface); }
+  figcaption { margin-top: 8px; font-size: 15px; color: var(--secondary); }
+  .phones { display: flex; justify-content: center; align-items: flex-end; gap: 14px; margin: 16px 0 4px; }
+  .phones img { display: block; width: 100%; height: auto; border: 1px solid var(--line); }
+  .phones .phone { flex: 0 1 220px; } .phones .phone img { border-radius: 26px; }
+  .phones .watch { flex: 0 1 150px; } .phones .watch img { border-radius: 34px; }
+  ol.steps .shot { margin-top: 14px; }
+  ol.steps .shot img, ol.steps .shot video { display: block; width: 100%; height: auto;
+    border-radius: 12px; border: 1px solid var(--line); }
+  .styles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    margin: 16px 0 8px; }
+  .styles figure { margin: 0; } .styles img { border-radius: 10px; }
   ol.steps { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 12px; }
   ol.steps li { display: flex; gap: 16px; align-items: flex-start; margin: 0; padding: 18px;
+    min-width: 0;
     background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+  ol.steps li > div { flex: 1; min-width: 0; }
   ol.steps .n { flex: none; width: 40px; font: 700 40px/0.9 var(--display); color: var(--secondary); }
   ol.steps h3 { margin: 0 0 4px; font-size: 24px; text-transform: uppercase; }
   ol.steps p { margin: 0; color: var(--muted); }
@@ -117,7 +123,7 @@ function page(c: Context, opts: { title: string; description: string; path: stri
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta property="og:title" content="${opts.title}" />
         <meta property="og:description" content="${opts.description}" />
-        <meta property="og:image" content="${c.env.PUBLIC_URL}/icon-512.png" />
+        <meta property="og:image" content="${c.env.PUBLIC_URL}/media/stream.jpg" />
         <style>
           ${STYLE}
         </style>
@@ -152,6 +158,55 @@ function appStoreButton(c: Context<AppEnv>) {
     : html`<span class="button secondary soon">Coming soon to the App Store</span>`;
 }
 
+/**
+ * An image from public/media (scripts/build-site-media.sh): WebP with a JPEG fallback, at 1x
+ * and 2x. `width` and `height` are the 1x size, so the page doesn't jump while it loads.
+ */
+function picture(
+  name: string,
+  alt: string,
+  width: number,
+  height: number,
+  type: 'jpg' | 'png' = 'jpg',
+) {
+  const src = (ext: string) => `/media/${name}.${ext} 1x, /media/${name}@2x.${ext} 2x`;
+  return type === 'png'
+    ? html`<picture
+        ><source type="image/webp" srcset="/media/${name}.webp" />
+        <img
+          src="/media/${name}.png"
+          alt="${alt}"
+          width="${width}"
+          height="${height}"
+          loading="lazy"
+      /></picture>`
+    : html`<picture
+        ><source type="image/webp" srcset="${src('webp')}" />
+        <img
+          src="/media/${name}.jpg"
+          srcset="${src('jpg')}"
+          alt="${alt}"
+          width="${width}"
+          height="${height}"
+          loading="lazy"
+      /></picture>`;
+}
+
+/** A silent looping clip from public/media. */
+const clip = (name: string, label: string, width: number, height: number) =>
+  html`<video
+    src="/media/${name}.mp4"
+    poster="/media/${name}.jpg"
+    width="${width}"
+    height="${height}"
+    autoplay
+    muted
+    loop
+    playsinline
+    preload="metadata"
+    aria-label="${label}"
+  ></video>`;
+
 const home = (c: Context<AppEnv>) =>
   page(
     c,
@@ -166,23 +221,23 @@ const home = (c: Context<AppEnv>) =>
         Scorebug streams youth volleyball from an iPhone to your team's YouTube channel, with a live
         scoreboard on the video.
       </p>
-      <div class="bug" role="img" aria-label="A Scorebug scoreboard: Wildcats 25, Visitors 23">
-        <div class="row">
-          <span class="chip" style="background:var(--blue)"></span><span class="name">WILDCATS</span
-          ><span class="score">25</span>
-        </div>
-        <div class="row dim">
-          <span class="chip" style="background:var(--orange)"></span
-          ><span class="name">VISITORS</span><span class="score">23</span>
-        </div>
-        <span class="live"></span>
-      </div>
+      <figure>
+        ${clip('stream', 'A volleyball court on a YouTube stream, with the Scorebug scoreboard counting up to 25–22', 1280, 720)}
+        <figcaption>What your family sees on YouTube: the score is part of the video.</figcaption>
+      </figure>
+      <div class="actions">${appStoreButton(c)}</div>
       <ol class="steps">
         <li>
           <span class="n">1</span>
           <div>
             <h3>Film on your iPhone</h3>
-            <p>Set the phone on a tripod courtside and open Scorebug.</p>
+            <p>
+              Set the phone on a tripod courtside, name the teams and tap Go Live. Every match is
+              also recorded on the phone, in 1080p or 4K.
+            </p>
+            <div class="shot">
+              ${picture('app-live', 'Scorebug filming a match: live, with the score at the top', 640, 294)}
+            </div>
           </div>
         </li>
         <li>
@@ -190,9 +245,17 @@ const home = (c: Context<AppEnv>) =>
           <div>
             <h3>Keep score</h3>
             <p>
-              Tap points on the same phone, on an Apple Watch, or hand scoring to a second phone in
-              the stands.
+              Tap the left or right of the screen while you film, score from an Apple Watch, or hand
+              scoring to a second phone in the stands. Scorebug checks with you before a set ends.
             </p>
+            <div class="phones">
+              <div class="phone">
+                ${picture('app-scorer', 'A second phone keeping score: Wildcats 22, Mustangs 19', 220, 478)}
+              </div>
+              <div class="watch">
+                ${picture('watch', 'The Apple Watch app: tap a team to add a point', 150, 183, 'png')}
+              </div>
+            </div>
           </div>
         </li>
         <li>
@@ -200,11 +263,31 @@ const home = (c: Context<AppEnv>) =>
           <div>
             <h3>Go live on YouTube</h3>
             <p>
-              Scorebug puts the score on the video and streams it to the YouTube channel you pick.
+              Scorebug draws the score onto the video and streams it to the YouTube channel your
+              team picks, as an unlisted broadcast. Share the watch link with a tap.
             </p>
+            <div class="shot">
+              ${clip('app', 'Scoring the end of a set in Scorebug while live', 1280, 591)}
+            </div>
           </div>
         </li>
       </ol>
+      <h2>Pick a scoreboard</h2>
+      <p>Three looks for the stream, all in your team colors.</p>
+      <div class="styles">
+        <figure>
+          ${picture('style-bar', 'A compact scoreboard in the top corner', 320, 180)}
+          <figcaption>Bar</figcaption>
+        </figure>
+        <figure>
+          ${picture('style-lowerThird', 'Team names and the score across the bottom', 320, 180)}
+          <figcaption>Lower third</figcaption>
+        </figure>
+        <figure>
+          ${picture('style-setCard', 'Every set’s score in the top corner', 320, 180)}
+          <figcaption>Set card</figcaption>
+        </figure>
+      </div>
       <h2>Get Scorebug</h2>
       <p>
         Scorebug is free. You need an iPhone, a Google account, and a YouTube channel that can live
@@ -364,8 +447,35 @@ export function siteRoutes() {
     linkPage(c, 'invite', normalizeTeamInviteCode(c.req.param('code'))),
   );
   site.get('/join/:code', (c) => linkPage(c, 'join', normalizeInviteCode(c.req.param('code'))));
+  // Safari plays video only from byte ranges, which static assets don't answer, so the clips
+  // come through here (wrangler.jsonc: run_worker_first for /media/*.mp4).
+  site.get('/media/:file{[\\w-]+\\.mp4}', (c) => mediaClip(c));
   site.get('/.well-known/apple-app-site-association', (c) => c.json(appleAppSiteAssociation));
   return site;
+}
+
+/** A clip from public/media, whole or as the one byte range the request asks for. */
+async function mediaClip(c: Context<AppEnv>) {
+  const asset = await c.env.ASSETS.fetch(new URL(c.req.path, c.req.url));
+  if (!asset.ok) return c.json({ error: 'not_found' }, 404);
+  const body = new Uint8Array(await asset.arrayBuffer());
+  const headers = {
+    'Content-Type': 'video/mp4',
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'public, max-age=86400',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(c.req.header('Range') ?? '');
+  if (!range || (range[1] === '' && range[2] === '')) return c.body(body, 200, headers);
+  const size = body.length;
+  const start = range[1] === '' ? Math.max(0, size - Number(range[2])) : Number(range[1]);
+  const end = range[1] === '' || range[2] === '' ? size - 1 : Math.min(Number(range[2]), size - 1);
+  if (start > end || start >= size)
+    return c.body(null, 416, { ...headers, 'Content-Range': `bytes */${size}` });
+  return c.body(body.slice(start, end + 1), 206, {
+    ...headers,
+    'Content-Range': `bytes ${start}-${end}/${size}`,
+  });
 }
 
 export const appleAppSiteAssociation = {

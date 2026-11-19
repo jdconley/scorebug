@@ -16,9 +16,10 @@
     "STREAM_API_TOKEN": "dev",
     "LIVE_MATCH_CAP": "5",
     "SCORE_DELAY_MS": "1100",
-    "VIDEO_PROFILE": "1080p30"
+    "VIDEO_PROFILE": "1080p30",
+    "DEV_PUBLISH_URL": ""
   },
-  "assets": { "directory": "../../../apps/control-plane/public", "binding": "ASSETS" },
+  "assets": { "directory": "../../../apps/control-plane/public", "binding": "ASSETS", "run_worker_first": ["/media/*.mp4"] },
   "d1_databases": [{ "binding": "DB", "database_name": "scorebug-dev", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "../../../apps/control-plane/migrations" }],
   "durable_objects": { "bindings": [{ "name": "TEAM", "class_name": "TeamObject" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TeamObject"] }],

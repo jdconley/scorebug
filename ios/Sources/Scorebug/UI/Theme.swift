@@ -94,7 +94,7 @@ struct TeamChip: View {
             Text(team?.shortName ?? "—")
                 .font(Theme.score(size))
                 .foregroundStyle(dim ? Theme.secondary : Theme.text)
-                .lineLimit(1)
+                .lineLimit(1).minimumScaleFactor(0.7)
             if trailingBar { bar }
         }
     }

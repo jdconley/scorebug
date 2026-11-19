@@ -58,7 +58,9 @@ struct SetPointCard: View {
             HStack(spacing: 18) {
                 Spacer(minLength: 0)
                 TeamChip(team: board.info(prompt.winner), size: 22)
+                // The score never wraps; the team names give way first.
                 Text(prompt.scoreLine).font(Theme.score(40)).monospacedDigit()
+                    .lineLimit(1).fixedSize().layoutPriority(1)
                 TeamChip(team: board.info(prompt.winner.other), size: 22, trailingBar: true, dim: true)
                 Spacer(minLength: 0)
             }
@@ -77,7 +79,7 @@ struct SetPointCard: View {
                 .accessibilityIdentifier("setPoint.keepPlaying")
         }
         .padding(22)
-        .frame(maxWidth: 400)
+        .frame(maxWidth: 440)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
         .accessibilityElement(children: .contain)

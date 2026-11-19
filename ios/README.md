@@ -170,6 +170,9 @@ TEAM_ID=… ASC_KEY_ID=… ASC_ISSUER_ID=… ios/release/testflight.sh
 The build number is the UTC time (`YYYYMMDDHHMM`) unless `BUILD_NUMBER` is set. The version users
 see is `MARKETING_VERSION` in `Project.yml`.
 
+The App Store page itself (listing copy, screenshots, the preview video and the scripts that make
+and upload them) lives in [`AppStore/`](AppStore/README.md).
+
 ## Needs a real device
 
 - Camera capture, the landscape preview and heat over a full match in 4K.

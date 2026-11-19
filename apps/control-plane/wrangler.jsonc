@@ -12,7 +12,7 @@
   "compatibility_flags": ["nodejs_compat"],
   // Fonts and icons for the public pages. Requests that match a file are served without running
   // the Worker; everything else falls through to it.
-  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/media/*.mp4"] },
   "routes": [{ "pattern": "scorebug.live", "custom_domain": true }],
   "vars": {
     "PUBLIC_URL": "https://scorebug.live",

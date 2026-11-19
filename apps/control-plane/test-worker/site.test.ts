@@ -41,6 +41,27 @@ describe('home page', () => {
     expect(body).not.toMatch(BETA_WORDS);
   });
 
+  it('shows the stream, the app and the styles from public/media', async () => {
+    const { response, body } = await htmlPage('/');
+    expect(response.headers.get('content-security-policy')).toContain("media-src 'self'");
+    const media = [...body.matchAll(/\/media\/([\w@-]+\.\w+)/g)].map((m) => m[1]);
+    expect(new Set(media)).toEqual(
+      new Set([
+        'stream.mp4',
+        'stream.jpg',
+        'app.mp4',
+        'app.jpg',
+        'watch.webp',
+        'watch.png',
+        ...['app-live', 'app-scorer', 'style-bar', 'style-lowerThird', 'style-setCard'].flatMap(
+          (name) => ['webp', 'jpg'].flatMap((ext) => [`${name}.${ext}`, `${name}@2x.${ext}`]),
+        ),
+      ]),
+    );
+    expect(body).toMatch(/<video[^>]*src="\/media\/stream\.mp4"[^>]*muted/);
+    expect(body).toContain('content="https://scorebug.live/media/stream.jpg"');
+  });
+
   it('says Coming soon until the App Store link is set', async () => {
     const { body } = await htmlPage('/');
     expect(body).toContain('Coming soon to the App Store');
@@ -194,4 +215,39 @@ it('serves the public pages even when SERVER_SECRET is missing', async () => {
     expect((await app.fetch(new Request(`https://scorebug.live${path}`), weak)).status).toBe(200);
   const me = await app.fetch(new Request('https://scorebug.live/v1/me'), weak);
   expect(me.status).toBe(503);
+});
+
+describe('media clips', () => {
+  it('answers byte ranges, which Safari needs to play video', async () => {
+    const whole = await get('/media/stream.mp4');
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get('accept-ranges')).toBe('bytes');
+    const size = (await whole.arrayBuffer()).byteLength;
+    expect(size).toBeGreaterThan(1000);
+
+    const first = await SELF.fetch('https://scorebug.live/media/stream.mp4', {
+      headers: { Range: 'bytes=0-1' },
+    });
+    expect(first.status).toBe(206);
+    expect(first.headers.get('content-range')).toBe(`bytes 0-1/${size}`);
+    expect((await first.arrayBuffer()).byteLength).toBe(2);
+
+    const open = await SELF.fetch('https://scorebug.live/media/stream.mp4', {
+      headers: { Range: 'bytes=100-' },
+    });
+    expect(open.headers.get('content-range')).toBe(`bytes 100-${size - 1}/${size}`);
+    await open.arrayBuffer();
+
+    const past = await SELF.fetch('https://scorebug.live/media/stream.mp4', {
+      headers: { Range: `bytes=${size}-` },
+    });
+    expect(past.status).toBe(416);
+    await past.arrayBuffer();
+  });
+
+  it('404s a clip that does not exist', async () => {
+    const response = await get('/media/nope.mp4');
+    expect(response.status).toBe(404);
+    await response.arrayBuffer();
+  });
 });
