@@ -77,8 +77,8 @@ credential. With no match open the Watch shows "No match yet". It needs the iPho
 
 ## Build and test
 
-Install XcodeGen and use Xcode 26.2, the version CI uses. If you have several Xcodes, point
-`DEVELOPER_DIR` at 26.2. Run these from the repository root; they are the steps in
+Install XcodeGen and use Xcode 27.0, the version CI uses. If you have several Xcodes, point
+`DEVELOPER_DIR` at 27.0. Run these from the repository root; they are the steps in
 `.github/workflows/native.yml`.
 
 ```sh

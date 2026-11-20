@@ -10,7 +10,7 @@ Cloudflare Container. This page covers running the Worker locally, the iPhone ap
 - Docker, for local match containers and the container test.
 - FFmpeg with SRT, H.264 and AAC. On macOS use Homebrew's `ffmpeg-full`; the test scripts look for
   it in `/opt/homebrew/opt/ffmpeg-full/bin` before `PATH`.
-- For the iPhone and Watch apps: Xcode 26.2 and XcodeGen (`brew install xcodegen`).
+- For the iPhone and Watch apps: Xcode 27 and XcodeGen (`brew install xcodegen`).
 
 ```sh
 pnpm install --frozen-lockfile

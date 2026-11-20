@@ -55,7 +55,7 @@ docs/                 Architecture, API, development and field-test guides
 ## Develop
 
 Requires Node 22.13+, pnpm 9.15.0, Docker, and FFmpeg with SRT, H.264 and AAC support.
-The iPhone apps need Xcode 26 and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+The iPhone apps need Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```sh
 pnpm install --frozen-lockfile
