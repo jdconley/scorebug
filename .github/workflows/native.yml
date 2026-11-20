@@ -17,13 +17,16 @@ concurrency:
   # A TestFlight upload on main is never cancelled halfway; pull requests keep only the latest run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Xcode 27 (the iOS 27 and watchOS 27 SDKs): App Store Connect warns on uploads built with an
+# older SDK (ITMS-90725) and requires 27 from April 2027. xcode-27 is GitHub's image with it;
+# 27.0 is the release this repo is built and tested with.
 jobs:
   apple:
     name: Native models and iPhone/Watch simulator build
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 45
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
       - name: Toolchain and project generation
@@ -57,13 +60,13 @@ jobs:
     name: TestFlight upload
     needs: apple
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 45
     concurrency:
       group: testflight
       cancel-in-progress: false
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
       TEAM_ID: B222J9J7B8
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
