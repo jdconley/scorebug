@@ -23,6 +23,9 @@ export default defineConfig(async () => {
     test: {
       include: ['test-worker/**/*.test.ts'],
       setupFiles: ['./test-worker/apply-migrations.ts'],
+      // Each test runs real Durable Objects and D1 in workerd; on a loaded CI runner a few take
+      // around 7 s, past Vitest's 5 s default.
+      testTimeout: 30_000,
     },
   };
 });
